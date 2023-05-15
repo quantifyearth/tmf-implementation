@@ -4,4 +4,4 @@ test:
 
 .PHONY: type
 type:
-				python3 -m mypy -p methods
+				python3 -m mypy methods

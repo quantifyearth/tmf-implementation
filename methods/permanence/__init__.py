@@ -50,7 +50,3 @@ def release(
     net_prev = net_sequestration(additionality, leakage, start)
 
     return (net_end - net_prev) / years
-
-def adjustment(
-
-)
