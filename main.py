@@ -1,4 +1,4 @@
-import permanence
+from methods import permanence
 
 additionality = [ 1.0, 1.1 ]
 leakage = [ 0.5, 0.6 ]

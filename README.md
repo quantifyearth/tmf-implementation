@@ -12,3 +12,7 @@ pip install -r requirements.txt
 ```
 
 To typecheck the code run `make type` and to run the tests use `make test`.
+
+## RFCs
+
+The RFC documents are submoduled in [tmf-methodology](./tmf-methodology/).
