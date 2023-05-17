@@ -5,3 +5,4 @@ test:
 .PHONY: type
 type:
 				python -m mypy methods
+				python -m mypy arkdir

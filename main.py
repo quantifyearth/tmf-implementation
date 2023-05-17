@@ -4,6 +4,7 @@ import os
 import numpy as np
 
 from methods import permanence
+import arkdir
 
 parser = argparse.ArgumentParser(description="TMF Methodology Implementation.")
 
@@ -20,22 +21,22 @@ args = vars(parser.parse_args())
 method = str(args['method']).lower()
 
 # Where to save outputs, we could probably do better.
-ark_dir = os.getenv("ARKDIR", default=os.getcwd())
+arkpath = arkdir.Arkpath()
 
 if method == "permanence":
-    add_path = os.path.join(ark_dir, "add.npy")
-    leak_path = os.path.join(ark_dir, "leak.npy")
+    add_path = arkpath.load("add.npy")
+    leak_path = arkpath.load("leak.npy")
     additionality = np.load(add_path)
     leakage = np.load(leak_path)
     c = permanence.net_sequestration(additionality, leakage, 1)
     print(c)
 elif method == "additionality":
     additionality = np.array([ 1.0, 1.1 ])
-    path = os.path.join(ark_dir, "add")
+    path = arkpath.save("add.npy")
     np.save(path, additionality)
 elif method == "leakage":
     leakage = np.array([ 0.5, 0.6 ])
-    path = os.path.join(ark_dir, "leak")
+    path = arkpath.save("leak.npy")
     np.save(path, leakage)
 else:
     print(f'Unknown methodology {method}')
