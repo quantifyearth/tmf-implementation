@@ -6,3 +6,7 @@ test:
 type:
 				python -m mypy methods
 				python -m mypy arkdir
+
+.PHONY: lint
+lint:
+				python -m pylint arkdir
