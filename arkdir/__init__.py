@@ -28,15 +28,17 @@ class Arkpath:
     def _refresh(self):
         # A list of entries
         path = os.path.join(self.base_dir, "arkdir.json")
-        if os.path.exists(path):
-            with open(path, "r") as fp:
-                entries = json.load(fp)
+        try:
+            with open(path, "r", encoding="utf-8") as file_pointer:
+                entries = json.load(file_pointer)
                 new_paths = {}
                 for entry in entries:
                     base_dir = entry["base_dir"]
                     kvs = entry["map"]
                     new_paths[base_dir] = kvs
                 self.paths = new_paths
+        except OSError:
+            pass
 
     # TODO: distinguish between names and relative paths, for now they are same.
     def save(self, name: str) -> str:
@@ -44,23 +46,24 @@ class Arkpath:
         if self.paths.get(self.base_dir) is None:
             self.paths[self.base_dir] = {}
         self.paths[self.base_dir][name] = name
-        with open(os.path.join(self.base_dir, "arkdir.json"), "w") as fp:
+        with open(os.path.join(self.base_dir, "arkdir.json"), "w", encoding="utf-8") as file_pointer:
             # Reconstruct the schema
             dump = []
-            for base, v in self.paths.items():
+            for base, entry in self.paths.items():
                 bdir: Any = {}
                 bdir["base_dir"] = base
-                bdir["map"] = v
+                bdir["map"] = entry
                 dump.append(bdir)
-            print(dump)
-            json.dump(dump,fp)
+            json.dump(dump, file_pointer)
         return os.path.join(self.base_dir, name)
 
     def lookup(self, name: str):
-        for b, e in self.paths.items():
-            v = e.get(name)
-            if v is not None:
-                return os.path.join(b, v)
+        for base, entry in self.paths.items():
+            try:
+                value = entry[name]
+                return os.path.join(base, value)
+            except KeyError:
+                pass
         return None
 
     def load(self, name: str) -> str:
@@ -70,7 +73,4 @@ class Arkpath:
             maybe = self.lookup(name)
             if maybe is None:
                 raise NameError(name)
-            else:
-                return maybe
-        else:
-            return maybe
+        return maybe
