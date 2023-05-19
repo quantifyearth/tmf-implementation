@@ -4,7 +4,6 @@ import os
 import numpy as np
 
 from methods import permanence
-import arkdir
 
 parser = argparse.ArgumentParser(description="TMF Methodology Implementation.")
 
@@ -18,27 +17,30 @@ parser.add_argument(
 )
 
 args = vars(parser.parse_args())
-method = str(args['method']).lower()
+METHOD = str(args['method']).lower()
 
-# Where to save outputs, we could probably do better.
-arkpath = arkdir.Arkpath()
+# Where to save outputs
+datapath = os.path.join(os.getcwd(), "data")
+try:
+    os.mkdir(datapath)
+except FileExistsError:
+    pass
 
-if method == "permanence":
-    add_path = arkpath.load("add.npy")
-    leak_path = arkpath.load("leak.npy")
+if METHOD == "permanence":
+    add_path = os.path.join(datapath, "add.npy")
+    leak_path = os.path.join(datapath, "leak.npy")
     additionality = np.load(add_path)
     leakage = np.load(leak_path)
     c = permanence.net_sequestration(additionality, leakage, 1)
     print(c)
-elif method == "additionality":
+elif METHOD == "additionality":
     additionality = np.array([ 1.0, 1.1 ])
-    path = arkpath.save("add.npy")
+    path = os.path.join(datapath, "add.npy")
     np.save(path, additionality)
-elif method == "leakage":
+elif METHOD == "leakage":
     leakage = np.array([ 0.5, 0.6 ])
-    path = arkpath.save("leak.npy")
+    path = os.path.join(datapath, "leak.npy")
     np.save(path, leakage)
 else:
-    print(f'Unknown methodology {method}')
+    print(f'Unknown methodology {METHOD}')
     sys.exit(-1)
-

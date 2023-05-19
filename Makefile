@@ -5,8 +5,8 @@ test:
 .PHONY: type
 type:
 				python -m mypy methods
-				python -m mypy arkdir
 
 .PHONY: lint
 lint:
-				python -m pylint arkdir
+				python -m pylint main.py
+				python -m pylint methods
