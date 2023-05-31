@@ -1,6 +1,6 @@
 .PHONY: test
 test:
-				python3 -m pytest
+				python3 -m pytest -vv
 
 .PHONY: type
 type:
