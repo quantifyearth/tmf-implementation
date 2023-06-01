@@ -12,15 +12,15 @@ def net_sequestration(
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-net-sequestration for a given
-    end time i. The additionality and leakage values should be order from oldest
+    end time i. The additionality and leakage values should be ordered from oldest
     to newest.
 
     Args:
         additionality: an ordered list of addtionality values per year for a project
         leakage: an ordered list of leakage values per year for a project
-        year: the year to calculate the net sequestration for
+        year: the year index to calculate the net sequestration for
 
-    Raises if i is less than 1 or greater than the length of the list and returns
+    Raises if i is less than 1 or greater than the length of the list.
     """
     a_len = len(additionality)
     l_len = len(leakage)
@@ -70,7 +70,7 @@ def adjusted_net_sequestration(
     additionality : List[float],
     leakage : List[float],
     schedule : List[List[float]],
-    year : int
+    year_idx : int
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-adj
@@ -84,10 +84,10 @@ def adjusted_net_sequestration(
     """
 
     adjustment = 0.0
-    for est in range(0, year):
-        adjustment += schedule[est][year]
+    for est in range(0, year_idx):
+        adjustment += schedule[est][year_idx]
 
-    return net_sequestration(additionality, leakage, year) - adjustment
+    return net_sequestration(additionality, leakage, year_idx) - adjustment
 
 def release_schedule(
     quality : ProjectQuality,
@@ -122,8 +122,8 @@ DEFAULT_DELTA_PER_YEAR = 0.03 # 3% per year
 
 def damage(
     scc : List[float],
-    year : int,
-    release_year : int,
+    year_idx : int,
+    release_year_idx : int,
     schedule : List[List[float]],
     delta : float = DEFAULT_DELTA_PER_YEAR,
 ) -> float:
@@ -135,15 +135,42 @@ def damage(
     Args:
         scc: The social cost of carbon values for a year, this list should match that of the release
              schedule i.e., the first value in this list should be for the first year of the project.
-        year: The year for which the damage is being calculated.
-        release_year: The year by which all of the carbon will have been released by.
+        year_idx: The year index for which the damage is being calculated.
+        release_year_idx: The year index by which all of the carbon will have been released by. Should be
+                      greater than 'year'.
+        schedule: The release schedule for the project, this should be a rectangularly-shaped matrix of
+                  values.
         delta: The discount factor.
     """
+    if year_idx < 0:
+        raise ValueError("Damage year must be greater than or equal to zero")
+
+    if release_year_idx <= year_idx:
+        raise ValueError("The release year must be greater than the year damage is being calculated for")
 
     damage_acc = 0.0
-    years_to_release = release_year - year
+    years_to_release = release_year_idx - year_idx
+
+    sched_estimate_len = len(schedule)
+
+    if sched_estimate_len < year_idx:
+        raise ValueError(f"The release schedule does not make estimates in the year indexed by {year_idx}")
+
+    sched_years_len = len(schedule[0])
+    scc_len = len(scc)
+    maximum_forecast = year_idx + years_to_release
+
+    if sched_years_len < maximum_forecast:
+        raise ValueError(f"""The release schedule should contain
+        anticipated releases up to the year indexed by {maximum_forecast}""")
+
+    if scc_len < maximum_forecast:
+        raise ValueError(f"""Not enough values were provided for the Social Cost of Carbon,
+        only {scc_len} were given and we need {maximum_forecast}""")
+
+
     for k in range(0, years_to_release):
-        damage_acc += (schedule[year][year + k] * scc[year + k] / (1 + delta) ** k)
+        damage_acc += (schedule[year_idx][year_idx + k] * scc[year_idx + k] / (1 + delta) ** k)
 
     return damage_acc
 
@@ -151,12 +178,40 @@ def equivalent_permanence(
     additionality : List[float],
     leakage : List[float],
     scc : List[float],
-    now : int,
-    release_year : int,
+    now_idx : int,
+    release_year_idx : int,
     schedule : List[List[float]],
     delta : float = DEFAULT_DELTA_PER_YEAR
 ) -> float:
-    adj = adjusted_net_sequestration(additionality, leakage, schedule, now)
-    scc_now = scc[now]
+    """
+    Implements ./rfc/permanence/index.html#name-ep
+
+    Calculates the equivalent permanence.
+
+    Args:
+      additionality: Values for the additionality in the project for each evaluation year
+      leakage: Values for the leakage in the project for each evaluation year
+      scc: Values for the Social Cost of Carbon for each year. This should be indexed in the same
+           way as additionality and leakage. For example, the first value in additionality is the
+           amount of additionality in the first year of the project which may correspond to the year
+           2000. The first value in SCC should therefore be the SCC in the year 2000.
+      now_idx: The current evaluation year (as an index into the additionality and leakage values).
+      release_year_idx: The year by which all net sequestration has been released, again given as an index.
+      schedule: A release schedule for the project, see the function release_schedule for how you might
+                wish to calculate this.
+      delta: A parameter used to discount the damage into the future, this defaults to 0.03 (3%).
+    """
+    add_len = len(additionality)
+    leak_len = len(leakage)
+    scc_len = len(scc)
+
+    if add_len != leak_len:
+        raise ValueError("The number of values for additionality and leakage are not the same")
+
+    if now_idx >= scc_len:
+        raise ValueError(f"No SCC value for the year indexed by {now_idx}")
+
+    scc_now = scc[now_idx]
+    adj = adjusted_net_sequestration(additionality, leakage, schedule, now_idx)
     v_adj = adj * scc_now
-    return (v_adj - damage(scc, now, release_year, schedule, delta)) / v_adj
+    return (v_adj - damage(scc, now_idx, release_year_idx, schedule, delta)) / v_adj

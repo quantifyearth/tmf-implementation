@@ -8,5 +8,4 @@ type:
 
 .PHONY: lint
 lint:
-				python -m pylint main.py
 				python -m pylint methods
