@@ -1,6 +1,6 @@
 .PHONY: test
 test:
-				python3 -m pytest
+				python3 -m pytest -vv
 
 .PHONY: type
 type:
@@ -8,5 +8,4 @@ type:
 
 .PHONY: lint
 lint:
-				python -m pylint main.py
 				python -m pylint methods
