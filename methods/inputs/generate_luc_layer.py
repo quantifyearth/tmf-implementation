@@ -49,16 +49,7 @@ def get_jrc_paths(layer: ogr.Layer, annual_change_path: str) -> List[str]:
 
 	return results
 
-
-if __name__ == "__main__":
-	try:
-		boundary_filename = sys.argv[1]
-		jrc_folder = sys.argv[2]
-		luc_raster_filename = sys.argv[3]
-	except IndexError:
-		print(f"Usage: {sys.argv[0]} INPUT JRC_TILE_FOLDER OUTPUT", file=sys.stderr)
-		sys.exit(1)
-
+def generate_luc_layer(boundary_filename: str, jrc_folder: str, luc_raster_filename: str) -> None:
 	boundary_dataset = ogr.Open(boundary_filename)
 	if boundary_dataset is None:
 		print(f"Failed to open {boundary_filename}", file=sys.stderr)
@@ -103,3 +94,13 @@ if __name__ == "__main__":
 	super_jrc_raster.set_window_for_intersection(target_raster.area)
 	super_jrc_raster.save(target_raster)
 
+if __name__ == "__main__":
+	try:
+		boundary_filename = sys.argv[1]
+		jrc_folder = sys.argv[2]
+		luc_raster_filename = sys.argv[3]
+	except IndexError:
+		print(f"Usage: {sys.argv[0]} INPUT JRC_TILE_FOLDER OUTPUT", file=sys.stderr)
+		sys.exit(1)
+
+	generate_luc_layer(boundary_filename, jrc_folder, luc_raster_filename)

@@ -65,20 +65,7 @@ def expand_boundaries(source: ogr.Layer, distance_in_metres: int, destination_da
 
 	return destination_data_source
 
-if __name__ == "__main__":
-	try:
-		input_filename = sys.argv[1]
-		output_filename = sys.argv[2]
-	except IndexError:
-		print(f"Usage: {sys.argv[0]} INPUT OUTPUT [filter]", file=sys.stderr)
-		sys.exit(1)
-
-	filter: Optional[str] = None
-	try:
-		filter = sys.argv[3]
-	except IndexError:
-		pass
-
+def generate_boundary(input_filename: str, output_filename: str, filter: Optional[str]) -> None:
 	project_boundaries = ogr.Open(input_filename)
 	if project_boundaries is None:
 		print(f"Failed to open {input_filename}", file=sys.stderr)
@@ -103,3 +90,19 @@ if __name__ == "__main__":
 
 	target_dataset = ogr.GetDriverByName(driver_name).CreateDataSource(output_filename)
 	_ = expand_boundaries(project_layer, PROJECT_BOUNDARY_RADIUS_IN_METRES, target_dataset)
+
+if __name__ == "__main__":
+	try:
+		input_filename = sys.argv[1]
+		output_filename = sys.argv[2]
+	except IndexError:
+		print(f"Usage: {sys.argv[0]} INPUT OUTPUT [filter]", file=sys.stderr)
+		sys.exit(1)
+
+	filter: Optional[str] = None
+	try:
+		filter = sys.argv[3]
+	except IndexError:
+		pass
+
+	generate_boundary(input_filename, output_filename, filter)
