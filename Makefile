@@ -10,3 +10,4 @@ type:
 lint:
 				python -m pylint main.py
 				python -m pylint methods
+				python -m pylint test
