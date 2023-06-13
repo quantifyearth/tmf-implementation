@@ -1,4 +1,8 @@
-mypy
 numpy
+gdal[numpy]
+git+https://github.com/carboncredits/yirgacheffe
+
+# developement
+mypy
 pytest
 pylint
