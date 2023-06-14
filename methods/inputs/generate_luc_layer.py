@@ -4,7 +4,7 @@ import re
 import sys
 from typing import List
 
-from osgeo import ogr # type: ignore
+from osgeo import gdal, ogr # type: ignore
 from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
 
 REPRESENTATIVE_YEAR = 2020
@@ -95,6 +95,10 @@ def generate_luc_layer(boundary_filename: str, jrc_folder: str, luc_raster_filen
 	super_jrc_raster.save(target_raster)
 
 if __name__ == "__main__":
+	# We do not re-use data in this, so set a small block cache size for GDAL, otherwise
+	# it pointlessly hogs memory, and then spends a long time tidying it up after.
+	gdal.SetCacheMax(1024 * 1024 * 16)
+
 	try:
 		boundary_filename = sys.argv[1]
 		jrc_folder = sys.argv[2]
