@@ -9,3 +9,4 @@ type:
 .PHONY: lint
 lint:
 				python -m pylint methods
+				python -m pylint test

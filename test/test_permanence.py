@@ -1,7 +1,8 @@
-from methods import permanence
-import pytest
 import math
-import sys
+
+import pytest
+
+from methods import permanence # pylint: disable=E0401
 
 test_add = [ 4.4, 5.5, 7.7 ]
 test_leak = [ 3.3, 4.4, 5.5 ]
@@ -12,8 +13,8 @@ test_release_schedule = [
 ]
 test_scc = [ 4.0, 4.0, 4.0, 5.0, 5.0, 5.0 ]
 
-def assert_float_eq(a, b, eps=0.0000001):
-    assert((math.isnan(a) and math.isnan(b)) or (a == b) or (abs(a - b) <= eps))
+def assert_float_eq(value_a, value_b, eps=0.0000001):
+    assert((math.isnan(value_a) and math.isnan(value_b)) or (value_a == value_b) or (abs(value_a - value_b) <= eps))
 
 def test_net_sequester():
     calc = permanence.net_sequestration(test_add, test_leak, 1)
