@@ -34,7 +34,7 @@ def get_jrc_paths(layer: ogr.Layer, annual_change_path: str) -> List[str]:
 
 	# the JRC data is sparse, so not all files might exist, so we take what we can
 	results = []
-	filename_re = re.compile(f'JRC_TMF_AnnualChange_v1_{REPRESENTATIVE_YEAR}_\w+_ID\d+_([NS]\d+)_([EW]\d+).tif')
+	filename_re = re.compile(r"JRC_TMF_AnnualChange_v1_" + str(REPRESENTATIVE_YEAR) + r"_\w+_ID\d+_([NS]\d+)_([EW]\d+).tif")
 	for path in os.listdir(annual_change_path):
 		match = filename_re.match(path)
 		if not match:
