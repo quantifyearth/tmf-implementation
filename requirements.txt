@@ -1,6 +1,7 @@
 numpy
 gdal[numpy]<3.7
 git+https://github.com/carboncredits/yirgacheffe
+git+https://github.com/carboncredits/biomass-recovery@4C-main
 
 # developement
 mypy
