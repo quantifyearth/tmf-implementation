@@ -21,6 +21,28 @@ def utm_for_geometry(geometry: ogr.Geometry) -> int:
 
 	return epsg_code
 
+def _expand_polygon(
+	geometry: ogr.Geometry,
+	input_spatial_ref: osr.SpatialReference,
+	output_spatial_ref: osr.SpatialReference,
+	distance_in_metres: int,
+) -> ogr.Geometry:
+	if geometry.GetGeometryType() != ogr.wkbPolygon:
+		raise ValueError("Can only expand polygons")
+
+	utmband = utm_for_geometry(geometry)
+
+	working_spatial_ref = osr.SpatialReference()
+	working_spatial_ref.ImportFromEPSG(utmband)
+	coordTransTo = osr.CoordinateTransformation(input_spatial_ref, working_spatial_ref)
+	coordTransFrom = osr.CoordinateTransformation(working_spatial_ref, output_spatial_ref)
+
+	geometry.Transform(coordTransTo)
+	expanded = geometry.Buffer(distance_in_metres)
+	expanded.Transform(coordTransFrom)
+
+	return expanded
+
 # Convert a set of polygons to have a boundary that is uniform in all
 # directions by converting to UTM first.
 #
@@ -40,28 +62,40 @@ def expand_boundaries(source: ogr.Layer, distance_in_metres: int, destination_da
 		destination_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
 	working_layer = destination_data_source.CreateLayer("buffer", output_spatial_ref, geom_type=ogr.wkbMultiPolygon)
 
-	source.ResetReading()
+	expanded_geometries = ogr.Geometry(ogr.wkbMultiPolygon)
 	input_feature = source.GetNextFeature()
 	while input_feature:
 		geometry = input_feature.GetGeometryRef()
-		# we do this per geometry as a project may cross UTM bounds
-		utmband = utm_for_geometry(geometry)
+		match geometry.GetGeometryType():
+			case ogr.wkbPolygon:
+				expanded = _expand_polygon(geometry, input_spatial_ref, output_spatial_ref, distance_in_metres)
+				res = expanded_geometries.AddGeometry(expanded)
+				if res != ogr.OGRERR_NONE:
+					raise Exception("Failed to add geometry")
 
-		working_spatial_ref = osr.SpatialReference()
-		working_spatial_ref.ImportFromEPSG(utmband)
-		coordTransTo = osr.CoordinateTransformation(input_spatial_ref, working_spatial_ref)
-		coordTransFrom = osr.CoordinateTransformation(working_spatial_ref, output_spatial_ref)
+			case ogr.wkbMultiPolygon:
+				for i in range(geometry.GetGeometryCount()):
+					child_polygon = geometry.GetGeometryRef(i)
+					expanded = _expand_polygon(child_polygon, input_spatial_ref, output_spatial_ref, distance_in_metres)
+					res = expanded_geometries.AddGeometry(expanded)
+					if res != ogr.OGRERR_NONE:
+						raise Exception("Failed to add geometry")
 
-		geometry.Transform(coordTransTo)
-		expanded = geometry.Buffer(distance_in_metres)
-		expanded.Transform(coordTransFrom)
+			case ogr.wkbGeometryCollection:
+				raise NotImplementedError("not yet implemented for geometry collection")
 
-		feature_definition = working_layer.GetLayerDefn()
-		new_feature = ogr.Feature(feature_definition)
-		new_feature.SetGeometry(expanded)
-		working_layer.CreateFeature(new_feature)
+			case other:
+				# skip for lines, points, etc.
+				pass
 
 		input_feature = source.GetNextFeature()
+
+	minimal_geometries = expanded_geometries.UnionCascaded()
+
+	feature_definition = working_layer.GetLayerDefn()
+	new_feature = ogr.Feature(feature_definition)
+	new_feature.SetGeometry(minimal_geometries)
+	working_layer.CreateFeature(new_feature)
 
 	return destination_data_source
 

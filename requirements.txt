@@ -1,5 +1,5 @@
 numpy
-gdal[numpy]
+gdal[numpy]<3.7
 git+https://github.com/carboncredits/yirgacheffe
 
 # developement

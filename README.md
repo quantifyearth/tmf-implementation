@@ -3,6 +3,8 @@ Tropical Moist Forest Methodology
 
 ## Building and testing
 
+This project relies on Python 3.10 or newer.
+
 The easiest way to get setup is to use `virtualenv` then install the `requirements.txt`.
 
 ```
