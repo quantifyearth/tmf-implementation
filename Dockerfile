@@ -3,6 +3,7 @@ FROM ghcr.io/osgeo/gdal:ubuntu-small-3.6.4
 RUN apt-get update -qqy && \
 apt-get install -qy \
 	git \
+    libpq-dev \
 	python3-pip \
 && rm -rf /var/lib/apt/lists/* \
 && rm -rf /var/cache/apt/*
