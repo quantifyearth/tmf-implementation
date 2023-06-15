@@ -21,3 +21,4 @@ COPY . ./
 RUN make type && make test
 # Show the dependencies that passed in the log
 RUN pip freeze
+RUN DATA_PATH=./data USER_PATH=./user EARTH_DATA_COOKIE_FILE=./cookie python3 methods/inputs/download_jrc_data.py zip tif
