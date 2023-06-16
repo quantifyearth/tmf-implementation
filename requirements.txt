@@ -1,5 +1,6 @@
 numpy
 gdal[numpy]<3.7
+requests
 pandas
 geopandas
 git+https://github.com/carboncredits/yirgacheffe
@@ -10,3 +11,4 @@ mypy
 pytest
 pylint
 pandas-stubs
+types-requests
