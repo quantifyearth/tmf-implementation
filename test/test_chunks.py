@@ -1,9 +1,8 @@
 import pytest
-from osgeo import ogr, osr
+from osgeo import ogr, osr # type: ignore
 
 from methods.inputs.download_gedi_data import chunk_geometry # pylint: disable=E0401
 from .helpers import build_polygon
-
 
 @pytest.mark.parametrize(
 	"diameter,chunk_size,expected_count",

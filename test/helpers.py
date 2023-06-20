@@ -1,6 +1,6 @@
 import json
 
-from osgeo import ogr
+from osgeo import ogr # type: ignore
 
 def build_polygon(lat: float, lng: float, radius: float) -> ogr.Geometry:
 	origin_lat = lat + radius

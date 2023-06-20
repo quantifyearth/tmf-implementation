@@ -2,10 +2,9 @@ import json
 from typing import List
 
 import pytest
-from osgeo import ogr, osr
+from osgeo import ogr, osr # type: ignore
 
 from methods.inputs.generate_boundary import utm_for_geometry, expand_boundaries # pylint: disable=E0401
-
 from .helpers import build_polygon
 
 @pytest.mark.parametrize(
@@ -17,7 +16,7 @@ from .helpers import build_polygon
         (4.710989, -74.072090, 32618), # Bogotá
     ]
 )
-def test_utm_band(lat, lng, expected):
+def test_utm_band(lat: float, lng: float, expected: int) -> None:
     test_poly = build_polygon(lat, lng, 0.2)
 
     utm_code = utm_for_geometry(test_poly)
@@ -32,7 +31,7 @@ def test_utm_band(lat, lng, expected):
         (4.710989, -74.072090), # Bogotá
     ]
 )
-def test_expand_boundary(lat, lng):
+def test_expand_boundary(lat: float, lng: float) -> None:
     test_poly = build_polygon(lat, lng, 0.2)
 
     original_area = test_poly.GetArea()
@@ -78,8 +77,8 @@ def test_expand_boundary(lat, lng):
         ),
     ]
 )
-def test_simplify_output_geometry(polygon_list, expected_count):
-    def _make_square(lat: float, lng: float, radius: float) -> List[List[float]]:
+def test_simplify_output_geometry(polygons, expected_count):
+    def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
         origin_lat = lat + radius
         origin_lng = lng - radius
         far_lat = lat - radius
@@ -94,7 +93,7 @@ def test_simplify_output_geometry(polygon_list, expected_count):
 
     frame = {
         'type': 'MULTIPOLYGON',
-        'coordinates': [_make_square(*poly) for poly in polygon_list]
+        'coordinates': [_make_square(*poly) for poly in polygons]
     }
     test_multipoly = ogr.CreateGeometryFromJson(json.dumps(frame))
     assert test_multipoly.GetGeometryType() == ogr.wkbMultiPolygon
