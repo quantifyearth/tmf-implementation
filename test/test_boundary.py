@@ -6,6 +6,8 @@ from osgeo import ogr, osr
 
 from methods.inputs.generate_boundary import utm_for_geometry, expand_boundaries # pylint: disable=E0401
 
+from .helpers import build_polygon
+
 @pytest.mark.parametrize(
     "lat,lng,expected",
     [
@@ -16,24 +18,7 @@ from methods.inputs.generate_boundary import utm_for_geometry, expand_boundaries
     ]
 )
 def test_utm_band(lat, lng, expected):
-    origin_lat = lat + 0.2
-    origin_lng = lng - 0.2
-    far_lat = lat - 0.2
-    far_lng = lng + 0.2
-
-    frame = {
-        'type': 'POLYGON',
-        'coordinates': [
-            [
-                [origin_lng, origin_lat],
-                [far_lng,    origin_lat],
-                [far_lng,    far_lat],
-                [origin_lng, far_lat],
-                [origin_lng, origin_lat],
-            ]
-        ]
-    }
-    test_poly = ogr.CreateGeometryFromJson(json.dumps(frame))
+    test_poly = build_polygon(lat, lng, 0.2)
 
     utm_code = utm_for_geometry(test_poly)
     assert utm_code == expected
@@ -48,24 +33,7 @@ def test_utm_band(lat, lng, expected):
     ]
 )
 def test_expand_boundary(lat, lng):
-    origin_lat = lat + 0.2
-    origin_lng = lng - 0.2
-    far_lat = lat - 0.2
-    far_lng = lng + 0.2
-
-    frame = {
-        'type': 'POLYGON',
-        'coordinates': [
-            [
-                [origin_lng, origin_lat],
-                [far_lng,    origin_lat],
-                [far_lng,    far_lat],
-                [origin_lng, far_lat],
-                [origin_lng, origin_lat],
-            ]
-        ]
-    }
-    test_poly = ogr.CreateGeometryFromJson(json.dumps(frame))
+    test_poly = build_polygon(lat, lng, 0.2)
 
     original_area = test_poly.GetArea()
 
@@ -123,7 +91,6 @@ def test_simplify_output_geometry(polygon_list, expected_count):
             [origin_lng, far_lat],
             [origin_lng, origin_lat],
         ]]
-
 
     frame = {
         'type': 'MULTIPOLYGON',
