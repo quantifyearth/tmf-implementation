@@ -6,14 +6,20 @@ import sys
 import tempfile
 from typing import Set
 
-from biomassrecovery import constants # type: ignore
 import geopandas as gpd # type: ignore
 import pandas as pd
 import requests
+import dotenv
 from biomassrecovery.data.gedi_cmr_query import query  # type: ignore
 from biomassrecovery.spark.gedi_download_pipeline import _check_and_format_shape, _query_downloaded, _granules_table # type: ignore
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
+
+# This is defined in biomassrecovery.environment too, but that file
+# is full of side-effects, so just import directly here.
+dotenv.load_dotenv()
+EARTHDATA_USER = os.getenv("EARTHDATA_USER")
+EARTHDATA_PASSWORD = os.getenv("EARTHDATA_PASSWORD")
 
 def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 	output_spatial_ref = osr.SpatialReference()
@@ -64,7 +70,10 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
 	with tempfile.TemporaryDirectory() as tmpdir:
 		with requests.Session() as session:
-			session.auth = (constants.EARTHDATA_USER, constants.EARTHDATA_PASSWORD)
+			if EARTHDATA_USER and EARTHDATA_PASSWORD:
+				session.auth = (EARTHDATA_USER, EARTHDATA_PASSWORD)
+			else:
+				raise ValueError("Both EARTHDATA_USER and EARTHDATA_PASSWORD must be defined in environment.")
 			response = session.get(url, stream=True)
 			download_target_name = os.path.join(tmpdir, name)
 			with open(download_target_name, 'wb') as f:

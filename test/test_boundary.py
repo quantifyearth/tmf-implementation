@@ -77,7 +77,7 @@ def test_expand_boundary(lat: float, lng: float) -> None:
         ),
     ]
 )
-def test_simplify_output_geometry(polygons, expected_count):
+def test_simplify_output_geometry(polygon_list, expected_count):
     def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
         origin_lat = lat + radius
         origin_lng = lng - radius
@@ -93,7 +93,7 @@ def test_simplify_output_geometry(polygons, expected_count):
 
     frame = {
         'type': 'MULTIPOLYGON',
-        'coordinates': [_make_square(*poly) for poly in polygons]
+        'coordinates': [_make_square(*poly) for poly in polygon_list]
     }
     test_multipoly = ogr.CreateGeometryFromJson(json.dumps(frame))
     assert test_multipoly.GetGeometryType() == ogr.wkbMultiPolygon
