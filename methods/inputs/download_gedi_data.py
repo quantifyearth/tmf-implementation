@@ -11,7 +11,7 @@ import pandas as pd
 import requests
 import dotenv
 from biomassrecovery.data.gedi_cmr_query import query  # type: ignore
-from biomassrecovery.spark.gedi_download_pipeline import _check_and_format_shape, _query_downloaded, _granules_table # type: ignore
+from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape # type: ignore
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
 
@@ -118,7 +118,7 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
 			del destination_data_source # aka destination_data_source.Close()
 
 			shape = gpd.read_file(chunk_path)
-			shape = _check_and_format_shape(shape)
+			shape = check_and_format_shape(shape, simplify=True)
 			result = query(
 				product=GediProduct.L4A,
 				date_range=(dt.datetime(2020, 1, 1, 0, 0), dt.datetime(2021, 1, 1, 0, 0)),
