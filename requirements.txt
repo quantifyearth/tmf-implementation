@@ -4,7 +4,7 @@ requests
 pandas
 geopandas
 git+https://github.com/carboncredits/yirgacheffe
-git+https://github.com/carboncredits/biomass-recovery@cb9a8964ac4cace771c6c92e30f2c527f2071d3a
+git+https://github.com/carboncredits/biomass-recovery@06114ce98c4a791555edef95d6b8939107e2222e
 
 # developement
 mypy
