@@ -1,11 +1,11 @@
 import json
-from typing import List
+from typing import List, Set, Tuple
 
 import pytest
 from osgeo import ogr, osr # type: ignore
 
-from methods.inputs.generate_boundary import utm_for_geometry, expand_boundaries # pylint: disable=E0401
-from .helpers import build_polygon
+from methods.common.geometry import utm_for_geometry, find_overlapping_geometries, expand_boundaries
+from .helpers import build_polygon, build_datasource, build_multipolygon
 
 @pytest.mark.parametrize(
     "lat,lng,expected",
@@ -77,36 +77,10 @@ def test_expand_boundary(lat: float, lng: float) -> None:
         ),
     ]
 )
-def test_simplify_output_geometry(polygon_list, expected_count):
-    def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
-        origin_lat = lat + radius
-        origin_lng = lng - radius
-        far_lat = lat - radius
-        far_lng = lng + radius
-        return [[
-            [origin_lng, origin_lat],
-            [far_lng,    origin_lat],
-            [far_lng,    far_lat],
-            [origin_lng, far_lat],
-            [origin_lng, origin_lat],
-        ]]
-
-    frame = {
-        'type': 'MULTIPOLYGON',
-        'coordinates': [_make_square(*poly) for poly in polygon_list]
-    }
-    test_multipoly = ogr.CreateGeometryFromJson(json.dumps(frame))
-    assert test_multipoly.GetGeometryType() == ogr.wkbMultiPolygon
-    assert test_multipoly.GetGeometryCount() == len(polygon_list)
-
-    spatial_ref = osr.SpatialReference()
-    spatial_ref.ImportFromEPSG(4326) # aka WSG84
-    test_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
-    test_layer = test_data_source.CreateLayer("buffer", spatial_ref, geom_type=ogr.wkbMultiPolygon)
-    feature_definition = test_layer.GetLayerDefn()
-    new_feature = ogr.Feature(feature_definition)
-    new_feature.SetGeometry(test_multipoly)
-    test_layer.CreateFeature(new_feature)
+def test_simplify_output_geometry(polygon_list: Set[Tuple[float]], expected_count: int) -> None:
+    test_multipoly = build_multipolygon(polygon_list)
+    test_data_source = build_datasource([test_multipoly])
+    test_layer = test_data_source.GetLayer()
 
     expanded_dataset = expand_boundaries(test_layer, 1000)
     assert len(expanded_dataset) == 1
@@ -121,3 +95,44 @@ def test_simplify_output_geometry(polygon_list, expected_count):
 
     assert expanded_geometries.GetGeometryType() == ogr.wkbMultiPolygon if expected_count > 1 else ogr.wkbPolygon
     assert expanded_geometries.GetGeometryCount() == expected_count
+
+@pytest.mark.parametrize(
+    "src_list,guard_list,expected",
+    [
+        (
+            {(10.0, 10.0, 0.2)},
+            {(10.0, 20.0, 0.2)},
+            0,
+        ),
+        (
+            {(10.0, 10.0, 2.0)},
+            {(11.0, 10.0, 2.0)},
+            1,
+        ),
+        (
+            {(10.0, 10.0, 2.0), (20, 20, 1.0)},
+            {(11.0, 10.0, 2.0)},
+            1,
+        ),
+        (
+            {(10.0, 10.0, 2.0)},
+            {(11.0, 10.0, 2.0), (9.0, 10.0, 2.0)},
+            1,
+        ),
+        (
+            {(10.0, 10.0, 2.0), (20, 20, 1.0)},
+            {(11.0, 10.0, 10.0)},
+            2,
+        ),
+    ]
+)
+def test_overlapping_geometries(src_list: Set[Tuple[float]], guard_list: Set[Tuple[float]], expected: int) -> None:
+    srcs = [build_polygon(*x) for x in src_list]
+    src = build_datasource(srcs)
+    guards = [build_polygon(*x) for x in guard_list]
+    guard = build_datasource(guards)
+
+    result = find_overlapping_geometries(src.GetLayer(), guard.GetLayer())
+
+    result_layer = result.GetLayer()
+    assert len(result_layer) == expected
