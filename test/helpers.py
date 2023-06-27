@@ -1,6 +1,8 @@
 import json
 from typing import List, Set, Tuple
 
+from geopandas import gpd
+from shapely.geometry import Polygon
 from osgeo import ogr, osr # type: ignore
 
 def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
@@ -16,12 +18,8 @@ def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]
         [origin_lng, origin_lat],
     ]]
 
-def build_polygon(lat: float, lng: float, radius: float) -> ogr.Geometry:
-    frame = {
-        'type': 'POLYGON',
-        'coordinates': _make_square(lat, lng, radius)
-    }
-    return ogr.CreateGeometryFromJson(json.dumps(frame))
+def build_polygon(lat: float, lng: float, radius: float) -> Polygon:
+    return Polygon(_make_square(lat, lng, radius)[0])
 
 def build_multipolygon(polygon_list: Set[Tuple[float]]) -> ogr.Geometry:
     frame = {
