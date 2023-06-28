@@ -1,7 +1,7 @@
 import sys
 
-from fiona.errors import DriverError
-from geopandas import gpd
+from fiona.errors import DriverError # type: ignore
+from geopandas import gpd # type: ignore
 
 from methods.common.geometry import expand_boundaries
 
@@ -9,7 +9,7 @@ PROJECT_BOUNDARY_RADIUS_IN_METRES = 30_000
 
 def generate_boundary(input_filename: str, output_filename: str) -> None:
 	project_boundaries = gpd.read_file(input_filename)
-	result = expand_boundaries(project_boundaries, PROJECT_BOUNDARY_RADIUS_IN_METRES)b
+	result = expand_boundaries(project_boundaries, PROJECT_BOUNDARY_RADIUS_IN_METRES)
 	result.to_file(output_filename, driver="GeoJSON")
 
 if __name__ == "__main__":

@@ -1,9 +1,6 @@
-import json
-from typing import List, Set, Tuple
+from typing import List
 
-from geopandas import gpd
 from shapely.geometry import Polygon
-from osgeo import ogr, osr # type: ignore
 
 def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
     origin_lat = lat + radius
@@ -20,24 +17,3 @@ def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]
 
 def build_polygon(lat: float, lng: float, radius: float) -> Polygon:
     return Polygon(_make_square(lat, lng, radius)[0])
-
-def build_multipolygon(polygon_list: Set[Tuple[float]]) -> ogr.Geometry:
-    frame = {
-        'type': 'MULTIPOLYGON',
-        'coordinates': [_make_square(*poly) for poly in polygon_list]
-    }
-    return ogr.CreateGeometryFromJson(json.dumps(frame))
-
-def build_datasource(geometry_list: List[ogr.Geometry]) -> ogr.DataSource:
-    spatial_ref = osr.SpatialReference()
-    spatial_ref.ImportFromEPSG(4326) # aka WSG84
-
-    test_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
-    test_layer = test_data_source.CreateLayer("buffer", spatial_ref, geom_type=ogr.wkbMultiPolygon)
-    feature_definition = test_layer.GetLayerDefn()
-    for geometry in geometry_list:
-        new_feature = ogr.Feature(feature_definition)
-        new_feature.SetGeometry(geometry)
-        test_layer.CreateFeature(new_feature)
-
-    return test_data_source

@@ -1,12 +1,10 @@
-import json
-from typing import List, Set, Tuple
+from typing import Set, Tuple
 
 import pytest
 from geopandas import gpd
-from osgeo import ogr, osr # type: ignore
 
-from methods.common.geometry import utm_for_geometry, find_overlapping_geometries, expand_boundaries
-from .helpers import build_polygon, build_datasource, build_multipolygon
+from methods.common.geometry import utm_for_geometry, expand_boundaries
+from .helpers import build_polygon
 
 @pytest.mark.parametrize(
     "lat,lng,expected",
@@ -40,7 +38,6 @@ def test_expand_boundary(lat: float, lng: float) -> None:
 
     assert expanded_area > original_area
 
-
 @pytest.mark.parametrize(
     "polygon_list,expected_count",
     [
@@ -63,61 +60,19 @@ def test_expand_boundary(lat: float, lng: float) -> None:
     ]
 )
 def test_simplify_output_geometry(polygon_list: Set[Tuple[float]], expected_count: int) -> None:
-    test_multipoly = build_multipolygon(polygon_list)
-    test_data_source = build_datasource([test_multipoly])
-    test_layer = test_data_source.GetLayer()
+    test_polygons = [build_polygon(*poly) for poly in polygon_list]
+    test_gdf = gpd.GeoDataFrame.from_features(gpd.GeoSeries(test_polygons), crs="EPSG:4326")
 
-    expanded_dataset = expand_boundaries(test_layer, 1000)
-    assert len(expanded_dataset) == 1
+    expanded = expand_boundaries(test_gdf, 1000)
+    assert expanded.shape[0] == 1
 
-    expanded_layer = expanded_dataset.GetLayer()
-    assert len(expanded_layer) == 1
+    # because of the user of unary_uniform, we expect there to be one multipolygon geometry,
+    # or one polygon
+    assert len(expanded.geometry) == 1
 
-    expanded_feature = expanded_layer.GetNextFeature()
-    assert expanded_layer.GetNextFeature() is None
-
-    expanded_geometries = expanded_feature.GetGeometryRef()
-
-    assert expanded_geometries.GetGeometryType() == ogr.wkbMultiPolygon if expected_count > 1 else ogr.wkbPolygon
-    assert expanded_geometries.GetGeometryCount() == expected_count
-
-@pytest.mark.parametrize(
-    "src_list,guard_list,expected",
-    [
-        (
-            {(10.0, 10.0, 0.2)},
-            {(10.0, 20.0, 0.2)},
-            0,
-        ),
-        (
-            {(10.0, 10.0, 2.0)},
-            {(11.0, 10.0, 2.0)},
-            1,
-        ),
-        (
-            {(10.0, 10.0, 2.0), (20, 20, 1.0)},
-            {(11.0, 10.0, 2.0)},
-            1,
-        ),
-        (
-            {(10.0, 10.0, 2.0)},
-            {(11.0, 10.0, 2.0), (9.0, 10.0, 2.0)},
-            1,
-        ),
-        (
-            {(10.0, 10.0, 2.0), (20, 20, 1.0)},
-            {(11.0, 10.0, 10.0)},
-            2,
-        ),
-    ]
-)
-def test_overlapping_geometries(src_list: Set[Tuple[float]], guard_list: Set[Tuple[float]], expected: int) -> None:
-    srcs = [build_polygon(*x) for x in src_list]
-    src = build_datasource(srcs)
-    guards = [build_polygon(*x) for x in guard_list]
-    guard = build_datasource(guards)
-
-    result = find_overlapping_geometries(src.GetLayer(), guard.GetLayer())
-
-    result_layer = result.GetLayer()
-    assert len(result_layer) == expected
+    top_level = expanded.geometry[0]
+    if expected_count > 1:
+        assert top_level.geom_type == 'MultiPolygon'
+        assert len(top_level.geoms) == expected_count
+    else:
+        assert top_level.geom_type == 'Polygon'
