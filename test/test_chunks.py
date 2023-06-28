@@ -1,8 +1,28 @@
+import json
 import pytest
 from osgeo import ogr, osr # type: ignore
 
 from methods.inputs.download_gedi_data import chunk_geometry # pylint: disable=E0401
-from .helpers import build_polygon
+
+def _build_polygon(lat: float, lng: float, radius: float) -> ogr.Geometry:
+    origin_lat = lat + radius
+    origin_lng = lng - radius
+    far_lat = lat - radius
+    far_lng = lng + radius
+
+    frame = {
+        'type': 'POLYGON',
+        'coordinates': [
+            [
+                [origin_lng, origin_lat],
+                [far_lng,    origin_lat],
+                [far_lng,    far_lat],
+                [origin_lng, far_lat],
+                [origin_lng, origin_lat],
+            ]
+        ]
+    }
+    return ogr.CreateGeometryFromJson(json.dumps(frame))
 
 @pytest.mark.parametrize(
     "diameter,chunk_size,expected_count",
@@ -14,7 +34,7 @@ from .helpers import build_polygon
     ]
 )
 def test_chunk_large_area(diameter: float, chunk_size: float, expected_count: int) -> None:
-    test_poly = build_polygon(42.3, 12.6, diameter/2)
+    test_poly = _build_polygon(42.3, 12.6, diameter/2)
 
     spatial_ref = osr.SpatialReference()
     spatial_ref.ImportFromEPSG(4326) # aka WSG84
