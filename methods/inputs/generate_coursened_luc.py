@@ -7,9 +7,9 @@ import sys
 import tempfile
 
 import numpy as np
-from osgeo import gdal
-from yirgacheffe.layers import RasterLayer
-from yirgacheffe.window import Area, PixelScale
+from osgeo import gdal  # type: ignore
+from yirgacheffe.layers import RasterLayer  # type: ignore
+from yirgacheffe.window import Area, PixelScale  # type: ignore
 
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
