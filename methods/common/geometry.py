@@ -26,3 +26,10 @@ def expand_boundaries(source: gpd.GeoDataFrame, radius: float) -> gpd.GeoDataFra
     finished = gpd.GeoSeries(simplified)
     utm_result = gpd.GeoDataFrame.from_features(finished, crs=f"EPSG:{utm_code}")
     return utm_result.to_crs(original_projection)
+
+def area_for_geometry(source: gpd.GeoDataFrame) -> float:
+    """returns area in metres squared"""
+    utm_codes = np.array([utm_for_geometry(x.centroid.y, x.centroid.x) for x in source.geometry])
+    utm_code = scipy.stats.mode(utm_codes, keepdims=False).mode
+    projected_boundaries = source.to_crs(f"EPSG:{utm_code}")
+    return projected_boundaries.area.sum()
