@@ -1,10 +1,9 @@
-import json
-from typing import List
+from typing import Set, Tuple
 
 import pytest
-from osgeo import ogr, osr # type: ignore
+from geopandas import gpd
 
-from methods.inputs.generate_boundary import utm_for_geometry, expand_boundaries # pylint: disable=E0401
+from methods.common.geometry import utm_for_geometry, expand_boundaries
 from .helpers import build_polygon
 
 @pytest.mark.parametrize(
@@ -17,9 +16,7 @@ from .helpers import build_polygon
     ]
 )
 def test_utm_band(lat: float, lng: float, expected: int) -> None:
-    test_poly = build_polygon(lat, lng, 0.2)
-
-    utm_code = utm_for_geometry(test_poly)
+    utm_code = utm_for_geometry(lat, lng)
     assert utm_code == expected
 
 @pytest.mark.parametrize(
@@ -33,28 +30,13 @@ def test_utm_band(lat: float, lng: float, expected: int) -> None:
 )
 def test_expand_boundary(lat: float, lng: float) -> None:
     test_poly = build_polygon(lat, lng, 0.2)
+    test_gdf = gpd.GeoDataFrame.from_features(gpd.GeoSeries(test_poly), crs="EPSG:4326")
+    original_area = test_gdf.to_crs('3857').area.sum()
 
-    original_area = test_poly.GetArea()
-
-    spatial_ref = osr.SpatialReference()
-    spatial_ref.ImportFromEPSG(4326) # aka WSG84
-    test_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
-    test_layer = test_data_source.CreateLayer("buffer", spatial_ref, geom_type=ogr.wkbMultiPolygon)
-    feature_definition = test_layer.GetLayerDefn()
-    new_feature = ogr.Feature(feature_definition)
-    new_feature.SetGeometry(test_poly)
-    test_layer.CreateFeature(new_feature)
-
-    expanded_dataset = expand_boundaries(test_layer, 1000)
-    assert len(expanded_dataset) == 1
-    expanded_layer = expanded_dataset.GetLayer()
-    assert len(expanded_layer) == 1
-    expanded_feature = expanded_layer.GetNextFeature()
-    expanded_geometry = expanded_feature.GetGeometryRef()
-    expanded_area = expanded_geometry.GetArea()
+    expanded_gdf = expand_boundaries(test_gdf, 1000)
+    expanded_area = expanded_gdf.to_crs('3857').area.sum()
 
     assert expanded_area > original_area
-
 
 @pytest.mark.parametrize(
     "polygon_list,expected_count",
@@ -77,47 +59,20 @@ def test_expand_boundary(lat: float, lng: float) -> None:
         ),
     ]
 )
-def test_simplify_output_geometry(polygon_list, expected_count):
-    def _make_square(lat: float, lng: float, radius: float) -> List[List[List[float]]]:
-        origin_lat = lat + radius
-        origin_lng = lng - radius
-        far_lat = lat - radius
-        far_lng = lng + radius
-        return [[
-            [origin_lng, origin_lat],
-            [far_lng,    origin_lat],
-            [far_lng,    far_lat],
-            [origin_lng, far_lat],
-            [origin_lng, origin_lat],
-        ]]
+def test_simplify_output_geometry(polygon_list: Set[Tuple[float]], expected_count: int) -> None:
+    test_polygons = [build_polygon(*poly) for poly in polygon_list]
+    test_gdf = gpd.GeoDataFrame.from_features(gpd.GeoSeries(test_polygons), crs="EPSG:4326")
 
-    frame = {
-        'type': 'MULTIPOLYGON',
-        'coordinates': [_make_square(*poly) for poly in polygon_list]
-    }
-    test_multipoly = ogr.CreateGeometryFromJson(json.dumps(frame))
-    assert test_multipoly.GetGeometryType() == ogr.wkbMultiPolygon
-    assert test_multipoly.GetGeometryCount() == len(polygon_list)
+    expanded = expand_boundaries(test_gdf, 1000)
+    assert expanded.shape[0] == 1
 
-    spatial_ref = osr.SpatialReference()
-    spatial_ref.ImportFromEPSG(4326) # aka WSG84
-    test_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
-    test_layer = test_data_source.CreateLayer("buffer", spatial_ref, geom_type=ogr.wkbMultiPolygon)
-    feature_definition = test_layer.GetLayerDefn()
-    new_feature = ogr.Feature(feature_definition)
-    new_feature.SetGeometry(test_multipoly)
-    test_layer.CreateFeature(new_feature)
+    # because of the user of unary_uniform, we expect there to be one multipolygon geometry,
+    # or one polygon
+    assert len(expanded.geometry) == 1
 
-    expanded_dataset = expand_boundaries(test_layer, 1000)
-    assert len(expanded_dataset) == 1
-
-    expanded_layer = expanded_dataset.GetLayer()
-    assert len(expanded_layer) == 1
-
-    expanded_feature = expanded_layer.GetNextFeature()
-    assert expanded_layer.GetNextFeature() is None
-
-    expanded_geometries = expanded_feature.GetGeometryRef()
-
-    assert expanded_geometries.GetGeometryType() == ogr.wkbMultiPolygon if expected_count > 1 else ogr.wkbPolygon
-    assert expanded_geometries.GetGeometryCount() == expected_count
+    top_level = expanded.geometry[0]
+    if expected_count > 1:
+        assert top_level.geom_type == 'MultiPolygon'
+        assert len(top_level.geoms) == expected_count
+    else:
+        assert top_level.geom_type == 'Polygon'
