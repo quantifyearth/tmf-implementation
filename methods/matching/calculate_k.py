@@ -21,7 +21,8 @@ PIXEL_SKIP_SMALL_PROJECT = \
 PIXEL_SKIP_LARGE_PROJECT = \
     round((HECTARE_WIDTH_IN_METERS / (2 * LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
 
-MatchingCollection = namedtuple('MatchingCollection', ['boundary', 'lucs', 'ecoregions', 'elevation'])
+MatchingCollection = namedtuple('MatchingCollection',
+    ['boundary', 'lucs', 'ecoregions', 'elevation', 'slope', 'access'])
 
 def build_layer_collection(
     pixel_scale: PixelScale,
@@ -31,6 +32,8 @@ def build_layer_collection(
     jrc_data_folder: str,
     ecoregions_folder_filename: str,
     elevation_folder_filename: str,
+    slope_folder_filename: str,
+    access_folder_filename: str,
 ) -> MatchingCollection:
     outline_layer = VectorLayer.layer_from_file(boundary_filename, None, pixel_scale, projection)
     lucs = [
@@ -47,17 +50,29 @@ def build_layer_collection(
             glob.glob("*.tif", root_dir=ecoregions_folder_filename)
     ])
 
-    # This is very memory inefficient
+    # These are very memory inefficient
     elevation = GroupLayer([
         RasterLayer.scaled_raster_from_raster(
             RasterLayer.layer_from_file(os.path.join(elevation_folder_filename, filename)),
             pixel_scale,
         ) for filename in
-            glob.glob("*.tif", root_dir=elevation_folder_filename)
+            glob.glob("srtm*.tif", root_dir=elevation_folder_filename)
+    ])
+    slopes = GroupLayer([
+        RasterLayer.scaled_raster_from_raster(
+            RasterLayer.layer_from_file(os.path.join(slope_folder_filename, filename)),
+            pixel_scale,
+        ) for filename in
+            glob.glob("slope*.tif", root_dir=slope_folder_filename)
+    ])
+
+    access = GroupLayer([
+        RasterLayer.layer_from_file(os.path.join(access_folder_filename, filename)) for filename in
+            glob.glob("*.tif", root_dir=access_folder_filename)
     ])
 
     # constrain everything to project boundaries
-    layers = [elevation, ecoregions] + lucs
+    layers = [elevation, slopes, ecoregions, access] + lucs
     for layer in layers:
         layer.set_window_for_intersection(outline_layer.area)
 
@@ -65,7 +80,9 @@ def build_layer_collection(
         boundary=outline_layer,
         lucs=lucs,
         ecoregions=ecoregions,
-        elevation=elevation
+        elevation=elevation,
+        slope=slopes,
+        access=access
     )
 
 def calculate_k(
@@ -73,8 +90,10 @@ def calculate_k(
     jrc_data_folder: str,
     ecoregions_folder_filename: str,
     elevation_folder_filename: str,
+    slope_folder_filename: str,
+    access_folder_filename: str,
     year: int,
-    result_dataframe_filename: str
+    result_dataframe_filename: str,
 ) -> None:
 
     project = gpd.read_file(project_boundary_filename)
@@ -94,6 +113,8 @@ def calculate_k(
         jrc_data_folder,
         ecoregions_folder_filename,
         elevation_folder_filename,
+        slope_folder_filename,
+        access_folder_filename,
     )
 
     results = []
@@ -103,6 +124,8 @@ def calculate_k(
         row_boundary = project_collection.boundary.read_array(0, yoffset, project_width, 1)
         row_elevation = project_collection.elevation.read_array(0, yoffset, project_width, 1)
         row_ecoregion = project_collection.ecoregions.read_array(0, yoffset, project_width, 1)
+        row_slope = project_collection.slope.read_array(0, yoffset, project_width, 1)
+        row_access = project_collection.access.read_array(0, yoffset, project_width, 1)
         row_luc = [
             luc.read_array(0, yoffset, project_width, 1) for luc in project_collection.lucs
         ]
@@ -110,9 +133,17 @@ def calculate_k(
             if not row_boundary[0][xoffset]:
                 continue
             lucs = [x[0][xoffset] for x in row_luc]
-            results.append([xoffset, yoffset, row_elevation[0][xoffset], row_ecoregion[0][xoffset]] + lucs)
+            results.append([
+                xoffset,
+                yoffset,
+                row_elevation[0][xoffset],
+                row_slope[0][xoffset],
+                row_ecoregion[0][xoffset],
+                row_access[0][xoffset],
+            ] + lucs)
 
-    output = pd.DataFrame(results, columns=['x', 'y', 'elevation', 'ecoregion', 'luc0', 'luc5', 'luc10'])
+    output = pd.DataFrame(results,
+        columns=['x', 'y', 'elevation', 'slope', 'ecoregion', 'access', 'luc0', 'luc5', 'luc10'])
     output.to_parquet(result_dataframe_filename)
 
 def main():
@@ -121,10 +152,13 @@ def main():
         jrc_data_folder = sys.argv[2]
         ecoregions_folder_filename = sys.argv[3]
         elevation_folder_filename = sys.argv[4]
-        year = int(sys.argv[5])
-        result_dataframe_filename = sys.argv[6]
+        slope_folder_filename = sys.argv[5]
+        access_folder_filename = sys.argv[6]
+        year = int(sys.argv[7])
+        result_dataframe_filename = sys.argv[8]
     except (IndexError, ValueError):
-        print(f"Usage: {sys.argv[0]} PROJECT_BOUNDARY JRC_FOLDER ECOREGIONS_FOLDER ELEVATION_FOLDER YEAR OUT_PARQUET",
+        print(f"Usage: {sys.argv[0]} PROJECT_BOUNDARY JRC_FOLDER"
+            "ECOREGIONS_FOLDER ELEVATION_FOLDER SLOPE_FOLDER YEAR OUT_PARQUET",
             file=sys.stderr)
         sys.exit(1)
 
@@ -133,6 +167,8 @@ def main():
         jrc_data_folder,
         ecoregions_folder_filename,
         elevation_folder_filename,
+        slope_folder_filename,
+        access_folder_filename,
         year,
         result_dataframe_filename
     )
