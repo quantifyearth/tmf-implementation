@@ -36,7 +36,6 @@ def download_srtm_data(
 
 	for y in range(min_y, max_y + 1):
 		for x in range(min_x, max_x + 1):
-			print(f"{x}, {y}")
 			url = URL_TEMPLATE % (x, y)
 			target_filename = url.split('/')[-1]
 			target_path = os.path.join(destination_zip_folder, target_filename)
@@ -44,7 +43,6 @@ def download_srtm_data(
 			if not os.path.exists(target_path):
 				with tempfile.TemporaryDirectory() as tempdir:
 					download_target = os.path.join(tempdir, target_filename)
-					print(f"Downloading {url}")
 					with requests.get(url, stream=True) as response:
 						response.raise_for_status()
 						with open(download_target, 'wb') as f:
