@@ -46,9 +46,6 @@ def test_ep_one():
     # other side with essentially a truly permanent carbon credit and thus eP should equal
     # (in a floating point sense) 1.0
 
-    now = 5
-    release = 7
-
     # With this additionality and leakage, from year 5 we will get C(5) = 1.0
     add =  [ 9.0, 9.0, 9.0, 9.0, 9.0, 10.0 ]
     leak = [ 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 ]
@@ -114,8 +111,8 @@ def test_make_release():
     for est in range(0, now):
         estimates = []
         for fut in range(0, carry_on_to):
-            r = permanence.release_schedule(quality, additionality, leakage, est, fut, project_end)
-            estimates.append(r)
+            rel_sched = permanence.release_schedule(quality, additionality, leakage, est, fut, project_end)
+            estimates.append(rel_sched)
         schedule.append(estimates)
     # What do we expect?
     # It's high quality, so everything until the project_end is 0.0 estimated from any previous time period
