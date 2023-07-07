@@ -1,6 +1,6 @@
 .DS_Store
 *.npy
-./data
+data
 
 
 # Byte-compiled / optimized / DLL files
