@@ -136,6 +136,8 @@ def calculate_k(
             results.append([
                 xoffset,
                 yoffset,
+                project_collection.boundary.area.top + (yoffset * project_collection.boundary.pixel_scale.ystep),
+                project_collection.boundary.area.left + (xoffset * project_collection.boundary.pixel_scale.xstep),
                 row_elevation[0][xoffset],
                 row_slope[0][xoffset],
                 row_ecoregion[0][xoffset],
@@ -143,7 +145,7 @@ def calculate_k(
             ] + lucs)
 
     output = pd.DataFrame(results,
-        columns=['x', 'y', 'elevation', 'slope', 'ecoregion', 'access', 'luc0', 'luc5', 'luc10'])
+        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'luc0', 'luc5', 'luc10'])
     output.to_parquet(result_dataframe_filename)
 
 def main():

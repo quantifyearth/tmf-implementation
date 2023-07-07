@@ -13,7 +13,7 @@ def sum_rasters(input_folder: str, output_raster: str) -> None:
 
 	temp_raster = RasterLayer.layer_from_file(rasters[0])
 	for raster_file in rasters[1:]:
-		this_raster = RasterLayer.layer_from_file(rasters[0])
+		this_raster = RasterLayer.layer_from_file(raster_file)
 		new_res = RasterLayer.empty_raster_layer_like(temp_raster, datatype=gdal.GDT_UInt16)
 		calc = this_raster + temp_raster
 		calc.save(new_res)
