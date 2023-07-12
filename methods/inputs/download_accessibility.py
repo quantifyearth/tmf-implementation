@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+from shutil import move
 from glob import glob
 
 import requests
@@ -44,7 +45,7 @@ def download_accessibility_tif(source_url: str, target_path: str) -> None:
 			tif_names = " ".join(tifs)
 			raise ValueError(f"Downloading accessiblity data should only result in a single TIF\nGot: {tif_names}")
 
-		os.rename(os.path.join(tmpdir, tifs[0]), target_path)
+		move(os.path.join(tmpdir, tifs[0]), target_path)
 
 
 if __name__ == "__main__":
