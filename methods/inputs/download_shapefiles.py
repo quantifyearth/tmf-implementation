@@ -79,6 +79,6 @@ if __name__ == "__main__":
 
 	try:
 		download_country_polygons(source_url, target_filename)
-	except DownloadError:
-		print("Failed to download file", file=sys.stderr)
+	except DownloadError as e:
+		print(f"Failed to download file ({e.args})", file=sys.stderr)
 		sys.exit(1)
