@@ -7,6 +7,7 @@ import tempfile
 from functools import partial
 from multiprocessing import Pool
 
+from osgeo import gdal
 from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
 
 # The real cost here is repeated re-drawing of the ecoregions, so cut down on that
@@ -20,14 +21,21 @@ os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 def process_tile(result_path, jrc_path) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
         jrc_raster = RasterLayer.layer_from_file(jrc_path)
-        ecoregions = VectorLayer.layer_from_file(ecoregions_filename, None, jrc_raster.pixel_scale, jrc_raster.projection, burn_value="ECO_ID")
+        ecoregions = VectorLayer.layer_from_file(
+            ecoregions_filename,
+            None,
+            jrc_raster.pixel_scale,
+            jrc_raster.projection,
+            datatype=gdal.GDT_UInt16,
+            burn_value="ECO_ID"
+        )
 
         matches = re.match(".*_([NS]\d+)_([WE]\d+).tif", jrc_path)
         assert matches is not None
 
         filename = f"ecoregion_{matches[1]}_{matches[2]}.tif"
         target_filename = os.path.join(tempdir, filename)
-        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename)
+        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename, datatype=ecoregions.datatype)
         ecoregions.set_window_for_intersection(jrc_raster.area)
         ecoregions.save(result)
         del result._dataset
