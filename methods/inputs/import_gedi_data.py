@@ -24,11 +24,20 @@ def import_file(filename: str) -> None:
 
 	engine = sqlalchemy.create_engine(environment.DB_CONFIG, echo=False)
 	with engine.begin() as con:
+		existing = pd.read_sql_table(
+			table_name="level_4a_granules", columns=["granule_name"], con=con
+		)
+
 		gedi_data = gedi_data.astype({"shot_number": "int64"})
+		this_granule_name = gedi_data["granule_name"].head(1).item()
+
+		if (existing.granule_name==this_granule_name).any():
+			print(f"Skipping {filename} as granule {this_granule_name} already exists.")
+			return
 
 		granules_entry = pd.DataFrame(
 			data={
-				"granule_name": [gedi_data["granule_name"].head(1).item()],
+				"granule_name": [this_granule_name],
 				"created_date": [pd.Timestamp.utcnow()],
 			}
 		)
