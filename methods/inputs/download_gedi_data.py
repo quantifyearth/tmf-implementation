@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import tempfile
+from http import HTTPStatus
 from typing import Set
 
 import geopandas as gpd # type: ignore
@@ -20,6 +21,12 @@ from osgeo import ogr, osr  # type: ignore
 dotenv.load_dotenv()
 EARTHDATA_USER = os.getenv("EARTHDATA_USER")
 EARTHDATA_PASSWORD = os.getenv("EARTHDATA_PASSWORD")
+
+class DownloadError(Exception):
+	def __init__(self, status_code, reason, url):
+		self.status_code = status_code
+		self.reason = reason
+		self.url = url
 
 def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 	output_spatial_ref = osr.SpatialReference()
@@ -74,7 +81,12 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
 				session.auth = (EARTHDATA_USER, EARTHDATA_PASSWORD)
 			else:
 				raise ValueError("Both EARTHDATA_USER and EARTHDATA_PASSWORD must be defined in environment.")
-			response = session.get(url, stream=True)
+			# Based on final example in https://wiki.earthdata.nasa.gov/display/EL/How+To+Access+Data+With+Python
+			# you have to make an initial request and then auth on that
+			auth_response = session.request('get', url)
+			response = session.get(auth_response.url, auth=session.auth, stream=True)
+			if response.status_code != HTTPStatus.OK:
+				raise DownloadError(response.status_code, response.content, url)
 			download_target_name = os.path.join(tmpdir, name)
 			with open(download_target_name, 'wb') as f:
 				for chunk in response.iter_content(chunk_size=1024*1024):
@@ -145,6 +157,9 @@ if __name__ == "__main__":
 		gedi_data_dir = sys.argv[2]
 	except IndexError:
 		print(f"Usage: {sys.argv[0]} BUFFER_BOUNDRY_FILE GEDI_DATA_DIRECTORY")
+		sys.exit(1)
+	except DownloadError as exc:
+		print(f"Failed to download: {exc}")
 		sys.exit(1)
 
 	gedi_fetch(boundary_file, gedi_data_dir)
