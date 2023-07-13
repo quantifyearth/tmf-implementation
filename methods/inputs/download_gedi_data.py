@@ -1,4 +1,5 @@
 import datetime as dt
+import glob
 import json
 import os
 import shutil
@@ -142,7 +143,7 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
 
 	granule_metadata = pd.concat(granule_metadatas).drop_duplicates(subset="granule_name")
 
-	stored_granules = [file for file in os.listdir(gedi_data_dir) if file.endswith('.h5')]
+	stored_granules = glob.glob("*.h5", root_dir=gedi_data_dir)
 	required_granules = granule_metadata.loc[~granule_metadata["granule_name"].isin(stored_granules)]
 	name_url_pairs = required_granules[["granule_name", "granule_url"]].to_records(
 		index=False
