@@ -2,6 +2,7 @@ import glob
 import os
 import sys
 from collections import namedtuple
+from typing import List
 
 import pandas as pd
 from geopandas import gpd  # type: ignore
@@ -27,7 +28,7 @@ MatchingCollection = namedtuple('MatchingCollection',
 def build_layer_collection(
     pixel_scale: PixelScale,
     projection: str,
-    evaluation_year: int,
+    luc_years: List[int],
     boundary_filename: str,
     jrc_data_folder: str,
     ecoregions_folder_filename: str,
@@ -39,8 +40,8 @@ def build_layer_collection(
     lucs = [
         GroupLayer([
             RasterLayer.layer_from_file(os.path.join(jrc_data_folder, filename)) for filename in
-                glob.glob(f"*{evaluation_year - offset}*.tif", root_dir=jrc_data_folder)
-        ]) for offset in range(0, 11, 5)
+                glob.glob(f"*{year}*.tif", root_dir=jrc_data_folder)
+        ]) for year in luc_years
     ]
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
@@ -108,7 +109,7 @@ def calculate_k(
     project_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        year,
+        [year, year - 5, year - 10],
         project_boundary_filename,
         jrc_data_folder,
         ecoregions_folder_filename,
