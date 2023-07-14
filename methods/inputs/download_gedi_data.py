@@ -17,17 +17,13 @@ from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape #
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
 
+from ..common import DownloadError
+
 # This is defined in biomassrecovery.environment too, but that file
 # is full of side-effects, so just import directly here.
 dotenv.load_dotenv()
 EARTHDATA_USER = os.getenv("EARTHDATA_USER")
 EARTHDATA_PASSWORD = os.getenv("EARTHDATA_PASSWORD")
-
-class DownloadError(Exception):
-	def __init__(self, status_code, reason, url):
-		self.status_code = status_code
-		self.reason = reason
-		self.url = url
 
 def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 	output_spatial_ref = osr.SpatialReference()
@@ -87,7 +83,7 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
 			auth_response = session.request('get', url)
 			response = session.get(auth_response.url, auth=session.auth, stream=True)
 			if response.status_code != HTTPStatus.OK:
-				raise DownloadError(response.status_code, response.content, url)
+				raise DownloadError(response.status_code, response.reason, url)
 			download_target_name = os.path.join(tmpdir, name)
 			with open(download_target_name, 'wb') as f:
 				for chunk in response.iter_content(chunk_size=1024*1024):
@@ -160,7 +156,7 @@ if __name__ == "__main__":
 		print(f"Usage: {sys.argv[0]} BUFFER_BOUNDRY_FILE GEDI_DATA_DIRECTORY")
 		sys.exit(1)
 	except DownloadError as exc:
-		print(f"Failed to download: {exc}")
+		print(f"Failed to download: {exc.msg}")
 		sys.exit(1)
 
 	gedi_fetch(boundary_file, gedi_data_dir)
