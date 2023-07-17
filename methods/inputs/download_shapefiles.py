@@ -12,7 +12,8 @@ from ..common import DownloadError
 
 # As taken from the World Bank data catalog https://datacatalog.worldbank.org/search/dataset/0038272
 # Under CC BY 4.0
-COUNTRY_SOURCE_URL = "https://datacatalogfiles.worldbank.org/ddh-published/0038272/DR0046659/wb_countries_admin0_10m.zip"
+COUNTRY_SOURCE_URL = \
+    "https://datacatalogfiles.worldbank.org/ddh-published/0038272/DR0046659/wb_countries_admin0_10m.zip"
 
 # As taken from https://www.oneearth.org/announcing-the-release-of-ecoregion-snapshots/
 # Under CC BY 4.0
@@ -32,12 +33,12 @@ class UnpackError(Exception):
 def download_country_polygons(source_url: str, target_filename: str) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
         download_path = os.path.join(tmpdir, "countries.zip")
-        response = requests.get(source_url, stream=True)
+        response = requests.get(source_url, stream=True, timeout=60)
         if not response.ok:
             raise DownloadError(response.status_code, response.reason, source_url)
-        with open(download_path, 'wb') as fd:
+        with open(download_path, 'wb') as output_file:
             for chunk in response.iter_content(chunk_size=1024*1024):
-                fd.write(chunk)
+                output_file.write(chunk)
         unzip_path = os.path.join(tmpdir, "countries")
         unzip(download_path, unzip_path)
 
@@ -54,8 +55,7 @@ def download_country_polygons(source_url: str, target_filename: str) -> None:
         shape_file_data = geopandas.read_file(shape_file_path)
         shape_file_data.to_file(target_filename, driver='GeoJSON')
 
-
-if __name__ == "__main__":
+def main() -> None:
     try:
         target_type = sys.argv[1]
         target_filename = sys.argv[2]
@@ -82,3 +82,6 @@ if __name__ == "__main__":
     except DownloadError as exc:
         print(f"Failed to download file: {exc.msg}", file=sys.stderr)
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

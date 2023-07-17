@@ -43,13 +43,13 @@ def coursen_jrc_tile(tile_filename, result_filename, luc):
         src.projection
     )
 
-    for y in range(result_height):
+    for yoffset in range(result_height):
         buffer = []
-        src = filtered_result.read_array(0, y * 40, result_width * 40, 40)
-        for x in range(result_width):
-            subset = src[0:40, x*40:(x+1)*40]
+        src = filtered_result.read_array(0, yoffset * 40, result_width * 40, 40)
+        for xoffset in range(result_width):
+            subset = src[0:40, xoffset*40:(xoffset+1)*40]
             buffer.append(subset.sum() / (40.0 * 40.0))
-        result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, y)
+        result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
 
 def generate_coursened_luc(jrc_directory: str, result_directory: str) -> None:
     os.makedirs(result_directory, exist_ok=True)
@@ -59,19 +59,19 @@ def generate_coursened_luc(jrc_directory: str, result_directory: str) -> None:
             match = JRC_FILENAME_RE.match(filename)
             if match is None:
                 raise ValueError(f"Failed to parse JRC filename {filename}")
-            year, x, y = match.groups()
+            year, xoffset, yoffset = match.groups()
 
             src = os.path.join(jrc_directory, filename)
 
             # Clearly more efficient to do this loop inside the coursen_jrc_tile
             # function, but we don't need to run this often and it keeps the code simpler
             for luc in range(1, 7):
-                tempdest = os.path.join(tempdir, f"course_{x}_{y}_{year}_{luc}.tif")
+                tempdest = os.path.join(tempdir, f"course_{xoffset}_{yoffset}_{year}_{luc}.tif")
                 coursen_jrc_tile(src, tempdest, luc)
 
-                shutil.move(tempdest, os.path.join(result_directory, f"course_{x}_{y}_{year}_{luc}.tif"))
+                shutil.move(tempdest, os.path.join(result_directory, f"course_{xoffset}_{yoffset}_{year}_{luc}.tif"))
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         jrc_directory = sys.argv[1]
         result_directory = sys.argv[2]
@@ -80,3 +80,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     generate_coursened_luc(jrc_directory, result_directory)
+
+if __name__ == "__main__":
+    main()

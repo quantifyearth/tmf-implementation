@@ -6,7 +6,6 @@ import shutil
 import sys
 import tempfile
 from http import HTTPStatus
-from typing import Set
 
 import geopandas as gpd # type: ignore
 import pandas as pd
@@ -58,8 +57,8 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
                         ]
                     ]
                 }
-                chunk_geometry = ogr.CreateGeometryFromJson(json.dumps(frame))
-                intersection = geometry.Intersection(chunk_geometry)
+                chunk = ogr.CreateGeometryFromJson(json.dumps(frame))
+                intersection = geometry.Intersection(chunk)
                 if not intersection.IsEmpty():
                     new_feature = ogr.Feature(feature_definition)
                     new_feature.SetGeometry(intersection)
@@ -85,9 +84,9 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
             if response.status_code != HTTPStatus.OK:
                 raise DownloadError(response.status_code, response.reason, url)
             download_target_name = os.path.join(tmpdir, name)
-            with open(download_target_name, 'wb') as f:
+            with open(download_target_name, 'wb') as output_file:
                 for chunk in response.iter_content(chunk_size=1024*1024):
-                    f.write(chunk)
+                    output_file.write(chunk)
 
         final_name = os.path.join(gedi_data_dir, name)
         shutil.move(download_target_name, final_name)
@@ -119,7 +118,11 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
             output_spatial_ref = osr.SpatialReference()
             output_spatial_ref.ImportFromEPSG(4326) # aka WSG84
             destination_data_source = ogr.GetDriverByName('GeoJSON').CreateDataSource(chunk_path)
-            working_layer = destination_data_source.CreateLayer("buffer", output_spatial_ref, geom_type=ogr.wkbMultiPolygon)
+            working_layer = destination_data_source.CreateLayer(
+                "buffer",
+                output_spatial_ref,
+                geom_type=ogr.wkbMultiPolygon
+            )
             feature_definition = working_layer.GetLayerDefn()
             new_feature = ogr.Feature(feature_definition)
             new_feature.SetGeometry(geometry)
@@ -148,7 +151,7 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
     for name, url in name_url_pairs:
         download_granule(gedi_data_dir, name, url)
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         boundary_file = sys.argv[1]
         gedi_data_dir = sys.argv[2]
@@ -160,3 +163,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     gedi_fetch(boundary_file, gedi_data_dir)
+
+if __name__ == "__main__":
+    main()

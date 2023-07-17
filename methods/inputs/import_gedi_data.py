@@ -62,7 +62,7 @@ def import_gedi_data(
     with Pool(processes=PROCESSES) as pool:
         pool.map(import_file, gedi_files)
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         gedi_data_folder = sys.argv[1]
     except IndexError:
@@ -70,3 +70,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     import_gedi_data(gedi_data_folder)
+
+if __name__ == "__main__":
+    main()

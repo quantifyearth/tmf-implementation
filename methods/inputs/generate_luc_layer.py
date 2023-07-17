@@ -9,9 +9,10 @@ from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
 
 REPRESENTATIVE_YEAR = 2020
 
-def directed_to_regular(x: str) -> int:
-    direction = x[0]
-    value = int(x[1:])
+def directed_to_regular_degrees(notated: str) -> int:
+    """Converts the NSEW prepended degrees in the filename to signed ints"""
+    direction = notated[0]
+    value = int(notated[1:])
     if direction in ['S', 'W']:
         value *= -1
     return value
@@ -34,15 +35,16 @@ def get_jrc_paths(layer: ogr.Layer, annual_change_path: str) -> List[str]:
 
     # the JRC data is sparse, so not all files might exist, so we take what we can
     results = []
-    filename_re = re.compile(r"JRC_TMF_AnnualChange_v1_" + str(REPRESENTATIVE_YEAR) + r"_\w+_ID\d+_([NS]\d+)_([EW]\d+).tif")
+    filename_re = re.compile(r"JRC_TMF_AnnualChange_v1_" + str(REPRESENTATIVE_YEAR) + \
+        r"_\w+_ID\d+_([NS]\d+)_([EW]\d+).tif")
     for path in os.listdir(annual_change_path):
         match = filename_re.match(path)
         if not match:
             continue
         directed_y, directed_x = match.groups()
 
-        tile_x = directed_to_regular(directed_x)
-        tile_y = directed_to_regular(directed_y)
+        tile_x = directed_to_regular_degrees(directed_x)
+        tile_y = directed_to_regular_degrees(directed_y)
 
         if (first_x <= tile_x <= last_x) and (first_y >= tile_y >= last_y):
             results.append(os.path.join(annual_change_path, path))
@@ -74,9 +76,9 @@ def generate_luc_layer(boundary_filename: str, jrc_folder: str, luc_raster_filen
 
         super_jrc_raster = RasterLayer.empty_raster_layer_like(jrc_layer_set[0])
 
-        def _numpy_merge(a, b):
-            a[b>0] = b[b>0]
-            return a
+        def _numpy_merge(lhs, rhs):
+            lhs[rhs>0] = rhs[rhs>0]
+            return lhs
 
         calc = jrc_layer_set[0]
         for layer in jrc_layer_set[1:]:
@@ -94,7 +96,7 @@ def generate_luc_layer(boundary_filename: str, jrc_folder: str, luc_raster_filen
     super_jrc_raster.set_window_for_intersection(target_raster.area)
     super_jrc_raster.save(target_raster)
 
-if __name__ == "__main__":
+def main() -> None:
     # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
     # it pointlessly hogs memory, and then spends a long time tidying it up after.
     gdal.SetCacheMax(1024 * 1024 * 16)
@@ -108,3 +110,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     generate_luc_layer(boundary_filename, jrc_folder, luc_raster_filename)
+
+if __name__ == "__main__":
+    main()

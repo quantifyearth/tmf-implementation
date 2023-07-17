@@ -27,8 +27,7 @@ def download_jrc_data(target_zip_directory_str: str, target_tif_directory_str: s
             target_tif_directory,
         )
 
-
-if __name__ == "__main__":
+def main() -> None:
     try:
         target_zip_directory = sys.argv[1]
         target_tif_directory = sys.argv[2]
@@ -37,3 +36,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     download_jrc_data(target_zip_directory, target_tif_directory)
+
+if __name__ == "__main__":
+    main()

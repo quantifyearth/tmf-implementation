@@ -44,7 +44,7 @@ def generate_matching_area(
 
     # Intersects requires a single geometry, and a project is a list of polygons usually, so
     # need to make a single multipolygon
-    project_multipolygon = shapely.geometry.MultiPolygon([polygon for polygon in project_boundaries.geometry])
+    project_multipolygon = shapely.geometry.MultiPolygon(polygon for polygon in project_boundaries.geometry)
     overlapping_ecoregions = ecoregions[ecoregions.intersects(project_multipolygon)]
     if overlapping_ecoregions.shape[0] == 0:
         raise ValueError("No overlapping ecoregions found")
@@ -71,8 +71,7 @@ def generate_matching_area(
     result = gpd.GeoDataFrame.from_features(gpd.GeoSeries(step_3), crs=project_boundaries.crs)
     result.to_file(output_shape_filename, driver="GeoJSON")
 
-
-if __name__ == "__main__":
+def main() -> None:
     try:
         project_shape_filename = sys.argv[1]
         country_iso_a2_code = sys.argv[2]
@@ -81,7 +80,8 @@ if __name__ == "__main__":
         other_projects_directory = sys.argv[5]
         output_shape_filename = sys.argv[6]
     except IndexError:
-        print(f"Usage: {sys.argv[0]} PROJECT_SHAPEFILE COUNTRY_CODE COUNTRY_SHAPEFILE ECOREGIONS_SHAPEFILE OTHER_PROJECTS_DIRECTORY OUTPUT_SHAPEFILE", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} PROJECT_SHAPEFILE COUNTRY_CODE COUNTRY_SHAPEFILE"
+            "ECOREGIONS_SHAPEFILE OTHER_PROJECTS_DIRECTORY OUTPUT_SHAPEFILE", file=sys.stderr)
         sys.exit(1)
 
     try:
@@ -103,3 +103,5 @@ if __name__ == "__main__":
         print(f"Bad value: {exc.args[0]}", file=sys.stderr)
         sys.exit(1)
 
+if __name__ == "__main__":
+    main()

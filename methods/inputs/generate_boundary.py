@@ -12,7 +12,7 @@ def generate_boundary(input_filename: str, output_filename: str) -> None:
     result = expand_boundaries(project_boundaries, PROJECT_BOUNDARY_RADIUS_IN_METRES)
     result.to_file(output_filename, driver="GeoJSON")
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         input_filename = sys.argv[1]
         output_filename = sys.argv[2]
@@ -22,9 +22,12 @@ if __name__ == "__main__":
 
     try:
         generate_boundary(input_filename, output_filename)
-    except FileNotFoundError as e:
-        print(f"Failed to find file {e.filename}: {e.strerror}", file=sys.stderr)
+    except FileNotFoundError as exc:
+        print(f"Failed to find file {exc.filename}: {exc.strerror}", file=sys.stderr)
         sys.exit(1)
     except DriverError as exc:
         print(exc.args[0], file=sys.stderr)
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()

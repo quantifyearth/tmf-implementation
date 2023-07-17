@@ -64,8 +64,7 @@ def simplify_ecoregions(source_path: str, output_filename: str, jrc_files_direct
     # it's less than half the raw file size.
     no_ice.to_file(output_filename, driver="GeoJSON")
 
-
-if __name__ == "__main__":
+def main() -> None:
     try:
         source_path = sys.argv[1]
         jrc_files_directory = sys.argv[3]
@@ -79,3 +78,6 @@ if __name__ == "__main__":
     except DriverError as exc:
         print(exc.args[0], file=sys.stderr)
         sys.exit(1)
+
+if __name__ == "__main__":
+    main()
