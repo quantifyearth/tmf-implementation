@@ -1,6 +1,6 @@
 import pytest
 
-from methods.inputs.generate_luc_layer import directed_to_regular # pylint: disable=E0401
+from methods.inputs.generate_luc_layer import directed_to_regular_degrees # pylint: disable=E0401
 
 @pytest.mark.parametrize(
     "value,expected",
@@ -16,5 +16,5 @@ from methods.inputs.generate_luc_layer import directed_to_regular # pylint: disa
     ]
 )
 def test_unmunge_direction(value, expected):
-    result = directed_to_regular(value)
+    result = directed_to_regular_degrees(value)
     assert result == expected
