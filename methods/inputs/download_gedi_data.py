@@ -1,9 +1,11 @@
 import datetime as dt
+import glob
 import json
 import os
 import shutil
 import sys
 import tempfile
+from http import HTTPStatus
 from typing import Set
 
 import geopandas as gpd # type: ignore
@@ -14,6 +16,8 @@ from biomassrecovery.data.gedi_cmr_query import query  # type: ignore
 from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape # type: ignore
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
+
+from ..common import DownloadError
 
 # This is defined in biomassrecovery.environment too, but that file
 # is full of side-effects, so just import directly here.
@@ -74,7 +78,12 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
 				session.auth = (EARTHDATA_USER, EARTHDATA_PASSWORD)
 			else:
 				raise ValueError("Both EARTHDATA_USER and EARTHDATA_PASSWORD must be defined in environment.")
-			response = session.get(url, stream=True)
+			# Based on final example in https://wiki.earthdata.nasa.gov/display/EL/How+To+Access+Data+With+Python
+			# you have to make an initial request and then auth on that
+			auth_response = session.request('get', url)
+			response = session.get(auth_response.url, auth=session.auth, stream=True)
+			if response.status_code != HTTPStatus.OK:
+				raise DownloadError(response.status_code, response.reason, url)
 			download_target_name = os.path.join(tmpdir, name)
 			with open(download_target_name, 'wb') as f:
 				for chunk in response.iter_content(chunk_size=1024*1024):
@@ -130,7 +139,7 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
 
 	granule_metadata = pd.concat(granule_metadatas).drop_duplicates(subset="granule_name")
 
-	stored_granules = [file for file in os.listdir(gedi_data_dir) if file.endswith('.h5')]
+	stored_granules = glob.glob("*.h5", root_dir=gedi_data_dir)
 	required_granules = granule_metadata.loc[~granule_metadata["granule_name"].isin(stored_granules)]
 	name_url_pairs = required_granules[["granule_name", "granule_url"]].to_records(
 		index=False
@@ -145,6 +154,9 @@ if __name__ == "__main__":
 		gedi_data_dir = sys.argv[2]
 	except IndexError:
 		print(f"Usage: {sys.argv[0]} BUFFER_BOUNDRY_FILE GEDI_DATA_DIRECTORY")
+		sys.exit(1)
+	except DownloadError as exc:
+		print(f"Failed to download: {exc.msg}")
 		sys.exit(1)
 
 	gedi_fetch(boundary_file, gedi_data_dir)

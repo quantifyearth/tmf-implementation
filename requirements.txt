@@ -3,8 +3,9 @@ gdal[numpy]<3.7
 requests
 pandas
 geopandas
+scipy
 git+https://github.com/carboncredits/yirgacheffe
-git+https://github.com/carboncredits/biomass-recovery@06114ce98c4a791555edef95d6b8939107e2222e
+git+https://github.com/carboncredits/biomass-recovery@748f96a765541ea909ac34eab1b3cabe54ab9f5b
 
 # developement
 mypy
