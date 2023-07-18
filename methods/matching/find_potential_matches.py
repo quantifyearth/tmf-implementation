@@ -126,7 +126,8 @@ def reduce_results(
                 row_access[0][xoffset],
             ] + [luc[0][xoffset] for luc in row_lucs])
 
-    luc_columns = ['luc_{start_year - 10}', 'luc_{start_year - 5}'] + [f'luc_{year}' for year in range(start_year, evaluation_year + 1)]
+    luc_columns = ['luc_{start_year - 10}', 'luc_{start_year - 5}'] + \
+        [f'luc_{year}' for year in range(start_year, evaluation_year + 1)]
     output = pd.DataFrame(results, columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access'] + luc_columns)
     output.to_parquet(result_dataframe_filename)
 

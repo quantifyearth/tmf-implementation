@@ -18,7 +18,7 @@ yirgacheffe.operators.YSTEP = 1024 * 8
 # will throw an error when it hits 200MB unless you override the limit thus
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
-def process_tile(result_path, jrc_path) -> None:
+def process_tile(result_path: str, ecoregions_filename: str, jrc_path: str, ) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
         jrc_raster = RasterLayer.layer_from_file(jrc_path)
         ecoregions = VectorLayer.layer_from_file(
@@ -30,7 +30,7 @@ def process_tile(result_path, jrc_path) -> None:
             burn_value="ECO_ID"
         )
 
-        matches = re.match(".*_([NS]\d+)_([WE]\d+).tif", jrc_path)
+        matches = re.match(r".*_([NS]\d+)_([WE]\d+).tif", jrc_path)
         assert matches is not None
 
         filename = f"ecoregion_{matches[1]}_{matches[2]}.tif"
@@ -48,10 +48,10 @@ def generate_ecoregion_rasters(
 ) -> None:
     os.makedirs(output_folder, exist_ok=True)
     jrc_files = [os.path.join(jrc_folder, filename) for filename in glob.glob("*2020*.tif", root_dir=jrc_folder)]
-    with Pool(processes=50) as p:
-        p.map(partial(process_tile, output_folder), jrc_files)
+    with Pool(processes=50) as pool:
+        pool.map(partial(process_tile, output_folder, ecoregions_filename), jrc_files)
 
-if __name__ == "__main__":
+def main() -> None:
     try:
         ecoregions_filename = sys.argv[1]
         jrc_folder = sys.argv[2]
@@ -61,3 +61,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     generate_ecoregion_rasters(ecoregions_filename, jrc_folder, output_folder)
+
+if __name__ == "__main__":
+    main()
