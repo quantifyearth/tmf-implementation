@@ -7,7 +7,7 @@ import tempfile
 from functools import partial
 from multiprocessing import Pool
 
-from osgeo import gdal
+from osgeo import gdal # type: ignore
 from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
 
 # The real cost here is repeated re-drawing of the ecoregions, so cut down on that

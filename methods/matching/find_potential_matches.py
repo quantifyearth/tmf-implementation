@@ -4,11 +4,11 @@ import sys
 from dataclasses import dataclass
 from multiprocessing import Manager, Process, Queue
 
-from osgeo import gdal
+from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
-import yirgacheffe.operators
+import yirgacheffe.operators  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
 
@@ -86,6 +86,7 @@ def reduce_results(
                 merged_result = temp
 
     # merged result should be all the pixels now
+    assert merged_result is not None
     matching_collection = build_layer_collection(
         merged_result.pixel_scale,
         merged_result.projection,

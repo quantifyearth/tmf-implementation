@@ -6,7 +6,7 @@ from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import mahalanobis
+from scipy.spatial.distance import mahalanobis  # type: ignore
 
 PROCESSES = 50
 
