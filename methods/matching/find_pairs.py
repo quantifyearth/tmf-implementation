@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import mahalanobis
 
-PROCESSES = 100
+PROCESSES = 50
 
 REPEAT_MATCH_FINDING = 100
 
