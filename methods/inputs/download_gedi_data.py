@@ -16,7 +16,7 @@ from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape #
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
 
-from ..common import DownloadError
+from methods.common import DownloadError
 
 # This is defined in biomassrecovery.environment too, but that file
 # is full of side-effects, so just import directly here.
@@ -98,7 +98,7 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
     os.makedirs(gedi_data_dir, exist_ok=True)
 
     boundary_layer = boundary_dataset.GetLayer()
-    chunked_dataset = chunk_geometry(boundary_layer, 0.5)
+    chunked_dataset = chunk_geometry(boundary_layer, 0.4)
     chunked_layer = chunked_dataset.GetLayer()
 
     granule_metadatas = []
