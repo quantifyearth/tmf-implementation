@@ -70,10 +70,9 @@ def find_match_iteration(
         #  * coarsened proportional coverage
         k_soft = [k_row.elevation, k_row.slope, k_row.access]
         filtered_s['distance'] = filtered_s.apply(
-            lambda s_row: mahalanobis(
-                k_soft,
-                [s_row.elevation, s_row.slope, s_row.access],
-                invconv
+            partial(
+                lambda k_row, s_row: mahalanobis(k_row, [s_row.elevation, s_row.slope, s_row.access], invconv),
+                k_soft
             ),
             axis=1
         )
