@@ -1,8 +1,8 @@
+import argparse
 import glob
 import os
-import sys
 from dataclasses import dataclass
-from multiprocessing import Manager, Process, Queue
+from multiprocessing import Manager, Process, Queue, cpu_count
 
 from osgeo import gdal  # type: ignore
 import numpy as np
@@ -39,33 +39,29 @@ class MatchedPixel:
         return (self.xoffset, self.yoffset).__hash__()
 
 
-def threads() -> int:
-    return 100
-
-
-def load_k(k_filename: str, queue: Queue) -> None:
+def load_k(k_filename: str, queue: Queue, sentinal_count: int) -> None:
     # put the source pixels into the queue
     source_pixels = pd.read_parquet(k_filename)
     for row in source_pixels.iterrows():
         queue.put(row)
     # To close the pipe put in one sentinel value per worker
-    for _ in range(threads()):
+    for _ in range(sentinal_count):
         queue.put(None)
 
 def reduce_results(
     matching_zone_filename: str,
-    jrc_data_folder: str,
-    ecoregions_folder_filename: str,
-    elevation_folder_filename: str,
-    slope_folder_filename: str,
-    access_folder_filename: str,
+    jrc_directory_path: str,
+    cpc_directory_path: str,
+    ecoregions_directory_path: str,
+    elevation_directory_path: str,
+    slope_directory_path: str,
+    access_directory_path: str,
     start_year: int,
     evaluation_year: int,
     result_dataframe_filename: str,
-    queue: Queue
+    queue: Queue,
+    sentinal_count: int
 ) -> None:
-    sentinal_count = threads()
-
     # lazily created
     merged_result = None
 
@@ -91,12 +87,14 @@ def reduce_results(
         merged_result.pixel_scale,
         merged_result.projection,
         [start_year - 10, start_year - 5] + list(range(start_year, evaluation_year + 1)),
+        [start_year, start_year - 5, start_year - 10],
         matching_zone_filename,
-        jrc_data_folder,
-        ecoregions_folder_filename,
-        elevation_folder_filename,
-        slope_folder_filename,
-        access_folder_filename,
+        jrc_directory_path,
+        cpc_directory_path,
+        ecoregions_directory_path,
+        elevation_directory_path,
+        slope_directory_path,
+        access_directory_path,
     )
 
     assert matching_collection.boundary.window == merged_result.window
@@ -115,31 +113,49 @@ def reduce_results(
         row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
         row_access = matching_collection.access.read_array(0, yoffset, width, 1)
         row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
+        # For CPC, which is at a different pixel_scale, we need to do a little math
+        coord = matching_collection.boundary.latlng_for_pixel(0, yoffset)
+        _, cpc_yoffset = matching_collection.cpcs[0].pixel_for_latlng(*coord)
+        row_cpc = [
+            cpc.read_array(0, cpc_yoffset, matching_collection.cpcs[0].window.xsize, 1)
+            for cpc in matching_collection.cpcs
+        ]
+
         for xoffset in range(width):
             if not row_matches[0][xoffset]:
                 continue
+
+            coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
+            cpc_xoffset, _ = matching_collection.cpcs[0].pixel_for_latlng(*coord)
+            cpcs = [x[0][cpc_xoffset] for x in row_cpc]
+
             results.append([
-                merged_result.area.top + (yoffset * merged_result.pixel_scale.ystep),
-                merged_result.area.left + (xoffset * merged_result.pixel_scale.xstep),
+                coord[0],
+                coord[1],
                 row_ecoregion[0][xoffset],
                 row_elevation[0][xoffset],
                 row_slope[0][xoffset],
                 row_access[0][xoffset],
-            ] + [luc[0][xoffset] for luc in row_lucs])
+            ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
 
     luc_columns = [f'luc_{start_year - 10}', f'luc_{start_year - 5}'] + \
         [f'luc_{year}' for year in range(start_year, evaluation_year + 1)]
-    output = pd.DataFrame(results, columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access'] + luc_columns)
+    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
+    output = pd.DataFrame(
+        results,
+        columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access'] + luc_columns + cpc_columns
+    )
     output.to_parquet(result_dataframe_filename)
 
 def worker(
     _worker_index: int,
     matching_zone_filename: str,
-    jrc_data_folder: str,
-    ecoregions_folder_filename: str,
-    elevation_folder_filename: str,
-    slope_folder_filename: str,
-    access_folder_filename: str,
+    jrc_directory_path: str,
+    cpc_directory_path: str,
+    ecoregions_directory_path: str,
+    elevation_directory_path: str,
+    slope_directory_path: str,
+    access_directory_path: str,
     start_year: int,
     _evaluation_year: int,
     result_folder: str,
@@ -147,19 +163,21 @@ def worker(
     output_queue: Queue,
 ) -> None:
     # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
-    example_jrc_filename = glob.glob("*.tif", root_dir=jrc_data_folder)[0]
-    example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_data_folder, example_jrc_filename))
+    example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
+    example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
 
     matching_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
         [start_year, start_year - 5, start_year - 10],
+        [], # CPC not needed at this stage
         matching_zone_filename,
-        jrc_data_folder,
-        ecoregions_folder_filename,
-        elevation_folder_filename,
-        slope_folder_filename,
-        access_folder_filename,
+        jrc_directory_path,
+        cpc_directory_path,
+        ecoregions_directory_path,
+        elevation_directory_path,
+        slope_directory_path,
+        access_directory_path,
     )
 
     while True:
@@ -203,53 +221,60 @@ def worker(
 
 def find_potential_matches(
     k_filename: str,
-    matching_zone_filename: str,
-    jrc_data_folder: str,
-    ecoregions_folder_filename: str,
-    elevation_folder_filename: str,
-    slope_folder_filename: str,
-    access_folder_filename: str,
     start_year: int,
     evaluation_year: int,
+    matching_zone_filename: str,
+    jrc_directory_path: str,
+    cpc_directory_path: str,
+    ecoregions_directory_path: str,
+    elevation_directory_path: str,
+    slope_directory_path: str,
+    access_directory_path: str,
     result_folder: str,
+    processes_count: int
 ) -> None:
     os.makedirs(result_folder, exist_ok=True)
     result_dataframe_filename = os.path.join(result_folder, "results.parquet")
 
+    assert processes_count > 3
     with Manager() as manager:
         source_queue = manager.Queue()
         results_queue = manager.Queue()
 
+        worker_count = processes_count - 2
         consumer_process = Process(target=reduce_results, args=(
             matching_zone_filename,
-            jrc_data_folder,
-            ecoregions_folder_filename,
-            elevation_folder_filename,
-            slope_folder_filename,
-            access_folder_filename,
+            jrc_directory_path,
+            cpc_directory_path,
+            ecoregions_directory_path,
+            elevation_directory_path,
+            slope_directory_path,
+            access_directory_path,
             start_year,
             evaluation_year,
             result_dataframe_filename,
             results_queue,
+            worker_count
         ))
         consumer_process.start()
         workers = [Process(target=worker, args=(
             index,
             matching_zone_filename,
-            jrc_data_folder,
-            ecoregions_folder_filename,
-            elevation_folder_filename,
-            slope_folder_filename,
-            access_folder_filename,
+            jrc_directory_path,
+            cpc_directory_path,
+            ecoregions_directory_path,
+            elevation_directory_path,
+            slope_directory_path,
+            access_directory_path,
             start_year,
             evaluation_year,
             result_folder,
             source_queue,
             results_queue
-        )) for index in range(threads())]
+        )) for index in range(processes_count - 2)]
         for worker_process in workers:
             worker_process.start()
-        ingest_process = Process(target=load_k, args=(k_filename, source_queue))
+        ingest_process = Process(target=load_k, args=(k_filename, source_queue, worker_count))
         ingest_process.start()
 
         ingest_process.join()
@@ -258,35 +283,107 @@ def find_potential_matches(
         consumer_process.join()
 
 def main():
-    try:
-        k_filename = sys.argv[1]
-        matching_zone_filename = sys.argv[2]
-        jrc_data_folder = sys.argv[3]
-        ecoregions_folder_filename = sys.argv[4]
-        elevation_folder_filename = sys.argv[5]
-        slope_folder_filename = sys.argv[6]
-        access_folder_filename = sys.argv[7]
-        start_year = int(sys.argv[8])
-        evaluation_year = int(sys.argv[9])
-        result_folder = sys.argv[10]
-    except (IndexError, ValueError):
-        print(f"Usage: {sys.argv[0]} K_PARQUET MATCHING_ZONE JRC_FOLDER "
-            "ECOREGIONS_FOLDER ELEVATION_FOLDER SLOPES_FOLDER ACCESS_FOLDER "
-            "START_YEAR EVALUATION_YEAR OUT",
-            file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Finds all potential matches to K in matching zone, aka set S.")
+    parser.add_argument(
+        "--k",
+        type=str,
+        required=True,
+        dest="k_filename",
+        help="Parquet file containing pixels from K as generated by calculate_k.py"
+    )
+    parser.add_argument(
+        "--matching",
+        type=str,
+        required=True,
+        dest="matching_zone_filename",
+        help="Filename of GeoJSON file desribing area from which matching pixels may be selected."
+    )
+    parser.add_argument(
+        "--start_year",
+        type=int,
+        required=True,
+        dest="start_year",
+        help="Year project started."
+    )
+    parser.add_argument(
+        "--evaluation_year",
+        type=int,
+        required=True,
+        dest="evaluation_year",
+        help="Year of project evalation"
+    )
+    parser.add_argument(
+        "--jrc",
+        type=str,
+        required=True,
+        dest="jrc_directory_path",
+        help="Directory containing JRC AnnualChange GeoTIFF tiles for all years."
+    )
+    parser.add_argument(
+        "--cpc",
+        type=str,
+        required=True,
+        dest="cpc_directory_path",
+        help="Filder containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
+    )
+    parser.add_argument(
+        "--ecoregions",
+        type=str,
+        required=True,
+        dest="ecoregions_directory_path",
+        help="Directory containing Ecoregions GeoTIFF tiles."
+    )
+    parser.add_argument(
+        "--elevation",
+        type=str,
+        required=True,
+        dest="elevation_directory_path",
+        help="Directory containing SRTM elevation GeoTIFF tiles."
+    )
+    parser.add_argument(
+        "--slope",
+        type=str,
+        required=True,
+        dest="slope_directory_path",
+        help="Directory containing slope GeoTIFF tiles."
+    )
+    parser.add_argument(
+        "--access",
+        type=str,
+        required=True,
+        dest="access_directory_path",
+        help="Directory containing access to health care GeoTIFF tiles."
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        dest="output_filename",
+        help="Destination parquet file for results."
+    )
+    parser.add_argument(
+        "-j",
+        type=int,
+        required=False,
+        default=round(cpu_count() / 2),
+        dest="processes_count",
+        help="Number of concurrent threads to use."
+    )
+    args = parser.parse_args()
 
     find_potential_matches(
-        k_filename,
-        matching_zone_filename,
-        jrc_data_folder,
-        ecoregions_folder_filename,
-        elevation_folder_filename,
-        slope_folder_filename,
-        access_folder_filename,
-        start_year,
-        evaluation_year,
-        result_folder
+        args.k_filename,
+        args.start_year,
+        args.evaluation_year,
+        args.matching_zone_filename,
+        args.jrc_directory_path,
+        args.cpc_directory_path,
+        args.ecoregions_directory_path,
+        args.elevation_directory_path,
+        args.slope_directory_path,
+        args.access_directory_path,
+        args.output_filename,
+        args.processes_count
     )
 
 if __name__ == "__main__":
