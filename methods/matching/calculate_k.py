@@ -55,7 +55,7 @@ def build_layer_collection(
                 os.path.join(cpc_directory_path, filename)
             ) for filename in
                 glob.glob(f"*{year_class[0]}_{year_class[1].value}.tif", root_dir=cpc_directory_path)
-        ]) for year_class in product(cpc_years, [LandUseClass.Undisturbed, LandUseClass.Deforested])
+        ]) for year_class in product(cpc_years, [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once

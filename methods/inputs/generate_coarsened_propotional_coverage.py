@@ -64,12 +64,12 @@ def process_jrc_tile(
     if match is None:
         raise ValueError(f"Failed to parse JRC filename {jrc_tile_filename}")
     year, xoffset, yoffset = match.groups()
-    for luc in [LandUseClass.Undisturbed, LandUseClass.Deforested]:
+    for luc in [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]:
         target_filename = f"coarse_{xoffset}_{yoffset}_{year}_{luc.value}.tif"
         target_path = os.path.join(output_directory_path, target_filename)
         if not os.path.exists(target_path):
             tempdest = os.path.join(temporary_directory, target_filename)
-            coarsened_jrc_tile(jrc_tile_filename, tempdest, luc)
+            coarsened_jrc_tile(jrc_tile_filename, tempdest, luc.value)
             shutil.move(tempdest, target_path)
 
 def generate_coarsened_proportional_coverage(
