@@ -130,7 +130,12 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
             del destination_data_source # aka destination_data_source.Close()
 
             shape = gpd.read_file(chunk_path)
-            shape = check_and_format_shape(shape, simplify=True)
+
+            # We set max_coords rather low (the upper bound is less than 5000) as some of
+            # our geometries are causing issues with being too precise and the coordinates
+            # not all being > 1m apart. Checking this for every geometry is a bit hard, so
+            # instead we approximate it by setting the bar for simplification much lower.
+            shape = check_and_format_shape(shape, simplify=True, max_coords=200)
             result = query(
                 product=GediProduct.L4A,
                 date_range=(dt.datetime(2020, 1, 1, 0, 0), dt.datetime(2021, 1, 1, 0, 0)),
