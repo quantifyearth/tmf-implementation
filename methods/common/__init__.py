@@ -1,3 +1,4 @@
+from enum import Enum
 
 class DownloadError(Exception):
     def __init__(self, status_code: int, reason: str, url: str):
@@ -8,3 +9,11 @@ class DownloadError(Exception):
     @property
     def msg(self) -> str:
         return f"Download failed, status {self.status_code}: {self.reason}"
+
+class LandUseClass(Enum):
+    UNDISTURBED = 1
+    DEGRADED = 2
+    DEFORESTED = 3
+    REGROWTH = 4
+    WATER = 5
+    OTHER = 6
