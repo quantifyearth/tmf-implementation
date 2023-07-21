@@ -14,7 +14,7 @@ from yirgacheffe.window import Area, PixelScale  # type: ignore
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 
-def coursen_jrc_tile(tile_filename, result_filename, luc):
+def coarsened_jrc_tile(tile_filename, result_filename, luc):
     # We rely on the fact that the JRC files are actually slightly overlapped and
     # just ignore the fact the boundaries won't quite line up for now. In theory though we should
     # be using multiple tiles to generate this
@@ -51,7 +51,7 @@ def coursen_jrc_tile(tile_filename, result_filename, luc):
             buffer.append(subset.sum() / (40.0 * 40.0))
         result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
 
-def generate_coursened_luc(jrc_directory: str, result_directory: str) -> None:
+def generate_coarsened_luc(jrc_directory: str, result_directory: str) -> None:
     os.makedirs(result_directory, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tempdir:
@@ -63,23 +63,23 @@ def generate_coursened_luc(jrc_directory: str, result_directory: str) -> None:
 
             src = os.path.join(jrc_directory, filename)
 
-            # Clearly more efficient to do this loop inside the coursen_jrc_tile
+            # Clearly more efficient to do this loop inside the coarsened_jrc_tile
             # function, but we don't need to run this often and it keeps the code simpler
             for luc in range(1, 7):
-                tempdest = os.path.join(tempdir, f"course_{xoffset}_{yoffset}_{year}_{luc}.tif")
-                coursen_jrc_tile(src, tempdest, luc)
+                tempdest = os.path.join(tempdir, f"coarse_{xoffset}_{yoffset}_{year}_{luc}.tif")
+                coarsened_jrc_tile(src, tempdest, luc)
 
-                shutil.move(tempdest, os.path.join(result_directory, f"course_{xoffset}_{yoffset}_{year}_{luc}.tif"))
+                shutil.move(tempdest, os.path.join(result_directory, f"coarse_{xoffset}_{yoffset}_{year}_{luc}.tif"))
 
 def main() -> None:
     try:
         jrc_directory = sys.argv[1]
         result_directory = sys.argv[2]
     except IndexError:
-        print(f"Usage: {sys.argv[0]} JRC_TILE_FOLDER COURSENED_LUC_FOLDER", file=sys.stderr)
+        print(f"Usage: {sys.argv[0]} JRC_TILE_FOLDER COARSENED_LUC_FOLDER", file=sys.stderr)
         sys.exit(1)
 
-    generate_coursened_luc(jrc_directory, result_directory)
+    generate_coarsened_luc(jrc_directory, result_directory)
 
 if __name__ == "__main__":
     main()
