@@ -1,20 +1,24 @@
+import argparse
 import glob
 import math
 import os
 import re
 import shutil
-import sys
 import tempfile
+from functools import partial
+from multiprocessing import Pool, cpu_count
 
 import numpy as np
 from osgeo import gdal  # type: ignore
 from yirgacheffe.layers import RasterLayer  # type: ignore
 from yirgacheffe.window import Area, PixelScale  # type: ignore
 
+from methods.common import LandUseClass
+
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 
-def coarsened_jrc_tile(tile_filename, result_filename, luc):
+def coarsened_jrc_tile(tile_filename: str, result_filename: str, luc: int) -> None:
     # We rely on the fact that the JRC files are actually slightly overlapped and
     # just ignore the fact the boundaries won't quite line up for now. In theory though we should
     # be using multiple tiles to generate this
@@ -51,35 +55,75 @@ def coarsened_jrc_tile(tile_filename, result_filename, luc):
             buffer.append(subset.sum() / (40.0 * 40.0))
         result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
 
-def generate_coarsened_luc(jrc_directory: str, result_directory: str) -> None:
+def process_jrc_tile(
+    output_directory_path: str,
+    temporary_directory: str,
+    jrc_tile_filename: str
+) -> None:
+    match = JRC_FILENAME_RE.match(jrc_tile_filename)
+    if match is None:
+        raise ValueError(f"Failed to parse JRC filename {jrc_tile_filename}")
+    year, xoffset, yoffset = match.groups()
+    for luc in [LandUseClass.Undisturbed, LandUseClass.Deforested]:
+        target_filename = f"coarse_{xoffset}_{yoffset}_{year}_{luc.value}.tif"
+        target_path = os.path.join(output_directory_path, target_filename)
+        if not os.path.exists(target_path):
+            tempdest = os.path.join(temporary_directory, target_filename)
+            coarsened_jrc_tile(jrc_tile_filename, tempdest, luc)
+            shutil.move(tempdest, target_path)
+
+def generate_coarsened_proportional_coverage(
+    jrc_directory: str,
+    result_directory: str,
+    concurrent_processes: int
+) -> None:
     os.makedirs(result_directory, exist_ok=True)
 
     with tempfile.TemporaryDirectory() as tempdir:
-        for filename in glob.glob("*.tif", root_dir=jrc_directory):
-            match = JRC_FILENAME_RE.match(filename)
-            if match is None:
-                raise ValueError(f"Failed to parse JRC filename {filename}")
-            year, xoffset, yoffset = match.groups()
-
-            src = os.path.join(jrc_directory, filename)
-
-            # Clearly more efficient to do this loop inside the coarsened_jrc_tile
-            # function, but we don't need to run this often and it keeps the code simpler
-            for luc in range(1, 7):
-                tempdest = os.path.join(tempdir, f"coarse_{xoffset}_{yoffset}_{year}_{luc}.tif")
-                coarsened_jrc_tile(src, tempdest, luc)
-
-                shutil.move(tempdest, os.path.join(result_directory, f"coarse_{xoffset}_{yoffset}_{year}_{luc}.tif"))
+        jrc_filenames = glob.glob("*.tif", root_dir=jrc_directory)
+        with Pool(processes=concurrent_processes) as pool:
+            pool.map(
+                partial(
+                    process_jrc_tile,
+                    result_directory,
+                    tempdir,
+                ),
+                [os.path.join(jrc_directory, x) for x in jrc_filenames]
+            )
 
 def main() -> None:
-    try:
-        jrc_directory = sys.argv[1]
-        result_directory = sys.argv[2]
-    except IndexError:
-        print(f"Usage: {sys.argv[0]} JRC_TILE_FOLDER COARSENED_LUC_FOLDER", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(
+        description="Generate coarsened proportional coverage tiles from JRC Annual Change data."
+    )
+    parser.add_argument(
+        "--jrc",
+        type=str,
+        required=True,
+        dest="jrc_directory_path",
+        help="Directory containing JRC Annual Change GeoTIFF tiles."
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        dest="output_directory_path",
+        help="Directory into which output GeoTIFF files will be written. Will be created if it does not exist."
+    )
+    parser.add_argument(
+        "-j",
+        type=int,
+        required=False,
+        default=round(cpu_count() / 2),
+        dest="processes",
+        help="Number of concurrent threads to use."
+    )
+    args = parser.parse_args()
 
-    generate_coarsened_luc(jrc_directory, result_directory)
+    generate_coarsened_proportional_coverage(
+        args.jrc_directory_path,
+        args.output_directory_path,
+        args.processes
+    )
 
 if __name__ == "__main__":
     main()
