@@ -50,7 +50,7 @@ def download_srtm_data(
 								f.write(chunk)
 						shutil.move(download_target, target_path)
 
-			tiff_target_name = TIFF_NAME_TEMPLATE % (xoffset, yoffset)
+			tiff_target_name = TIFF_NAME_TEMPLATE % (x, y)
 			tiff_target_path = os.path.join(destintation_tiff_folder, tiff_target_name)
 			if not os.path.exists(tiff_target_path):
 				with tempfile.TemporaryDirectory() as tempdir:
