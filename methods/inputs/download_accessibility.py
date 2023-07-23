@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import traceback
 from shutil import move
 from glob import glob
 
@@ -62,6 +63,7 @@ def main() -> None:
         sys.exit(1)
     except ValueError as exc:
         print(f"Invalid value: {exc.args}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

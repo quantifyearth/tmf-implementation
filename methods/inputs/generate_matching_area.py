@@ -1,6 +1,7 @@
 import glob
 import os
 import sys
+import traceback
 
 import shapely # type: ignore
 from fiona.errors import DriverError # type: ignore
@@ -101,6 +102,7 @@ def main() -> None:
         sys.exit(1)
     except ValueError as exc:
         print(f"Bad value: {exc.args[0]}", file=sys.stderr)
+        print(traceback.format_exc(), file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":
