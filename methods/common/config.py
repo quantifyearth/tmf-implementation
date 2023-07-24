@@ -1,4 +1,3 @@
-from typing import Optional
 from dataclasses import dataclass
 import json
 
@@ -10,7 +9,7 @@ class Config:
     # agb : Optional[[float]]
 
 def from_file(filename : str) -> Config:
-    with open(filename) as json_file:
+    with open(filename, "rb") as json_file:
         data = json.load(json_file)
         config = Config(
             vcs_id=data["vcs_id"],
