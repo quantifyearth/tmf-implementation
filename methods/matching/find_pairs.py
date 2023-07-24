@@ -11,6 +11,8 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 REPEAT_MATCH_FINDING = 100
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -91,7 +93,7 @@ def find_match_iteration(
         ] + [match[x] for x in luc_columns[2:]])
 
     results_df = pd.DataFrame(results, columns=['k_lat', 'k_lng', 's_lat', 's_lng'] + luc_columns[2:])
-    results_df.to_parquet(os.path.join(output_folder, f'{seed}.parquet'))
+    results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
 
 
 def find_pairs(
@@ -101,6 +103,7 @@ def find_pairs(
     output_folder: str,
     processes_count: int
 ) -> None:
+    logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
