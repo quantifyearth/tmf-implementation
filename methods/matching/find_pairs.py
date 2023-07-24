@@ -1,6 +1,7 @@
 import argparse
 import os
 import random
+import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count
 
@@ -14,9 +15,10 @@ def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
     output_folder: str,
-    seed: int
+    idx_and_seed: tuple[int, int]
 ) -> None:
-    random.seed(seed)
+    logging.info(f"Find match iteration {idx_and_seed[0] + 1} of {REPEAT_MATCH_FINDING}")
+    random.seed(idx_and_seed[1])
 
     # Methodology 6.5.7: For a 10% sample of K
     k_set = pd.read_parquet(k_parquet_filename)
@@ -102,7 +104,7 @@ def find_pairs(
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
-    iteration_seeds = [random.randint(0, 1000000) for _ in range(REPEAT_MATCH_FINDING)]
+    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
 
     with Pool(processes=processes_count) as pool:
         pool.map(
