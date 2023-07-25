@@ -1,3 +1,4 @@
+import argparse
 import sys
 
 from fiona.errors import DriverError # type: ignore
@@ -13,15 +14,25 @@ def generate_boundary(input_filename: str, output_filename: str) -> None:
     result.to_file(output_filename, driver="GeoJSON")
 
 def main() -> None:
-    try:
-        input_filename = sys.argv[1]
-        output_filename = sys.argv[2]
-    except IndexError:
-        print(f"Usage: {sys.argv[0]} INPUT OUTPUT [filter]", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Generates expanded boundary shape for a project")
+    parser.add_argument(
+        "--project",
+        type=str,
+        required=True,
+        dest="project_boundary_filename",
+        help="GeoJSON File of project boundary."
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        dest="output_filename",
+        help="GeoJSON File of project expanded boundary."
+    )
+    args = parser.parse_args()
 
     try:
-        generate_boundary(input_filename, output_filename)
+        generate_boundary(args.project_boundary_filename, args.output_filename)
     except FileNotFoundError as exc:
         print(f"Failed to find file {exc.filename}: {exc.strerror}", file=sys.stderr)
         sys.exit(1)
