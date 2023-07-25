@@ -3,7 +3,8 @@ import os
 import random
 import logging
 from functools import partial
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, set_start_method
+set_start_method("spawn")
 
 import numpy as np
 import pandas as pd
