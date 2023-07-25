@@ -6,7 +6,7 @@ import re
 import shutil
 import tempfile
 from functools import partial
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, set_start_method
 
 import numpy as np
 from osgeo import gdal  # type: ignore
@@ -14,6 +14,8 @@ from yirgacheffe.layers import RasterLayer  # type: ignore
 from yirgacheffe.window import Area, PixelScale  # type: ignore
 
 from methods.common import LandUseClass
+
+set_start_method('spawn')
 
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
