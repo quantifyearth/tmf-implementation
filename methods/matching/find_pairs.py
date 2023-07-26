@@ -11,6 +11,8 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 REPEAT_MATCH_FINDING = 100
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -130,7 +132,6 @@ def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
     # have hit). Spawn is the default on macOS, but not on Linux.
     set_start_method("spawn")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
     parser = argparse.ArgumentParser(description="Takes K and S and finds 100 sets of matches.")
     parser.add_argument(
