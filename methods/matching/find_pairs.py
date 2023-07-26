@@ -11,16 +11,13 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 REPEAT_MATCH_FINDING = 100
 
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
     output_folder: str,
     idx_and_seed: tuple[int, int]
 ) -> None:
-    logging.info(f"Find match iteration {idx_and_seed[0] + 1} of {REPEAT_MATCH_FINDING}")
+    logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
     random.seed(idx_and_seed[1])
 
     # Methodology 6.5.7: For a 10% sample of K
@@ -67,6 +64,10 @@ def find_match_iteration(
             (s_subset[luc_columns[2]] == k_row.luc0)
         ].copy()
 
+        if len(filtered_s) == 0:
+            # No matches found for this pixel, move on
+            continue
+
         # and then a soft match based on Mahalanobis distance of
         #  * elevation
         #  * slope
@@ -84,7 +85,11 @@ def find_match_iteration(
             axis=1
         )
         minimal_s = filtered_s[filtered_s['distance']==filtered_s['distance'].min()]
-        match = minimal_s.iloc[0]
+        try:
+            match = minimal_s.iloc[0]
+        except IndexError:
+            logging.warning("We got no minimum despite having %d potential matches", len(filtered_s))
+            continue
 
         results.append([
             k_row.lat,
@@ -122,7 +127,11 @@ def find_pairs(
         )
 
 def main():
+    # If you use the default multiprocess model then you risk deadlocks when logging (which we
+    # have hit). Spawn is the default on macOS, but not on Linux.
     set_start_method("spawn")
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
     parser = argparse.ArgumentParser(description="Takes K and S and finds 100 sets of matches.")
     parser.add_argument(
         "--k",
