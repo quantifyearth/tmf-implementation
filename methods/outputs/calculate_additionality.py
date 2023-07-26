@@ -19,6 +19,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
+
 def generate_additionality(
     project_geojson_file: str,
     config_file: str,
@@ -180,7 +181,7 @@ def generate_additionality(
     for year, value in p_tot.items():
         result[year] = (value - c_tot[year]) * MOLECULAR_MASS_CO2_TO_C_RATIO
 
-    with open(output_csv, "w", encoding='utf-8') as file:
+    with open(output_csv, "w", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["year", "additionality"])
         for year, result in result.items():

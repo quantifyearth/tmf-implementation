@@ -6,15 +6,16 @@ import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
 
+
 def assert_never(value: NoReturn) -> NoReturn:
-    assert False,  f'This code should never be reached, got: {value}'
+    assert False, f"This code should never be reached, got: {value}"
+
 
 ProjectQuality = Literal["low", "high"]
 
+
 def net_sequestration(
-    additionality : pd.DataFrame,
-    leakage : pd.DataFrame,
-    year : int
+    additionality: pd.DataFrame, leakage: pd.DataFrame, year: int
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-net-sequestration for a given
@@ -47,11 +48,9 @@ def net_sequestration(
 
     return (additionality_t - leakage_t) - (additionality_t_prev - leakage_t_prev)
 
+
 def release(
-    additionality : pd.DataFrame,
-    leakage : pd.DataFrame,
-    end_year : int,
-    years : int
+    additionality: pd.DataFrame, leakage: pd.DataFrame, end_year: int, years: int
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-release
@@ -70,18 +69,21 @@ def release(
     max_year = additionality.index.max()
 
     if start_year < min_year or end_year > max_year:
-        raise ValueError(f"end year out of bounds, or too close to the start for given years start: {start_year}, max: {max_year}, end: {end_year}")
+        raise ValueError(
+            f"end year out of bounds, or too close to the start for given years start: {start_year}, max: {max_year}, end: {end_year}"
+        )
 
     net_end = net_sequestration(additionality, leakage, end_year)
     net_prev = net_sequestration(additionality, leakage, start_year)
 
     return (net_end - net_prev) / years
 
+
 def adjusted_net_sequestration(
-    additionality : pd.DataFrame,
-    leakage : pd.DataFrame,
-    schedule : pd.DataFrame,
-    year : int
+    additionality: pd.DataFrame,
+    leakage: pd.DataFrame,
+    schedule: pd.DataFrame,
+    year: int,
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-adj
@@ -102,13 +104,14 @@ def adjusted_net_sequestration(
 
     return net_sequestration(additionality, leakage, year) - adjustment
 
+
 def release_schedule(
-    quality : ProjectQuality,
-    additionality : pd.DataFrame,
-    leakage : pd.DataFrame,
-    from_year : int,
-    to_year : int,
-    project_end : int
+    quality: ProjectQuality,
+    additionality: pd.DataFrame,
+    leakage: pd.DataFrame,
+    from_year: int,
+    to_year: int,
+    project_end: int,
 ) -> float:
     """
     Implements the anticpated release schedule algorithm ./rfc/permanence/index.html#name-anticipated-release
@@ -118,9 +121,9 @@ def release_schedule(
     """
     min_year = additionality.index.min()
 
-    if quality == 'low':
+    if quality == "low":
         return release(additionality, leakage, from_year, 5)
-    elif quality == 'high':
+    elif quality == "high":
         # TODO: check strictness
         if to_year <= project_end:
             return 0.0
@@ -133,14 +136,14 @@ def release_schedule(
     assert_never(quality)
 
 
-DEFAULT_DELTA_PER_YEAR = 0.03 # 3% per year
+DEFAULT_DELTA_PER_YEAR = 0.03  # 3% per year
 
 def damage(
-    scc : List[float],
-    year : int,
-    release_year : int,
-    schedule : List[List[float]],
-    delta : float = DEFAULT_DELTA_PER_YEAR,
+    scc: List[float],
+    year: int,
+    release_year: int,
+    schedule: List[List[float]],
+    delta: float = DEFAULT_DELTA_PER_YEAR,
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-damage
@@ -158,7 +161,9 @@ def damage(
         delta: The discount factor.
     """
     if release_year <= year:
-        raise ValueError("The release year must be greater than the year damage is being calculated for")
+        raise ValueError(
+            "The release year must be greater than the year damage is being calculated for"
+        )
 
     damage_acc = 0.0
     years_to_release = release_year - year
@@ -167,36 +172,42 @@ def damage(
     sched_estimate_max_year = schedule.index.max()
 
     if sched_estimate_max_year < year:
-        raise ValueError(f"The release schedule does not make estimates for the year {year}")
+        raise ValueError(
+            f"The release schedule does not make estimates for the year {year}"
+        )
 
     sched_years_max = sched_estimate_min_year + len(schedule[sched_estimate_min_year])
     scc_year_max = scc.index.max()
     maximum_forecast = year + years_to_release
 
     if sched_years_max < maximum_forecast:
-        raise ValueError(f"""The release schedule should contain
-        anticipated releases up to the year indexed by {maximum_forecast}""")
+        raise ValueError(
+            f"""The release schedule should contain
+        anticipated releases up to the year indexed by {maximum_forecast}"""
+        )
 
     if scc_year_max < maximum_forecast:
-        raise ValueError(f"""Not enough values were provided for the Social Cost of Carbon,
-        only {scc_year_max} were given and we need {maximum_forecast}""")
-
+        raise ValueError(
+            f"""Not enough values were provided for the Social Cost of Carbon,
+        only {scc_year_max} were given and we need {maximum_forecast}"""
+        )
 
     for k in range(0, years_to_release):
         release = schedule[year][year + k]
         carbon = scc.loc[year + k][0]
-        damage_acc += (release * carbon / (1 + delta) ** k)
+        damage_acc += release * carbon / (1 + delta) ** k
 
     return damage_acc
 
+
 def equivalent_permanence(
-    additionality : pd.DataFrame,
-    leakage : pd.DataFrame,
-    scc : pd.DataFrame,
-    current_year : int,
-    release_year : int,
-    schedule : pd.DataFrame,
-    delta : float = DEFAULT_DELTA_PER_YEAR
+    additionality: pd.DataFrame,
+    leakage: pd.DataFrame,
+    scc: pd.DataFrame,
+    current_year: int,
+    release_year: int,
+    schedule: pd.DataFrame,
+    delta: float = DEFAULT_DELTA_PER_YEAR,
 ) -> float:
     """
     Implements ./rfc/permanence/index.html#name-ep
@@ -217,7 +228,9 @@ def equivalent_permanence(
     leak_len = len(leakage)
 
     if add_len != leak_len:
-        raise ValueError("The number of values for additionality and leakage are not the same")
+        raise ValueError(
+            "The number of values for additionality and leakage are not the same"
+        )
 
     scc_now = scc.at[current_year, "value"]
     adj = adjusted_net_sequestration(additionality, leakage, schedule, current_year)
@@ -225,22 +238,20 @@ def equivalent_permanence(
     v_adj = adj * scc_now
     return (v_adj - damage(scc, current_year, release_year, schedule, delta)) / v_adj
 
-def interpolate_scc(
-    scc: pd.DataFrame,
-    min_year: int,
-    max_year: int
-) -> pd.DataFrame :
+
+def interpolate_scc(scc: pd.DataFrame, min_year: int, max_year: int) -> pd.DataFrame:
     # No interpolation is necessary
     if scc.index.min() <= min_year and scc.index.max() >= max_year:
         return scc["central"].copy()
 
-    x = scc.index.tolist()
-    y = scc["central"].values
+    years = scc.index.tolist()
+    values = scc["central"].values
     # TODO: interp1d a fair enough extrapolation technique?
-    cs = interp1d(x, y, fill_value="extrapolate")
-    xs = np.arange(min_year, max_year + 1, 1)
-    data = list(zip(xs, cs(xs)))
+    interpolated = interp1d(years, values, fill_value="extrapolate")
+    new_years = np.arange(min_year, max_year + 1, 1)
+    data = list(zip(new_years, interpolated(new_years)))
     return pd.DataFrame(data, columns=["year", "value"]).set_index("year")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
@@ -299,13 +310,13 @@ if __name__ == "__main__":
 
     schedule = []
     for fut in range(min_year, args.release_year):
-        estimates = [ fut ]
+        estimates = [fut]
         for est in range(min_year, args.current_year + 1):
             rel_sched = release_schedule("high", additionality, leakage, est, fut, 2042)
             estimates.append(rel_sched)
         schedule.append(estimates)
 
-    columns = ["year"] + [ y for y in range(min_year, args.current_year + 1)]
+    columns = ["year"] + [y for y in range(min_year, args.current_year + 1)]
 
     # The schedule dataframe can be accessed as schedule_df[est_year][for_year] i.e.
     # the scheduled release in for_year as estimated in est_year.
@@ -325,5 +336,5 @@ if __name__ == "__main__":
 
     # TODO: Probably return more than just ep
     with open(args.output_json, "w", encoding="utf-8") as f:
-        data = { "ep": ep }
+        data = {"ep": ep}
         json.dump(data, f)
