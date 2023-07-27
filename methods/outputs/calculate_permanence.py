@@ -121,14 +121,14 @@ def release_schedule(
     """
     min_year = additionality.index.min()
 
-    if quality == "low":
+    if quality == "low":    # i.e. HIGH RISK
         return release(additionality, leakage, from_year, 5)
-    elif quality == "high":
+    elif quality == "high": # i.e. LOW RISK
         # TODO: check strictness
         if to_year <= project_end:
             return 0.0
         else:
-            # Five years plus on for net seq calc
+            # Five years plus one for net seq calc
             if from_year < min_year + 6:
                 return 0.0
             else:
@@ -286,13 +286,6 @@ if __name__ == "__main__":
         help="Current year",
     )
     parser.add_argument(
-        "--release_year",
-        type=int,
-        required=True,
-        dest="release_year",
-        help="Directory containing JRC AnnualChange GeoTIFF tiles for all years.",
-    )
-    parser.add_argument(
         "--output",
         type=str,
         required=True,
@@ -301,6 +294,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    release_year = 2100
 
     additionality = pd.read_csv(args.additionality_csv, index_col="year")
     leakage = pd.read_csv(args.leakage_csv, index_col="year")
@@ -309,7 +303,7 @@ if __name__ == "__main__":
     min_year = additionality.index.min()
 
     schedule = []
-    for fut in range(min_year, args.release_year):
+    for fut in range(min_year, release_year):
         estimates = [fut]
         for est in range(min_year, args.current_year + 1):
             rel_sched = release_schedule("high", additionality, leakage, est, fut, 2042)
@@ -323,14 +317,14 @@ if __name__ == "__main__":
     schedule_df = pd.DataFrame(schedule, columns=columns)
     schedule_df = schedule_df.set_index("year")
 
-    scc = interpolate_scc(scc, 2005, 2050)
+    scc = interpolate_scc(scc, 2005, release_year)
 
     ep = equivalent_permanence(
         additionality,
         leakage,
         scc,
         args.current_year,
-        args.release_year,
+        release_year,
         schedule_df,
     )
 
