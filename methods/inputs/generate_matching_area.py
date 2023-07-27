@@ -7,13 +7,13 @@ from fiona.errors import DriverError # type: ignore
 from geopandas import gpd # type: ignore
 
 from methods.common.geometry import expand_boundaries
+from methods.inputs.generate_leakage import LEAKAGE_BUFFER_IN_METRES
 
 # The raw geojson for ecoregions is over 600MG, and OGR (which even geopandas uses under the hood)
 # will throw an error when it hits 200MB unless you override the limit thus
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
 MATCHING_RADIUS_IN_METRES = 2_000_000
-LEAKAGE_BUFFER_IN_METRES = 5_000
 
 def generate_matching_area(
     project_shape_filename: str,
