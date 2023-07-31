@@ -81,7 +81,7 @@ def find_match_iteration(
             "cpc5_u", "cpc5_d",
             "cpc10_u", "cpc10_d"
         ]
-        k_soft =  k_row[distance_columns].to_list()
+        k_soft =  np.array(k_row[distance_columns].to_list())
         just_cols = filtered_s[distance_columns]
 
         min_distance = 10000000000.0
