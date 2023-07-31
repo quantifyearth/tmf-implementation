@@ -82,19 +82,20 @@ def find_match_iteration(
             "cpc10_u", "cpc10_d"
         ]
         k_soft =  np.array(k_row[distance_columns].to_list())
-        just_cols = filtered_s[distance_columns]
+        just_cols = filtered_s[distance_columns].to_numpy()
 
         min_distance = 10000000000.0
         min_index = None
-        for s_tup in just_cols.itertuples():
-            distance = mahalanobis(k_soft, list(s_tup[1:]), invconv)
+        for index in range(len(just_cols)): # pylint: disable=C0200
+            s_row = just_cols[index]
+            distance = mahalanobis(k_soft, s_row, invconv)
             if distance < min_distance:
                 min_distance = distance
-                min_index = s_tup.Index
+                min_index = index
         if min_index is None:
             logging.warning("We got no minimum despite having %d potential matches", len(filtered_s))
             continue
-        match = filtered_s.loc[min_index]
+        match = filtered_s.iloc[min_index]
 
         results.append([
             k_row.lat,
