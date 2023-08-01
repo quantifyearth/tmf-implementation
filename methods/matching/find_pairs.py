@@ -64,7 +64,7 @@ def find_match_iteration(
             (s_subset[luc_columns[0]] == k_row.luc10) &
             (s_subset[luc_columns[1]] == k_row.luc5) &
             (s_subset[luc_columns[2]] == k_row.luc0)
-        ].copy()
+        ]
 
         if len(filtered_s) == 0:
             # No matches found for this pixel, move on
@@ -75,23 +75,27 @@ def find_match_iteration(
         #  * slope
         #  * accessibility
         #  * coarsened proportional coverage
-        k_soft = [k_row.elevation, k_row.slope, k_row.access, k_row.cpc0_u,
-            k_row.cpc0_d, k_row.cpc5_u, k_row.cpc5_d, k_row.cpc10_u, k_row.cpc10_d]
-        filtered_s['distance'] = filtered_s.apply(
-            partial(
-                lambda k_row, s_row: mahalanobis(k_row, [s_row.elevation, s_row.slope, s_row.access,
-                    s_row.cpc0_u, s_row.cpc0_d, s_row.cpc5_u, s_row.cpc5_d, s_row.cpc10_u, s_row.cpc10_d],
-                    invconv),
-                k_soft
-            ),
-            axis=1
-        )
-        minimal_s = filtered_s[filtered_s['distance']==filtered_s['distance'].min()]
-        try:
-            match = minimal_s.iloc[0]
-        except IndexError:
+        distance_columns = [
+            "elevation", "slope", "access",
+            "cpc0_u", "cpc0_d",
+            "cpc5_u", "cpc5_d",
+            "cpc10_u", "cpc10_d"
+        ]
+        k_soft =  np.array(k_row[distance_columns].to_list())
+        just_cols = filtered_s[distance_columns].to_numpy()
+
+        min_distance = 10000000000.0
+        min_index = None
+        for index in range(len(just_cols)): # pylint: disable=C0200
+            s_row = just_cols[index]
+            distance = mahalanobis(k_soft, s_row, invconv)
+            if distance < min_distance:
+                min_distance = distance
+                min_index = index
+        if min_index is None:
             logging.warning("We got no minimum despite having %d potential matches", len(filtered_s))
             continue
+        match = filtered_s.iloc[min_index]
 
         results.append([
             k_row.lat,
@@ -166,7 +170,7 @@ def main():
         "-j",
         type=int,
         required=False,
-        default=round(cpu_count() / 3),
+        default=round(cpu_count() / 2),
         dest="processes_count",
         help="Number of concurrent threads to use."
     )
