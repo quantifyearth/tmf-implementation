@@ -1,11 +1,15 @@
 import json
 import argparse
+import logging
 
 from typing import Literal, NoReturn, List
 import pandas as pd
 import numpy as np
 from scipy.interpolate import interp1d
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 def assert_never(value: NoReturn) -> NoReturn:
     assert False, f"This code should never be reached, got: {value}"
@@ -236,7 +240,12 @@ def equivalent_permanence(
     adj = adjusted_net_sequestration(additionality, leakage, schedule, current_year)
 
     v_adj = adj * scc_now
-    return (v_adj - damage(scc, current_year, release_year, schedule, delta)) / v_adj
+
+
+    dmg = damage(scc, current_year, release_year, schedule, delta)
+    logging.info("Damage %f and adj %f v %f", dmg, v_adj, (v_adj - dmg) / v_adj)
+
+    return (v_adj - dmg) / v_adj
 
 
 def interpolate_scc(scc: pd.DataFrame, min_year: int, max_year: int) -> pd.DataFrame:
