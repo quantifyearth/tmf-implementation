@@ -10,7 +10,6 @@ import pandas as pd
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
 
 from methods.common import LandUseClass
-from methods.common.config import from_file
 
 EXPECTED_NUMBER_OF_MATCH_ITERATIONS = 100
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
@@ -22,15 +21,13 @@ logging.basicConfig(
 
 def generate_additionality(
     project_geojson_file: str,
-    config_file: str,
+    project_start: str,
     end_year: int,
     jrc_directory_path: str,
     carbon_density: str,
     matches_directory: str,
     output_csv: str,
 ) -> int:
-    config = from_file(config_file)
-
     # Land use classes per year for the project
     p_tot = {}
 
@@ -62,7 +59,7 @@ def generate_additionality(
     )
     total_pixels = project_boundary.sum()
 
-    for year_index in range(config.project_start, end_year + 1):
+    for year_index in range(project_start, end_year + 1):
         logging.info("Calculating project carbon for %i", year_index)
 
         # TODO: Double check with Michael this is the correct thing to do
@@ -134,7 +131,7 @@ def generate_additionality(
         logging.info("Computing additionality for %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        for year_index in range(config.project_start, end_year + 1):
+        for year_index in range(project_start, end_year + 1):
             total_pixels_c = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -200,11 +197,11 @@ if __name__ == "__main__":
         help="GeoJSON files containing the polygons for the project's boundary",
     )
     parser.add_argument(
-        "--config",
+        "--project_start",
         type=str,
         required=True,
-        dest="project_config",
-        help="The project's JSON configuration file.",
+        dest="project_start",
+        help="The start year of the project.",
     )
     parser.add_argument(
         "--evaluation_year",
@@ -246,7 +243,7 @@ if __name__ == "__main__":
 
     generate_additionality(
         args.project_boundary_file,
-        args.project_config,
+        args.project_start,
         args.evaluation_year,
         args.jrc_directory_path,
         args.carbon_density,
