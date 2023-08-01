@@ -118,8 +118,11 @@ def generate_additionality(
 
         # Total carbon densities per class
         s_values = areas * density
+        v = s_values.sum()
 
-        p_tot[year_index] = s_values.sum()
+        logging.info("Additionality is %f", v)
+
+        p_tot[year_index] = v
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
 
@@ -158,6 +161,10 @@ def generate_additionality(
                     other_c / total_pixels_c,
                 ]
             )
+
+            # Quick Sanity Check
+            prop = np.sum(proportions_c)
+            assert 0.99 < prop < 1.01
 
             areas_c = proportions_c * (total_pixels * 30 * 30)
             s_c = areas_c * density

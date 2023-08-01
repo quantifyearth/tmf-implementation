@@ -169,7 +169,6 @@ def damage(
             "The release year must be greater than the year damage is being calculated for"
         )
 
-    damage_acc = 0.0
     years_to_release = release_year - year
 
     sched_estimate_min_year = schedule.index.min()
@@ -196,10 +195,12 @@ def damage(
         only {scc_year_max} were given and we need {maximum_forecast}"""
         )
 
+    damage_acc = 0.0
+
     for k in range(0, years_to_release):
         release = schedule[year][year + k]
         carbon = scc.loc[year + k][0]
-        damage_acc += release * carbon / (1 + delta) ** k
+        damage_acc += abs(release) * carbon / ((1 + delta) ** k)
 
     return damage_acc
 
@@ -240,7 +241,6 @@ def equivalent_permanence(
     adj = adjusted_net_sequestration(additionality, leakage, schedule, current_year)
 
     v_adj = adj * scc_now
-
 
     dmg = damage(scc, current_year, release_year, schedule, delta)
     logging.info("Damage %f and adj %f v %f", dmg, v_adj, (v_adj - dmg) / v_adj)
