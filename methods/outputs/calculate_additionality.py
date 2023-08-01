@@ -198,7 +198,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--project_start",
-        type=str,
+        type=int,
         required=True,
         dest="project_start",
         help="The start year of the project.",
