@@ -58,17 +58,18 @@ def generate_leakage(
         tif_for_metadata.projection,
     )
     leakage_zone = VectorLayer.layer_from_file(
-        project_geojson_file,
+        leakage_geojson_file,
         None,
         tif_for_metadata.pixel_scale,
         tif_for_metadata.projection,
     )
     total_pixels = leakage_zone.sum()
 
-    total_pixels_project = project_boundary.sum()
+    # TODO: see other TODO
+    # total_pixels_project = project_boundary.sum()
 
     for year_index in range(project_start, end_year + 1):
-        logging.info("Calculating project carbon for %i", year_index)
+        logging.info("Calculating leakage carbon for %i", year_index)
 
         # TODO: Double check with Michael this is the correct thing to do
         lucs = GroupLayer(
@@ -82,7 +83,7 @@ def generate_leakage(
 
         # LUCs only in leakage zone
         intersection = RasterLayer.find_intersection([lucs, leakage_zone])
-        project_boundary.set_window_for_intersection(intersection)
+        leakage_zone.set_window_for_intersection(intersection)
 
         lucs.set_window_for_intersection(intersection)
 
@@ -167,8 +168,9 @@ def generate_leakage(
                 ]
             )
 
-            # Scale to PROJECT area not LEAKAGE
-            areas_c = proportions_c * (total_pixels_project * 30 * 30)
+            # TODO: Project area or leakage area?
+            areas_c = proportions_c * (total_pixels * 30 * 30)
+
             s_c = areas_c * density
 
             if scvt.get(year_index) is not None:
