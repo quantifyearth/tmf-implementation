@@ -236,14 +236,23 @@ def equivalent_permanence(
         raise ValueError(
             "The number of values for additionality and leakage are not the same"
         )
+    
+    release_year = current_year
 
-    scc_now = scc.at[current_year, "value"]
+    # TODO: This needs double checking just to be sure it is the right method
     adj = adjusted_net_sequestration(additionality, leakage, schedule, current_year)
+    release = 0
+    while adj - release > 0:
+        release_year += 1
+        release += abs(schedule[current_year][release_year])
+    
+    scc = interpolate_scc(scc, 2005, release_year)
+    scc_now = scc.at[current_year, "value"]
 
     v_adj = adj * scc_now
 
     dmg = damage(scc, current_year, release_year, schedule, delta)
-    logging.info("Damage %f and adj %f v %f", dmg, v_adj, (v_adj - dmg) / v_adj)
+    logging.info("Release year: %i, Damage: %f and Adjusted Net Seq. %f, eP: %f", release_year, dmg, v_adj, (v_adj - dmg) / v_adj)
 
     return (v_adj - dmg) / v_adj
 
@@ -312,7 +321,7 @@ if __name__ == "__main__":
     min_year = additionality.index.min()
 
     schedule = []
-    for fut in range(min_year, release_year):
+    for fut in range(min_year, 4000):
         estimates = [fut]
         for est in range(min_year, args.current_year + 1):
             rel_sched = release_schedule("high", additionality, leakage, est, fut, 2042)
@@ -325,8 +334,6 @@ if __name__ == "__main__":
     # the scheduled release in for_year as estimated in est_year.
     schedule_df = pd.DataFrame(schedule, columns=columns)
     schedule_df = schedule_df.set_index("year")
-
-    scc = interpolate_scc(scc, 2005, release_year)
 
     ep = equivalent_permanence(
         additionality,
