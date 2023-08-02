@@ -118,11 +118,11 @@ def generate_additionality(
 
         # Total carbon densities per class
         s_values = areas * density
-        v = s_values.sum()
+        p_tot_value = s_values.sum()
 
-        logging.info("Additionality is %f", v)
+        logging.info("Additionality is %f", p_tot_value)
 
-        p_tot[year_index] = v
+        p_tot[year_index] = p_tot_value
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
 

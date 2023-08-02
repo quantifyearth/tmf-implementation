@@ -18,6 +18,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
+
 def generate_leakage(
     project_geojson_file: str,
     leakage_geojson_file: str,
@@ -28,6 +29,9 @@ def generate_leakage(
     matches_directory: str,
     output_csv: str,
 ) -> int:
+    # Make linter happy whilst we decide if we need to project polygon or not
+    logging.info("Generating leakage for %s", project_geojson_file)
+
     # Land use classes per year for the leakage zone
     l_tot = {}
 
@@ -51,12 +55,12 @@ def generate_leakage(
     tif_for_metadata = RasterLayer.layer_from_file(
         os.path.join(jrc_directory_path, luc_for_metadata[0])
     )
-    project_boundary = VectorLayer.layer_from_file(
-        project_geojson_file,
-        None,
-        tif_for_metadata.pixel_scale,
-        tif_for_metadata.projection,
-    )
+    # project_boundary = VectorLayer.layer_from_file(
+    #     project_geojson_file,
+    #     None,
+    #     tif_for_metadata.pixel_scale,
+    #     tif_for_metadata.projection,
+    # )
     leakage_zone = VectorLayer.layer_from_file(
         leakage_geojson_file,
         None,
