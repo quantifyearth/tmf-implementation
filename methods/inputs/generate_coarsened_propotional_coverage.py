@@ -15,8 +15,6 @@ from yirgacheffe.window import Area, PixelScale  # type: ignore
 
 from methods.common import LandUseClass
 
-set_start_method('spawn')
-
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 
@@ -94,6 +92,10 @@ def generate_coarsened_proportional_coverage(
             )
 
 def main() -> None:
+    # If you use the default multiprocess model then you risk deadlocks when logging (which we
+    # have hit). Spawn is the default on macOS, but not on Linux.
+    set_start_method("spawn")
+
     parser = argparse.ArgumentParser(
         description="Generate coarsened proportional coverage tiles from JRC Annual Change data."
     )
