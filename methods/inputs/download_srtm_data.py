@@ -29,7 +29,7 @@ def download_srtm_data(
 
     project = gpd.read_file(project_boundaries_filename)
     matching_area = gpd.read_file(pixel_matching_boundaries_filename)
-    total = shapely.union(project, matching_area)
+    total = shapely.union(project.geometry, matching_area.geometry)
     min_x, min_y, max_x, max_y = total.envelope[0].bounds
 
     min_x = math.floor((180.0 + min_x) / 5.0) + 1
