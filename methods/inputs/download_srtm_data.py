@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import tempfile
+import logging
 
 import requests
 import shapely # type: ignore
@@ -11,6 +12,8 @@ from fiona.errors import DriverError # type: ignore
 from geopandas import gpd # type: ignore
 
 from biomassrecovery.utils.unzip import unzip # type: ignore
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 URL_TEMPLATE = "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_%d_%d.zip"
 TIFF_NAME_TEMPLATE = "srtm_%d_%d.tif"
@@ -26,7 +29,7 @@ def download_srtm_data(
 
     project = gpd.read_file(project_boundaries_filename)
     matching_area = gpd.read_file(pixel_matching_boundaries_filename)
-    total = shapely.union(project, matching_area)
+    total = shapely.union(project.geometry, matching_area.geometry)
     min_x, min_y, max_x, max_y = total.envelope[0].bounds
 
     min_x = math.floor((180.0 + min_x) / 5.0) + 1
@@ -34,9 +37,20 @@ def download_srtm_data(
     min_y = math.floor((60.0 - min_y) / 5.0) + 1
     max_y = math.floor((60.0 - max_y) / 5.0) + 1
 
-    for yoffset in range(min_y, max_y + 1):
-        for xoffset in range(min_x, max_x + 1):
+    if min_x == max_x:
+        max_x = max_x + 1
+
+    if min_y > max_y + 1:
+        from_y, to_y = max_y, min_y
+    elif min_y == max_y:
+        from_y, to_y = min_y, max_y + 1
+    else:
+        from_y, to_y = min_y, max_y
+
+    for yoffset in range(from_y, to_y):
+        for xoffset in range(min_x, max_x):
             url = URL_TEMPLATE % (xoffset, yoffset)
+            logging.info("Fetching SRTM tile %s", url)
             target_filename = url.split('/')[-1]
             target_path = os.path.join(destination_zip_folder, target_filename)
 
