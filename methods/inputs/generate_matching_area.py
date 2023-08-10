@@ -45,7 +45,10 @@ def generate_matching_area(
 
     # Intersects requires a single geometry, and a project is a list of polygons usually, so
     # need to make a single multipolygon
-    project_multipolygon = shapely.geometry.MultiPolygon(polygon for polygon in project_boundaries.geometry)
+    if project_boundaries.type[0] == "MultiPolygon":
+        project_multipolygon = project_boundaries.geometry[0]
+    else:
+        project_multipolygon = shapely.geometry.MultiPolygon(polygon for polygon in project_boundaries.geometry)
     overlapping_ecoregions = ecoregions[ecoregions.intersects(project_multipolygon)]
     if overlapping_ecoregions.shape[0] == 0:
         raise ValueError("No overlapping ecoregions found")
