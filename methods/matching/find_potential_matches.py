@@ -193,10 +193,13 @@ def worker(
 
         result_path = os.path.join(result_folder, f"{index}.tif")
         if os.path.exists(result_path):
-            raster = RasterLayer.layer_from_file(result_path)
-            if raster.sum() > 0:
-                output_queue.put(result_path)
-                continue
+            try:
+                raster = RasterLayer.layer_from_file(result_path)
+                if raster.sum() > 0:
+                    output_queue.put(result_path)
+                    continue
+            except FileNotFoundError:
+                pass
 
         matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
 
