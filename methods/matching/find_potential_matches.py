@@ -14,7 +14,6 @@ import yirgacheffe.operators  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
 
-yirgacheffe.operators.YSTEP = 1024 * 12
 # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
 # it pointlessly hogs memory, and then spends a long time tidying it up after.
 gdal.SetCacheMax(1024 * 1024 * 16)
