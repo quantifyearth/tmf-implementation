@@ -104,7 +104,7 @@ def reduce_results(
     assert matching_collection.boundary.window == merged_result.window
 
     if matching_collection.boundary.area != merged_result.area:
-        raise ValueError("Expected areas to be equal {matching_collection.boundary.area} vs {merged_result.area}")
+        raise ValueError(f"Expected areas to be equal {matching_collection.boundary.area} vs {merged_result.area}")
 
     results = []
 
