@@ -7,9 +7,11 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
 
 from methods.common import LandUseClass
+from methods.common.geometry import area_for_geometry
 
 EXPECTED_NUMBER_OF_MATCH_ITERATIONS = 100
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
@@ -57,7 +59,14 @@ def generate_additionality(
         tif_for_metadata.pixel_scale,
         tif_for_metadata.projection,
     )
+
     total_pixels = project_boundary.sum()
+
+    # We calculate area using projections and not the inaccurate 30 * 30 approximation
+    project_gpd = gpd.read_file(project_geojson_file)
+    project_area_msq = area_for_geometry(project_gpd)
+
+    logging.info("Project area: %.2fmsq", project_area_msq)
 
     for year_index in range(project_start, end_year + 1):
         logging.info("Calculating project carbon for %i", year_index)
@@ -113,8 +122,8 @@ def generate_additionality(
         prop = np.sum(proportions)
         assert 0.99 < prop < 1.01
 
-        # TODO: the assumption of 30 x 30 resolution is not best practice
-        areas = proportions * (total_pixels * 30 * 30)
+        # Converts project_area_msg to ha
+        areas = proportions * (project_area_msq / 10000)
 
         # Total carbon densities per class
         s_values = areas * density
@@ -166,7 +175,7 @@ def generate_additionality(
             prop = np.sum(proportions_c)
             assert 0.99 < prop < 1.01
 
-            areas_c = proportions_c * (total_pixels * 30 * 30)
+            areas_c = proportions_c * (project_area_msq / 10000)
             s_c = areas_c * density
 
             if scvt.get(year_index) is not None:

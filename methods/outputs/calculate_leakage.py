@@ -7,9 +7,11 @@ from functools import partial
 
 import numpy as np
 import pandas as pd
+import geopandas as gpd
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
 
 from methods.common import LandUseClass
+from methods.common.geometry import area_for_geometry
 
 EXPECTED_NUMBER_OF_MATCH_ITERATIONS = 100
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
@@ -69,6 +71,16 @@ def generate_leakage(
     )
     total_pixels = leakage_zone.sum()
 
+
+    # We calculate area using projections and not the inaccurate 30 * 30 approximation
+    project_gpd = gpd.read_file(project_geojson_file)
+    project_area_msq = area_for_geometry(project_gpd)
+    leakage_gpd = gpd.read_file(leakage_geojson_file)
+    leakage_area_msq = area_for_geometry(leakage_gpd)
+
+    logging.info("Project area: %.2fmsq", project_area_msq)
+    logging.info("Leakage area: %.2fmsq", leakage_area_msq)
+
     # TODO: see other TODO
     # total_pixels_project = project_boundary.sum()
 
@@ -127,7 +139,7 @@ def generate_leakage(
         assert 0.99 < prop < 1.01
 
         # TODO: the assumption of 30 x 30 resolution is not best practice
-        areas = proportions * (total_pixels * 30 * 30)
+        areas = proportions * (leakage_area_msq / 10000)
 
         # Total carbon densities per class
         s_values = areas * density
@@ -172,8 +184,8 @@ def generate_leakage(
                 ]
             )
 
-            # TODO: Project area or leakage area?
-            areas_c = proportions_c * (total_pixels * 30 * 30)
+            # TODO: Project area or leakage area?!
+            areas_c = proportions_c * (leakage_area_msq / 10000)
 
             s_c = areas_c * density
 
