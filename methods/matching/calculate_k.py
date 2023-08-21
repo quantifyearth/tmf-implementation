@@ -212,7 +212,7 @@ def main():
         type=str,
         required=True,
         dest="cpc_directory_path",
-        help="Filder containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
+        help="Directory containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
     )
     parser.add_argument(
         "--ecoregions",

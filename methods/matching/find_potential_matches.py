@@ -1,6 +1,8 @@
 import argparse
 import glob
 import os
+import sys
+import time
 from dataclasses import dataclass
 from multiprocessing import Manager, Process, Queue, cpu_count
 
@@ -8,11 +10,9 @@ from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
-import yirgacheffe.operators  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
 
-yirgacheffe.operators.YSTEP = 1024 * 12
 # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
 # it pointlessly hogs memory, and then spends a long time tidying it up after.
 gdal.SetCacheMax(1024 * 1024 * 16)
@@ -39,14 +39,18 @@ class MatchedPixel:
         return (self.xoffset, self.yoffset).__hash__()
 
 
-def load_k(k_filename: str, queue: Queue, sentinal_count: int) -> None:
+def load_k(
+    k_filename: str,
+    sentinal_count: int,
+    output_queue: Queue,
+) -> None:
     # put the source pixels into the queue
     source_pixels = pd.read_parquet(k_filename)
     for row in source_pixels.iterrows():
-        queue.put(row)
+        output_queue.put(row)
     # To close the pipe put in one sentinel value per worker
     for _ in range(sentinal_count):
-        queue.put(None)
+        output_queue.put(None)
 
 def reduce_results(
     matching_zone_filename: str,
@@ -59,14 +63,14 @@ def reduce_results(
     start_year: int,
     evaluation_year: int,
     result_dataframe_filename: str,
-    queue: Queue,
-    sentinal_count: int
+    sentinal_count: int,
+    input_queue: Queue
 ) -> None:
     # lazily created
     merged_result = None
 
     while True:
-        partial_raster_filename = queue.get()
+        partial_raster_filename = input_queue.get()
         if partial_raster_filename is None:
             sentinal_count -= 1
             if sentinal_count == 0:
@@ -188,10 +192,13 @@ def worker(
 
         result_path = os.path.join(result_folder, f"{index}.tif")
         if os.path.exists(result_path):
-            raster = RasterLayer.layer_from_file(result_path)
-            if raster.sum() > 0:
-                output_queue.put(result_path)
-                continue
+            try:
+                raster = RasterLayer.layer_from_file(result_path)
+                if raster.sum() > 0:
+                    output_queue.put(result_path)
+                    continue
+            except FileNotFoundError:
+                pass
 
         matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
 
@@ -236,7 +243,8 @@ def find_potential_matches(
     os.makedirs(result_folder, exist_ok=True)
     result_dataframe_filename = os.path.join(result_folder, "results.parquet")
 
-    assert processes_count > 3
+    assert processes_count >= 3
+
     with Manager() as manager:
         source_queue = manager.Queue()
         results_queue = manager.Queue()
@@ -253,8 +261,8 @@ def find_potential_matches(
             start_year,
             evaluation_year,
             result_dataframe_filename,
-            results_queue,
-            worker_count
+            worker_count,
+            results_queue
         ))
         consumer_process.start()
         workers = [Process(target=worker, args=(
@@ -271,16 +279,24 @@ def find_potential_matches(
             result_folder,
             source_queue,
             results_queue
-        )) for index in range(processes_count - 2)]
+        )) for index in range(worker_count)]
         for worker_process in workers:
             worker_process.start()
-        ingest_process = Process(target=load_k, args=(k_filename, source_queue, worker_count))
+        ingest_process = Process(target=load_k, args=(k_filename, worker_count, source_queue))
         ingest_process.start()
 
-        ingest_process.join()
-        for worker_process in workers:
-            worker_process.join()
-        consumer_process.join()
+        processes = workers + [ingest_process, consumer_process]
+        while processes:
+            candidates = [x for x in processes if not x.is_alive()]
+            for candidate in candidates:
+                candidate.join()
+                if candidate.exitcode:
+                    for victim in processes:
+                        victim.kill()
+                    sys.exit(candidate.exitcode)
+                processes.remove(candidate)
+            time.sleep(1)
+
 
 def main():
     parser = argparse.ArgumentParser(description="Finds all potential matches to K in matching zone, aka set S.")
