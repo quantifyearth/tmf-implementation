@@ -10,7 +10,6 @@ from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
-import yirgacheffe.operators  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
 
@@ -41,9 +40,9 @@ class MatchedPixel:
 
 
 def load_k(
-    k_filename: str, 
+    k_filename: str,
     sentinal_count: int,
-    output_queue: Queue, 
+    output_queue: Queue,
 ) -> None:
     # put the source pixels into the queue
     source_pixels = pd.read_parquet(k_filename)
