@@ -12,6 +12,7 @@ import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
+from methods.common.luc import luc_matching_columns, luc_range
 
 # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
 # it pointlessly hogs memory, and then spends a long time tidying it up after.
@@ -90,7 +91,7 @@ def reduce_results(
     matching_collection = build_layer_collection(
         merged_result.pixel_scale,
         merged_result.projection,
-        [start_year - 10, start_year - 5] + list(range(start_year, evaluation_year + 1)),
+        list(luc_range(start_year, evaluation_year)),
         [start_year, start_year - 5, start_year - 10],
         matching_zone_filename,
         jrc_directory_path,
@@ -142,8 +143,7 @@ def reduce_results(
                 row_access[0][xoffset],
             ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
 
-    luc_columns = [f'luc_{start_year - 10}', f'luc_{start_year - 5}'] + \
-        [f'luc_{year}' for year in range(start_year, evaluation_year + 1)]
+    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
@@ -169,6 +169,8 @@ def worker(
     # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
     example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
     example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
+
+    luc0, luc5, luc10 = luc_matching_columns(start_year)
 
     matching_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
@@ -212,9 +214,9 @@ def worker(
         filtered_access = matching_collection.access.numpy_apply(
             lambda chunk: np.logical_and(chunk >= (matching.access - 10), chunk <= (matching.access + 10))
         )
-        filtered_luc0 = matching_collection.lucs[0].numpy_apply(lambda chunk: chunk == matching.luc0)
-        filtered_luc5 = matching_collection.lucs[1].numpy_apply(lambda chunk: chunk == matching.luc5)
-        filtered_luc10 = matching_collection.lucs[2].numpy_apply(lambda chunk: chunk == matching.luc10)
+        filtered_luc0 = matching_collection.lucs[0].numpy_apply(lambda chunk: chunk == matching[luc0])
+        filtered_luc5 = matching_collection.lucs[1].numpy_apply(lambda chunk: chunk == matching[luc5])
+        filtered_luc10 = matching_collection.lucs[2].numpy_apply(lambda chunk: chunk == matching[luc10])
 
         calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * \
             filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access
