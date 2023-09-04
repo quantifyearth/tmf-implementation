@@ -104,6 +104,7 @@ def build_layer_collection(
 def calculate_k(
     project_boundary_filename: str,
     start_year: int,
+    evaluation_year: int,
     jrc_directory_path: str,
     cpc_directory_path: str,
     ecoregions_directory_path: str,
@@ -125,7 +126,7 @@ def calculate_k(
     project_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        [start_year, start_year - 5, start_year - 10],
+        [start_year - 10, start_year - 5] + list(range(start_year, evaluation_year + 1)),
         [start_year, start_year - 5, start_year - 10],
         project_boundary_filename,
         jrc_directory_path,
@@ -176,11 +177,11 @@ def calculate_k(
                 row_access[0][xoffset],
             ] + lucs + cpcs)
 
+    luc_columns = ['luc10', 'luc5', 'luc0'] + [f'luc_{year}' for year in range(start_year + 1, evaluation_year + 1)]
+    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
-        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access',
-                 'luc0', 'luc5', 'luc10', 'cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u',
-                 'cpc10_d']
+        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access'] + luc_columns + cpc_columns
     )
     output.to_parquet(result_dataframe_filename)
 
@@ -199,6 +200,13 @@ def main():
         required=True,
         dest="start_year",
         help="Year project started."
+    )
+    parser.add_argument(
+        "--evaluation_year",
+        type=int,
+        required=True,
+        dest="evaluation_year",
+        help="Year of project evalation"
     )
     parser.add_argument(
         "--jrc",
@@ -254,6 +262,7 @@ def main():
     calculate_k(
         args.project_boundary_filename,
         args.start_year,
+        args.evaluation_year,
         args.jrc_directory_path,
         args.cpc_directory_path,
         args.ecoregions_directory_path,
