@@ -12,6 +12,7 @@ from yirgacheffe.window import PixelScale  # type: ignore
 
 from methods.common import LandUseClass
 from methods.common.geometry import area_for_geometry
+from methods.common.luc import luc_range
 
 HECTARE_WIDTH_IN_METERS = 100
 PIXEL_WIDTH_IN_METERS = 30
@@ -126,7 +127,7 @@ def calculate_k(
     project_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        [start_year - 10, start_year - 5] + list(range(start_year, evaluation_year + 1)),
+        list(luc_range(start_year, evaluation_year)),
         [start_year, start_year - 5, start_year - 10],
         project_boundary_filename,
         jrc_directory_path,
@@ -177,7 +178,7 @@ def calculate_k(
                 row_access[0][xoffset],
             ] + lucs + cpcs)
 
-    luc_columns = ['luc10', 'luc5', 'luc0'] + [f'luc_{year}' for year in range(start_year + 1, evaluation_year + 1)]
+    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
