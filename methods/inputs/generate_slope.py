@@ -7,9 +7,9 @@ import sys
 import math
 import logging
 
-import utm
-from yirgacheffe.window import Area
-from yirgacheffe.layers import RasterLayer, GroupLayer
+import utm # type: ignore
+from yirgacheffe.window import Area # type: ignore
+from yirgacheffe.layers import RasterLayer, GroupLayer # type: ignore
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
