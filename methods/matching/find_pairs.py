@@ -36,9 +36,12 @@ def find_match_iteration(
         random_state=random.randint(0, 1000000),
     )
 
-    # in the current methodology version (1.1), it's possible for
+    # Notes:
+    # 1. in the current methodology version (1.1), it's possible for
     # multiple pixels in k to map to the same pixel in S
+    # 2. Not all pixels may have matches
     results = []
+    matchless = []
 
     # These are named with years in, but are currently always in the
     # order of t-10, t-5, t, t+1, t+2, ... where t is project start
@@ -67,7 +70,8 @@ def find_match_iteration(
         ]
 
         if len(filtered_s) == 0:
-            # No matches found for this pixel, move on
+            # No matches found for this pixel, note it down and move on
+            matchless.append(k_row)
             continue
 
         # and then a soft match based on Mahalanobis distance of
@@ -106,6 +110,9 @@ def find_match_iteration(
 
     results_df = pd.DataFrame(results, columns=['k_lat', 'k_lng', 's_lat', 's_lng'] + luc_columns[2:])
     results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
+
+    matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
+    matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
 
 
 def find_pairs(
