@@ -3,13 +3,12 @@ import os
 import logging
 import csv
 import argparse
-from functools import partial
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
+from geojson import LineString, GeometryCollection, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -205,6 +204,22 @@ def generate_additionality(
         os.makedirs(dump_dir, exist_ok=True)
         path = os.path.join(dump_dir, "1201-carbon-stock.png")
         figure.savefig(path)
+
+        # Now for all the pairs we create a GeoJSON for visualising
+        for pair_idx, pairs in enumerate(matches):
+            matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+
+            linestrings = []
+            for _, row in matches_df.iterrows():
+                ls = LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])])
+                linestrings.append(ls)
+            
+            gc = GeometryCollection(linestrings)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
+
+            with open(out_path, "w") as f:
+                f.write(dumps(gc))
+
 
     result = {}
 
