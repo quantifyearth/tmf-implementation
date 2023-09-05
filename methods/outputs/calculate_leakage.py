@@ -31,29 +31,27 @@ def plot_carbon_stock(axis, arr, cf):
         control.append(cf[k])
     axis[0].plot(x_axis, treatment, label="Treatment")
     axis[0].plot(x_axis, control, label="Control")
-    axis[0].set_title('Leakage carbon stock (Treatment and Average Control)')
+    axis[0].set_title('Carbon stock (Average Treatment and Average Control)')
     axis[0].set_xlabel('Year')
     axis[0].set_ylabel('Carbon Stock (MgCO2e)')
     axis[0].legend(loc="lower left")
 
-def plot_carbon_trajectories(axis, ts):
+def plot_carbon_trajectories(axis, title, idx, ts):
     x_axis = []
     y_axis = []
     for (k, v) in ts.items():
         x_axis.append(k)
         y_axis.append(ts[k])
-    axis[1].plot(x_axis, y_axis)
-    axis[1].set_title('Leakage carbon stock (All Matches)')
-    axis[1].set_xlabel('Year')
-    axis[1].set_ylabel('Carbon Stock (MgCO2e)')
-
+    axis[idx].plot(x_axis, y_axis)
+    axis[idx].set_title(title)
+    axis[idx].set_xlabel('Year')
+    axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
 
 def generate_leakage(
     project_geojson_file: str,
     leakage_geojson_file: str,
     project_start: str,
     end_year: int,
-    jrc_directory_path: str,
     carbon_density: str,
     matches_directory: str,
     output_csv: str,
@@ -74,31 +72,6 @@ def generate_leakage(
         luc = row["land use class"]
         density[int(luc) - 1] = row["carbon density"]
 
-    # We need pixel scales etc. to load in the vector for the project so we grab
-    # one of the JRC tiles for this
-    luc_for_metadata = glob.glob("*.tif", root_dir=jrc_directory_path)
-
-    if len(luc_for_metadata) == 0:
-        raise ValueError("No JRC TIF files found in the JRC directory")
-
-    tif_for_metadata = RasterLayer.layer_from_file(
-        os.path.join(jrc_directory_path, luc_for_metadata[0])
-    )
-    # project_boundary = VectorLayer.layer_from_file(
-    #     project_geojson_file,
-    #     None,
-    #     tif_for_metadata.pixel_scale,
-    #     tif_for_metadata.projection,
-    # )
-    leakage_zone = VectorLayer.layer_from_file(
-        leakage_geojson_file,
-        None,
-        tif_for_metadata.pixel_scale,
-        tif_for_metadata.projection,
-    )
-    total_pixels = leakage_zone.sum()
-
-
     # We calculate area using projections and not the inaccurate 30 * 30 approximation
     project_gpd = gpd.read_file(project_geojson_file)
     project_area_msq = area_for_geometry(project_gpd)
@@ -108,76 +81,55 @@ def generate_leakage(
     logging.info("Project area: %.2fmsq", project_area_msq)
     logging.info("Leakage area: %.2fmsq", leakage_area_msq)
 
-    # TODO: see other TODO
-    # total_pixels_project = project_boundary.sum()
-
-    for year_index in range(project_start, end_year + 1):
-        logging.info("Calculating leakage carbon for %i", year_index)
-
-        # TODO: Double check with Michael this is the correct thing to do
-        lucs = GroupLayer(
-            [
-                RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename))
-                for filename in glob.glob(
-                    f"*{year_index}*.tif", root_dir=jrc_directory_path
-                )
-            ]
-        )
-
-        # LUCs only in leakage zone
-        intersection = RasterLayer.find_intersection([lucs, leakage_zone])
-        leakage_zone.set_window_for_intersection(intersection)
-
-        lucs.set_window_for_intersection(intersection)
-
-        def is_in_class(class_, data):
-            return np.where(data != class_, 0.0, 1.0)
-
-        lucs_in_leakage = lucs * leakage_zone
-
-        undisturbed = lucs_in_leakage.numpy_apply(
-            partial(is_in_class, LandUseClass.UNDISTURBED)
-        )
-        degraded = lucs_in_leakage.numpy_apply(
-            partial(is_in_class, LandUseClass.DEGRADED)
-        )
-        deforested = lucs_in_leakage.numpy_apply(
-            partial(is_in_class, LandUseClass.DEFORESTED)
-        )
-        regrowth = lucs_in_leakage.numpy_apply(
-            partial(is_in_class, LandUseClass.REGROWTH)
-        )
-        water = lucs_in_leakage.numpy_apply(partial(is_in_class, LandUseClass.WATER))
-        other = lucs_in_leakage.numpy_apply(partial(is_in_class, LandUseClass.OTHER))
-
-        proportions = np.array(
-            [
-                undisturbed.sum() / total_pixels,
-                degraded.sum() / total_pixels,
-                deforested.sum() / total_pixels,
-                regrowth.sum() / total_pixels,
-                water.sum() / total_pixels,
-                other.sum() / total_pixels,
-            ]
-        )
-
-        # Quick Sanity Check
-        prop = np.sum(proportions)
-        assert 0.99 < prop < 1.01
-
-        # TODO: the assumption of 30 x 30 resolution is not best practice
-        areas = proportions * (leakage_area_msq / 10000)
-
-        # Total carbon densities per class
-        s_values = areas * density
-
-        s_v = s_values.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
-
-        l_tot[year_index] = s_v
-
     matches = glob.glob("*.parquet", root_dir=matches_directory)
-
     assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
+
+    l_tot = {}
+
+    for pair_idx, pairs in enumerate(matches):
+        logging.info("Computing leakage for %s", pairs)
+        matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+
+        for year_index in range(project_start, end_year + 1):
+            total_pixels = len(matches_df)
+
+            values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+            value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
+
+            for luc in value_count_year.index.tolist():
+                values[int(luc) - 1] = value_count_year[luc]
+
+            undisturbed = values[LandUseClass.UNDISTURBED - 1]
+            degraded = values[LandUseClass.DEGRADED - 1]
+            deforested = values[LandUseClass.DEFORESTED - 1]
+            regrowth = values[LandUseClass.REGROWTH - 1]
+            water = values[LandUseClass.WATER - 1]
+            other = values[LandUseClass.OTHER - 1]
+
+            proportions = np.array(
+                [
+                    undisturbed / total_pixels,
+                    degraded / total_pixels,
+                    deforested / total_pixels,
+                    regrowth / total_pixels,
+                    water / total_pixels,
+                    other / total_pixels,
+                ]
+            )
+
+            areas = proportions * (leakage_area_msq / 10000)
+
+            s = areas * density
+
+            s_value = s.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
+
+            if l_tot.get(year_index) is not None:
+                l_tot[year_index][pair_idx] = s_value
+            else:
+                arr = [0 for _ in range(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)]
+                arr[pair_idx] = s_value
+                l_tot[year_index] = arr
 
     scvt = {}
 
@@ -190,7 +142,7 @@ def generate_leakage(
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-            value_count_year = matches_df[f"luc_{year_index}"].value_counts()
+            value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
 
             for luc in value_count_year.index.tolist():
                 values[int(luc) - 1] = value_count_year[luc]
@@ -231,21 +183,26 @@ def generate_leakage(
     for year, values in scvt.items():
         c_tot[year] = np.average(values)
 
+    project = {}
+    for year, values in l_tot.items():
+        project[year] = np.average(values)
+
     result = {}
 
     if dump_dir is not None:
-        figure, axis = plt.subplots(1, 2)
+        figure, axis = plt.subplots(1, 3)
         figure.set_figheight(10)
         figure.set_figwidth(15)
 
-        plot_carbon_trajectories(axis, scvt)
-        plot_carbon_stock(axis, l_tot, c_tot)
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Treatment)', 1, l_tot)
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Control)', 2, scvt)
+        plot_carbon_stock(axis, project, c_tot)
 
         os.makedirs(dump_dir, exist_ok=True)
         path = os.path.join(dump_dir, "1201-leakage-carbon-stock.png")
         figure.savefig(path)
 
-    for year, value in l_tot.items():
+    for year, value in project.items():
         result[year] = max(0, (value - c_tot[year]))
 
     with open(output_csv, "w", encoding="utf-8") as file:
@@ -288,13 +245,6 @@ if __name__ == "__main__":
         help="Year of project evalation",
     )
     parser.add_argument(
-        "--jrc",
-        type=str,
-        required=True,
-        dest="jrc_directory_path",
-        help="Directory containing JRC AnnualChange GeoTIFF tiles for all years.",
-    )
-    parser.add_argument(
         "--density",
         type=str,
         required=True,
@@ -323,7 +273,6 @@ if __name__ == "__main__":
         args.project_leakage_zone,
         args.project_start,
         args.evaluation_year,
-        args.jrc_directory_path,
         args.carbon_density,
         args.matches,
         args.output_csv,

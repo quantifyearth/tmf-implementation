@@ -34,34 +34,30 @@ def plot_carbon_stock(axis, arr, cf):
         control.append(cf[k])
     axis[0].plot(x_axis, treatment, label="Treatment")
     axis[0].plot(x_axis, control, label="Control")
-    axis[0].set_title('Carbon stock (Treatment and Average Control)')
+    axis[0].set_title('Carbon stock (Average Treatment and Average Control)')
     axis[0].set_xlabel('Year')
     axis[0].set_ylabel('Carbon Stock (MgCO2e)')
     axis[0].legend(loc="lower left")
 
-def plot_carbon_trajectories(axis, ts):
+def plot_carbon_trajectories(axis, title, idx, ts):
     x_axis = []
     y_axis = []
     for (k, v) in ts.items():
         x_axis.append(k)
         y_axis.append(ts[k])
-    axis[1].plot(x_axis, y_axis)
-    axis[1].set_title('Carbon stock (All Matches)')
-    axis[1].set_xlabel('Year')
-    axis[1].set_ylabel('Carbon Stock (MgCO2e)')
+    axis[idx].plot(x_axis, y_axis)
+    axis[idx].set_title(title)
+    axis[idx].set_xlabel('Year')
+    axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
 
 def generate_additionality(
     project_geojson_file: str,
     project_start: str,
     end_year: int,
-    jrc_directory_path: str,
     carbon_density: str,
     matches_directory: str,
     output_csv: str,
 ) -> int:
-    # Land use classes per year for the project
-    p_tot = {}
-
     # TODO: may be present in config, in which case use that, but for now we use
     # the calculate version.
     density_df = pd.read_csv(carbon_density)
@@ -72,101 +68,66 @@ def generate_additionality(
         luc = row["land use class"]
         density[int(luc) - 1] = row["carbon density"]
 
-    # We need pixel scales etc. to load in the vector for the project so we grab
-    # one of the JRC tiles for this
-    luc_for_metadata = glob.glob("*.tif", root_dir=jrc_directory_path)
-
-    if len(luc_for_metadata) == 0:
-        raise ValueError("No JRC TIF files found in the JRC directory")
-
-    tif_for_metadata = RasterLayer.layer_from_file(
-        os.path.join(jrc_directory_path, luc_for_metadata[0])
-    )
-
-    project_boundary = VectorLayer.layer_from_file(
-        project_geojson_file,
-        None,
-        tif_for_metadata.pixel_scale,
-        tif_for_metadata.projection,
-    )
-
-    total_pixels = project_boundary.sum()
-
     # We calculate area using projections and not the inaccurate 30 * 30 approximation
     project_gpd = gpd.read_file(project_geojson_file)
     project_area_msq = area_for_geometry(project_gpd)
 
     logging.info("Project area: %.2fmsq", project_area_msq)
 
-    for year_index in range(project_start, end_year + 1):
-        logging.info("Calculating project carbon for %i", year_index)
+    matches = glob.glob("*.parquet", root_dir=matches_directory)
+    assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
 
-        # TODO: Double check with Michael this is the correct thing to do
-        lucs = GroupLayer(
-            [
-                RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename))
-                for filename in glob.glob(
-                    f"*{year_index}*.tif", root_dir=jrc_directory_path
-                )
-            ]
-        )
+    treatment_data = {}
 
-        # LUCs only in project boundary
-        intersection = RasterLayer.find_intersection([lucs, project_boundary])
-        project_boundary.set_window_for_intersection(intersection)
+    for pair_idx, pairs in enumerate(matches):
+        logging.info("Computing additionality in treatment for %s", pairs)
+        matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        lucs.set_window_for_intersection(intersection)
+        for year_index in range(project_start, end_year + 1):
+            total_pixels_t = len(matches_df)
 
-        def is_in_class(class_, data):
-            return np.where(data != class_, 0.0, 1.0)
+            values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-        lucs_in_project = lucs * project_boundary
+            value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
 
-        undisturbed = lucs_in_project.numpy_apply(
-            partial(is_in_class, LandUseClass.UNDISTURBED.value)
-        )
-        degraded = lucs_in_project.numpy_apply(
-            partial(is_in_class, LandUseClass.DEGRADED.value)
-        )
-        deforested = lucs_in_project.numpy_apply(
-            partial(is_in_class, LandUseClass.DEFORESTED.value)
-        )
-        regrowth = lucs_in_project.numpy_apply(
-            partial(is_in_class, LandUseClass.REGROWTH.value)
-        )
-        water = lucs_in_project.numpy_apply(partial(is_in_class, LandUseClass.WATER.value))
+            for luc in value_count_year.index.tolist():
+                values[int(luc) - 1] = value_count_year[luc]
 
-        other = lucs_in_project.numpy_apply(partial(is_in_class, LandUseClass.OTHER.value))
+            undisturbed_t = values[LandUseClass.UNDISTURBED - 1]
+            degraded_t = values[LandUseClass.DEGRADED - 1]
+            deforested_t = values[LandUseClass.DEFORESTED - 1]
+            regrowth_t = values[LandUseClass.REGROWTH - 1]
+            water_t = values[LandUseClass.WATER - 1]
+            other_t = values[LandUseClass.OTHER - 1]
 
-        proportions = np.array(
-            [
-                undisturbed.sum() / total_pixels,
-                degraded.sum() / total_pixels,
-                deforested.sum() / total_pixels,
-                regrowth.sum() / total_pixels,
-                water.sum() / total_pixels,
-                other.sum() / total_pixels,
-            ]
-        )
+            proportions_t = np.array(
+                [
+                    undisturbed_t / total_pixels_t,
+                    degraded_t / total_pixels_t,
+                    deforested_t / total_pixels_t,
+                    regrowth_t / total_pixels_t,
+                    water_t / total_pixels_t,
+                    other_t / total_pixels_t,
+                ]
+            )
 
-        logging.info(f"Proportions: {proportions}")
+            # Quick Sanity Check
+            prop = np.sum(proportions_t)
+            assert 0.99 < prop < 1.01
 
-        # Quick Sanity Check
-        prop = np.sum(proportions)
-        assert 0.99 < prop < 1.01
+            areas_t = proportions_t * (project_area_msq / 10000)
+            s_t = areas_t * density
 
-        # Converts project_area_msg to ha
-        areas = proportions * (project_area_msq / 10000)
+            s_t_value = s_t.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
 
-        logging.info(f"Areas: {areas}")
+            logging.info("Additionality in treatment is %f", s_t_value)
 
-        # Total carbon densities per class
-        s_values = areas * density
-        p_tot_value = s_values.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
-
-        logging.info("Additionality is %f", p_tot_value)
-
-        p_tot[year_index] = p_tot_value
+            if treatment_data.get(year_index) is not None:
+                treatment_data[year_index][pair_idx] = s_t_value
+            else:
+                arr = [0 for _ in range(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)]
+                arr[pair_idx] = s_t_value
+                treatment_data[year_index] = arr
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
 
@@ -175,7 +136,7 @@ def generate_additionality(
     scvt = {}
 
     for pair_idx, pairs in enumerate(matches):
-        logging.info("Computing additionality for %s", pairs)
+        logging.info("Computing additionality for control %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
         for year_index in range(project_start, end_year + 1):
@@ -183,7 +144,7 @@ def generate_additionality(
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
-            value_count_year = matches_df[f"luc_{year_index}"].value_counts()
+            value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
 
             for luc in value_count_year.index.tolist():
                 values[int(luc) - 1] = value_count_year[luc]
@@ -228,18 +189,22 @@ def generate_additionality(
     for year, values in scvt.items():
         c_tot[year] = np.average(values)
 
-    if dump_dir is not None:
-        figure, axis = plt.subplots(1, 2)
-        figure.set_figheight(10)
-        figure.set_figwidth(15)
+    p_tot = {}
+    for year, values in treatment_data.items():
+        p_tot[year] = np.average(values)
 
-        plot_carbon_trajectories(axis, scvt)
+    if dump_dir is not None:
+        figure, axis = plt.subplots(1, 3)
+        figure.set_figheight(10)
+        figure.set_figwidth(18)
+
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Treatment)', 1, treatment_data)
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Control)', 2, scvt)
         plot_carbon_stock(axis, p_tot, c_tot)
 
         os.makedirs(dump_dir, exist_ok=True)
         path = os.path.join(dump_dir, "1201-carbon-stock.png")
         figure.savefig(path)
-
 
     result = {}
 
@@ -279,13 +244,6 @@ if __name__ == "__main__":
         help="Year of project evalation",
     )
     parser.add_argument(
-        "--jrc",
-        type=str,
-        required=True,
-        dest="jrc_directory_path",
-        help="Directory containing JRC AnnualChange GeoTIFF tiles for all years.",
-    )
-    parser.add_argument(
         "--density",
         type=str,
         required=True,
@@ -313,7 +271,6 @@ if __name__ == "__main__":
         args.project_boundary_file,
         args.project_start,
         args.evaluation_year,
-        args.jrc_directory_path,
         args.carbon_density,
         args.matches,
         args.output_csv,
