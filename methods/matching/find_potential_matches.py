@@ -5,11 +5,14 @@ import sys
 import time
 from dataclasses import dataclass
 from multiprocessing import Manager, Process, Queue, cpu_count
+import cProfile
+import pstats
 
 from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
+import yirgacheffe.operators
 
 from methods.matching.calculate_k import build_layer_collection
 from methods.common.luc import luc_matching_columns, luc_range
@@ -61,6 +64,7 @@ def reduce_results(
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
+    countries_shape_filename: str,
     start_year: int,
     evaluation_year: int,
     result_dataframe_filename: str,
@@ -100,6 +104,7 @@ def reduce_results(
         elevation_directory_path,
         slope_directory_path,
         access_directory_path,
+        countries_shape_filename,
     )
 
     assert matching_collection.boundary.window == merged_result.window
@@ -117,6 +122,7 @@ def reduce_results(
         row_ecoregion = matching_collection.ecoregions.read_array(0, yoffset, width, 1)
         row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
         row_access = matching_collection.access.read_array(0, yoffset, width, 1)
+        row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
         row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
         # For CPC, which is at a different pixel_scale, we need to do a little math
         coord = matching_collection.boundary.latlng_for_pixel(0, yoffset)
@@ -141,18 +147,19 @@ def reduce_results(
                 row_elevation[0][xoffset],
                 row_slope[0][xoffset],
                 row_access[0][xoffset],
+                row_countries[0][xoffset],
             ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
 
     luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
-        columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access'] + luc_columns + cpc_columns
+        columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
     )
     output.to_parquet(result_dataframe_filename)
 
 def worker(
-    _worker_index: int,
+    worker_index: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
     cpc_directory_path: str,
@@ -160,6 +167,7 @@ def worker(
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
+    countries_raster_filename: str,
     start_year: int,
     _evaluation_year: int,
     result_folder: str,
@@ -184,9 +192,18 @@ def worker(
         elevation_directory_path,
         slope_directory_path,
         access_directory_path,
+        countries_raster_filename,
     )
 
+    itercount = 0
+    profiler = None
+    if worker_index == 0:
+        profiler = cProfile.Profile()
     while True:
+
+        if profiler and (itercount == 1):
+            profiler.enable()
+
         row = input_queue.get()
         if row is None:
             break
@@ -218,12 +235,23 @@ def worker(
         filtered_luc5 = matching_collection.lucs[1].numpy_apply(lambda chunk: chunk == matching[luc5])
         filtered_luc10 = matching_collection.lucs[2].numpy_apply(lambda chunk: chunk == matching[luc10])
 
-        calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * \
+        filtered_countries = matching_collection.countries.numpy_apply(lambda chunk: chunk == matching.country)
+
+        calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * filtered_countries * \
             filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access
-        count = calc.save(matching_pixels, and_sum=True)
+        # count = calc.save(matching_pixels, and_sum=True)
+        # del matching_pixels._dataset
+        # if count > 0:
+        #     output_queue.put(result_path)
+        calc.save(matching_pixels)
         del matching_pixels._dataset
-        if count > 0:
-            output_queue.put(result_path)
+        output_queue.put(result_path)
+
+        if profiler and (itercount == 1):
+            profiler.disable()
+            stats = pstats.Stats(profiler).sort_stats('ncalls')
+            stats.print_stats()
+        itercount += 1
 
     # Signal worker exited
     output_queue.put(None)
@@ -239,6 +267,7 @@ def find_potential_matches(
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
+    countries_raster_filename: str,
     result_folder: str,
     processes_count: int
 ) -> None:
@@ -260,6 +289,7 @@ def find_potential_matches(
             elevation_directory_path,
             slope_directory_path,
             access_directory_path,
+            countries_raster_filename,
             start_year,
             evaluation_year,
             result_dataframe_filename,
@@ -276,6 +306,7 @@ def find_potential_matches(
             elevation_directory_path,
             slope_directory_path,
             access_directory_path,
+            countries_raster_filename,
             start_year,
             evaluation_year,
             result_folder,
@@ -380,6 +411,13 @@ def main():
         help="Destination parquet file for results."
     )
     parser.add_argument(
+        "--countries-raster",
+        type=str,
+        required=True,
+        dest="countries_raster_filename",
+        help="Raster of country IDs."
+    )
+    parser.add_argument(
         "-j",
         type=int,
         required=False,
@@ -400,6 +438,7 @@ def main():
         args.elevation_directory_path,
         args.slope_directory_path,
         args.access_directory_path,
+        args.countries_raster_filename,
         args.output_filename,
         args.processes_count
     )

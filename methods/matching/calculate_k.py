@@ -5,8 +5,12 @@ from collections import namedtuple
 from itertools import product
 from typing import List
 
+import cProfile
+import pstats
+
 import pandas as pd
 from geopandas import gpd  # type: ignore
+from osgeo import gdal
 from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer  # type: ignore
 from yirgacheffe.window import PixelScale  # type: ignore
 
@@ -26,7 +30,7 @@ PIXEL_SKIP_LARGE_PROJECT = \
     round((HECTARE_WIDTH_IN_METERS / (2 * LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
 
 MatchingCollection = namedtuple('MatchingCollection',
-    ['boundary', 'lucs', 'cpcs', 'ecoregions', 'elevation', 'slope', 'access'])
+    ['boundary', 'lucs', 'cpcs', 'ecoregions', 'elevation', 'slope', 'access', 'countries'])
 
 def build_layer_collection(
     pixel_scale: PixelScale,
@@ -40,7 +44,10 @@ def build_layer_collection(
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
+    countries_raster_filename: str,
 ) -> MatchingCollection:
+    # profiler = cProfile.Profile()
+    # profiler.enable()
     outline_layer = VectorLayer.layer_from_file(boundary_filename, None, pixel_scale, projection)
 
     lucs = [
@@ -66,19 +73,12 @@ def build_layer_collection(
             glob.glob("*.tif", root_dir=ecoregions_directory_path)
     ])
 
-    # These are very memory inefficient
     elevation = GroupLayer([
-        RasterLayer.scaled_raster_from_raster(
-            RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)),
-            pixel_scale,
-        ) for filename in
+        RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)) for filename in
             glob.glob("srtm*.tif", root_dir=elevation_directory_path)
     ])
     slopes = GroupLayer([
-        RasterLayer.scaled_raster_from_raster(
-            RasterLayer.layer_from_file(os.path.join(slope_directory_path, filename)),
-            pixel_scale,
-        ) for filename in
+        RasterLayer.layer_from_file(os.path.join(slope_directory_path, filename)) for filename in
             glob.glob("slope*.tif", root_dir=slope_directory_path)
     ])
 
@@ -87,10 +87,16 @@ def build_layer_collection(
             glob.glob("*.tif", root_dir=access_directory_path)
     ])
 
+    countries = RasterLayer.layer_from_file(countries_raster_filename)
+
     # constrain everything to project boundaries
-    layers = [elevation, slopes, ecoregions, access] + lucs + cpcs
+    layers = [elevation, slopes, ecoregions, access, countries] + lucs + cpcs
     for layer in layers:
         layer.set_window_for_intersection(outline_layer.area)
+
+    # profiler.disable()
+    # stats = pstats.Stats(profiler).sort_stats('ncalls')
+    # stats.print_stats()
 
     return MatchingCollection(
         boundary=outline_layer,
@@ -99,7 +105,8 @@ def build_layer_collection(
         ecoregions=ecoregions,
         elevation=elevation,
         slope=slopes,
-        access=access
+        access=access,
+        countries=countries,
     )
 
 def calculate_k(
@@ -112,6 +119,7 @@ def calculate_k(
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
+    countries_raster_filename: str,
     result_dataframe_filename: str,
 ) -> None:
 
@@ -136,6 +144,7 @@ def calculate_k(
         elevation_directory_path,
         slope_directory_path,
         access_directory_path,
+        countries_raster_filename,
     )
 
     results = []
@@ -147,6 +156,7 @@ def calculate_k(
         row_ecoregion = project_collection.ecoregions.read_array(0, yoffset, project_width, 1)
         row_slope = project_collection.slope.read_array(0, yoffset, project_width, 1)
         row_access = project_collection.access.read_array(0, yoffset, project_width, 1)
+        row_countries = project_collection.countries.read_array(0, yoffset, project_width, 1)
         row_luc = [
             luc.read_array(0, yoffset, project_width, 1) for luc in project_collection.lucs
         ]
@@ -176,13 +186,14 @@ def calculate_k(
                 row_slope[0][xoffset],
                 row_ecoregion[0][xoffset],
                 row_access[0][xoffset],
+                row_countries[0][xoffset],
             ] + lucs + cpcs)
 
     luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
-        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access'] + luc_columns + cpc_columns
+        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country'] + luc_columns + cpc_columns
     )
     output.to_parquet(result_dataframe_filename)
 
@@ -252,6 +263,13 @@ def main():
         help="Directory containing access to health care GeoTIFF tiles."
     )
     parser.add_argument(
+        "--countries-raster",
+        type=str,
+        required=True,
+        dest="countries_raster_filename",
+        help="GeoJSON of country boundaries."
+    )
+    parser.add_argument(
         "--output",
         type=str,
         required=True,
@@ -270,6 +288,7 @@ def main():
         args.elevation_directory_path,
         args.slope_directory_path,
         args.access_directory_path,
+        args.countries_raster_filename,
         args.output_filename
     )
 
