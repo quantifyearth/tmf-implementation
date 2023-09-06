@@ -10,7 +10,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
-from geojson import LineString, FeatureCollection, Feature, dumps # type: ignore
+from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -211,11 +211,22 @@ def generate_leakage(
                 ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
                 linestrings.append(ls)
             
+            points = []
+            for _, row in matches_df.iterrows():
+                ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                points.append(ls)
+            
             gc = FeatureCollection(linestrings)
             out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-leakage-pairs.geojson")
 
             with open(out_path, "w") as f:
                 f.write(dumps(gc))
+
+            points_gc = FeatureCollection(points)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-leakage-pairs-points.geojson")
+
+            with open(out_path, "w") as f:
+                f.write(dumps(points_gc))
 
     for year, value in project.items():
         result[year] = max(0, (value - c_tot[year]))

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from geojson import LineString, FeatureCollection, Feature, dumps # type: ignore
+from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -219,6 +219,17 @@ def generate_additionality(
 
             with open(out_path, "w") as f:
                 f.write(dumps(gc))
+
+            points = []
+            for _, row in matches_df.iterrows():
+                ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                points.append(ls)
+
+            points_gc = FeatureCollection(points)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
+
+            with open(out_path, "w") as f:
+                f.write(dumps(points_gc))
 
 
     result = {}
