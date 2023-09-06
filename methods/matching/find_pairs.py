@@ -97,14 +97,16 @@ def find_match_iteration(
             continue
         match = filtered_s.iloc[min_index]
 
-        results.append([
-            k_row.lat,
-            k_row.lng,
-            match.lat,
-            match.lng
-        ] + [match[x] for x in luc_columns[2:]])
+        results.append(
+            [k_row.lat, k_row.lng, k_row.luc0] + [k_row[x] for x in luc_columns[3:]] + \
+            [match.lat, match.lng] + [match[x] for x in luc_columns[2:]]
+        )
 
-    results_df = pd.DataFrame(results, columns=['k_lat', 'k_lng', 's_lat', 's_lng'] + luc_columns[2:])
+    columns = ['k_lat', 'k_lng'] + \
+        [f'k_{x}' for x in luc_columns[2:]] + \
+        ['s_lat', 's_lng'] + \
+        [f's_{x}' for x in luc_columns[2:]]
+    results_df = pd.DataFrame(results, columns=columns)
     results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
 
 
