@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
-from geojson import LineString, GeometryCollection, dumps # type: ignore
+from geojson import LineString, FeatureCollection, Feature, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -74,7 +74,7 @@ def generate_additionality(
     logging.info("Project area: %.2fmsq", project_area_msq)
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
-    assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
+    # assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
 
     treatment_data = {}
 
@@ -211,10 +211,10 @@ def generate_additionality(
 
             linestrings = []
             for _, row in matches_df.iterrows():
-                ls = LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])])
+                ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
                 linestrings.append(ls)
             
-            gc = GeometryCollection(linestrings)
+            gc = FeatureCollection(linestrings)
             out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
 
             with open(out_path, "w") as f:

@@ -10,6 +10,7 @@ import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
+from geojson import LineString, FeatureCollection, Feature, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -165,7 +166,6 @@ def generate_leakage(
                 ]
             )
 
-            # TODO: Project area or leakage area?!
             areas_c = proportions_c * (leakage_area_msq / 10000)
 
             s_c = areas_c * density
@@ -201,6 +201,21 @@ def generate_leakage(
         os.makedirs(dump_dir, exist_ok=True)
         path = os.path.join(dump_dir, "1201-leakage-carbon-stock.png")
         figure.savefig(path)
+
+        # Now for all the pairs we create a GeoJSON for visualising
+        for pair_idx, pairs in enumerate(matches):
+            matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+
+            linestrings = []
+            for _, row in matches_df.iterrows():
+                ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                linestrings.append(ls)
+            
+            gc = FeatureCollection(linestrings)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-leakage-pairs.geojson")
+
+            with open(out_path, "w") as f:
+                f.write(dumps(gc))
 
     for year, value in project.items():
         result[year] = max(0, (value - c_tot[year]))
