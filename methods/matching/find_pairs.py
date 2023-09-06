@@ -68,7 +68,8 @@ def find_match_iteration(
             (s_subset.ecoregion == k_row.ecoregion) &
             (s_subset[luc10] == k_row[luc10]) &
             (s_subset[luc5] == k_row[luc5]) &
-            (s_subset[luc0] == k_row[luc0])
+            (s_subset[luc0] == k_row[luc0]) &
+            (s_subset.country == k_row.country)
         ]
 
         if len(filtered_s) == 0:
