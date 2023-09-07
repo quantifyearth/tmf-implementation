@@ -7,9 +7,9 @@ import sys
 import math
 import logging
 
-import utm # type: ignore
-from yirgacheffe.window import Area # type: ignore
-from yirgacheffe.layers import RasterLayer, GroupLayer # type: ignore
+import utm  # type: ignore
+from yirgacheffe.window import Area  # type: ignore
+from yirgacheffe.layers import RasterLayer, GroupLayer  # type: ignore
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -48,16 +48,23 @@ def crange(utm_code_1, utm_code_2):
     for utm_code_idx in range(start, last + 1):
         yield UTM_LETTERS[utm_code_idx]
 
+
 # Note this only correct for the majority of UTM zones, but hopefully
 # we never have to deal with Norway...
-def bounding_box_of_utm(zone: int, letter: str, expansion: int) -> Area :
+def bounding_box_of_utm(zone: int, letter: str, expansion: float) -> Area:
     upper_lng = zone * 6 - 180
     lower_lng = upper_lng - 6
     if letter not in UTM_LETTERS:
         raise ValueError(f"Slope calculation is not support in UTM latitude {letter}")
     lower_lat = UTM_LETTERS.index(letter) * 8 - 80
     upper_lat = lower_lat + 8
-    return Area(left=lower_lng - expansion, right=upper_lng + expansion, bottom=lower_lat - expansion, top=upper_lat + expansion)
+    return Area(
+        left=lower_lng - expansion,
+        right=upper_lng + expansion,
+        bottom=lower_lat - expansion,
+        top=upper_lat + expansion,
+    )
+
 
 def warp(
     utm_zone: int,
@@ -70,7 +77,8 @@ def warp(
 ):
     warp_cmd = f"gdalwarp -t_srs '+proj=utm +zone={utm_zone} +datum=WGS84' {elev_path} {reprojection_path}"
     slope = f"gdaldem slope {reprojection_path} {slope_path}"
-    warp_back = f"gdalwarp -tr {pixel_scale_x} {pixel_scale_y} -t_srs '+proj=longlat +datum=WGS84' {slope_path} {out_path}"
+    warp_back = f"gdalwarp -tr {pixel_scale_x} {pixel_scale_y} -t_srs \
+                  '+proj=longlat +datum=WGS84' {slope_path} {out_path}"
     res = subprocess.call(warp_cmd, shell=True)
     if res != 0:
         logging.warning("Failed to run %s", warp_cmd)
@@ -83,6 +91,7 @@ def warp(
     if res != 0:
         logging.warning("Failed to run %s", warp_back)
         sys.exit(res)
+
 
 def generate_slope(input_elevation_directory: str, output_slope_directory: str):
     elev = glob("*.tif", root_dir=input_elevation_directory)
@@ -107,7 +116,15 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                 actual_utm_code = lower_code
                 reprojection_path = os.path.join(tmpdir, elevation_path)
                 slope_path = os.path.join(tmpdir, "slope-" + elevation_path)
-                warp(actual_utm_code, elev_path, reprojection_path, slope_path, elevation.pixel_scale.xstep, elevation.pixel_scale.ystep, out_path)
+                warp(
+                    actual_utm_code,
+                    elev_path,
+                    reprojection_path,
+                    slope_path,
+                    elevation.pixel_scale.xstep,
+                    elevation.pixel_scale.ystep,
+                    out_path,
+                )
             else:
                 # SLOW PATH -- in the slow path, we have to break the elevation raster into
                 # UTM sections and do the above to each before reprojecting back and recombining
@@ -159,16 +176,16 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                         )
 
                         # We now recrop the out-slope back to the bounding box we assumed at the start
-                        bbox_no_expand = bounding_box_of_utm(actual_utm_code, utm_letter, 0.0)
+                        bbox_no_expand = bounding_box_of_utm(
+                            actual_utm_code, utm_letter, 0.0
+                        )
                         slope_tif = RasterLayer.layer_from_file(slope_out_path)
                         grid = RasterLayer.empty_raster_layer_like(
                             slope_tif, area=bbox_no_expand
                         )
                         output_final = f"final-slope-{actual_utm_code}-{utm_letter}-{elevation_path}"
                         final_path = os.path.join(tmpdir, output_final)
-                        intersection = RasterLayer.find_intersection(
-                            [slope_tif, grid]
-                        )
+                        intersection = RasterLayer.find_intersection([slope_tif, grid])
                         slope_tif.set_window_for_intersection(intersection)
                         final = RasterLayer.empty_raster_layer(
                             intersection,
@@ -179,7 +196,7 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                         )
                         final.set_window_for_intersection(intersection)
                         slope_tif.save(final)
-                        
+
                         # Flush
                         del final
 
@@ -193,16 +210,20 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
 
                 logging.info("Render order %s", slopes)
 
-                combined = GroupLayer([
-                    RasterLayer.layer_from_file(os.path.join(tmpdir, filename))
-                    for filename in slopes
-                ])
+                combined = GroupLayer(
+                    [
+                        RasterLayer.layer_from_file(os.path.join(tmpdir, filename))
+                        for filename in slopes
+                    ]
+                )
 
                 elevation = RasterLayer.layer_from_file(elev_path)
                 intersection = RasterLayer.find_intersection([elevation, combined])
                 combined.set_window_for_intersection(intersection)
                 elevation.set_window_for_intersection(intersection)
-                result = RasterLayer.empty_raster_layer_like(elevation, filename=out_path)
+                result = RasterLayer.empty_raster_layer_like(
+                    elevation, filename=out_path
+                )
                 combined.save(result)
 
 
