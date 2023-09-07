@@ -10,7 +10,7 @@ def main():
     parser.add_argument("id", metavar='ID', type=str,
                     help='ID of the image to run in')
 
-    parser.add_argument("command", metavar='COMMAND', type=str, nargs=1,
+    parser.add_argument("command", metavar='COMMAND', type=str,
                     help='Command to run')
     
     parser.add_argument("--base", type=str, dest="base", default="origin/main", help="git rev to diff from")
@@ -32,7 +32,9 @@ def main():
 
     copy_in = f"cat {patch_content} | git apply -"
 
-    script = f"((base {args.id}) (workdir /home/tmf/app) (run (shell \"{copy_in}\")) (run (shell \"$2\")) )"
+    # (run (shell \"{copy_in}\"))
+
+    script = f"((base {args.id}) (workdir /home/tmf/app) (run (shell \"{args.command}\")) )"
 
     print("Script to run")
     print(script)
@@ -40,7 +42,7 @@ def main():
     try:
       path = os.environ["PATH"]
       user = os.environ["USER"]
-      capfile = args.capfile or os.path.abspath(f"./{user}.cap")
+      capfile = args.capfile or os.path.abspath(f"./secrets/{user}.cap")
       cmd = ["sudo", "env", f"PATH={path}", "dune", "exec", "--", "hoke", "build", f"--connect={capfile}"]
       hoke_process = subprocess.run(cmd,
                                     capture_output=True, text=True, check=True, input=script, cwd="../tmf-pipeline")
