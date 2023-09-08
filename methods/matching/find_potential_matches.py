@@ -200,7 +200,6 @@ def worker(
     if worker_index == 0:
         profiler = cProfile.Profile()
     while True:
-
         if profiler and (itercount == 1):
             profiler.enable()
 
@@ -239,10 +238,6 @@ def worker(
 
         calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * filtered_countries * \
             filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access
-        # count = calc.save(matching_pixels, and_sum=True)
-        # del matching_pixels._dataset
-        # if count > 0:
-        #     output_queue.put(result_path)
         calc.save(matching_pixels)
         del matching_pixels._dataset
         output_queue.put(result_path)
