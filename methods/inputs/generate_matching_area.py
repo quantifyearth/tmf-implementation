@@ -33,24 +33,19 @@ def generate_matching_area(
     with open(country_iso_a2_code_filename, 'r') as codesfs:
         country_codes_list = json.loads(codesfs.read())
 
-    print("Loading country shapes...")
     country_shapes = gpd.read_file(countries_shape_filename)
     if country_shapes.crs != project_boundaries.crs:
         print("Reprojecting country shapes")
         country_shapes = country_shapes.to_crs(project_boundaries.crs)
-    print("Done loading country shapes")
 
     countries = country_shapes[country_shapes['ISO_A2'].isin(country_codes_list)]
     if countries.shape[0] == 0:
         raise ValueError(f"Got no matches for country ISO A2 codes {country_codes_list}")
     simplified_countries = shapely.unary_union(countries.geometry)
 
-    print("Loading ecoregions...")
     ecoregions = gpd.read_file(ecoregions_shape_filename)
     if ecoregions.crs != project_boundaries.crs:
-        print("Reprojecting ecoregions")
         ecoregions = ecoregions.to_crs(project_boundaries.crs)
-    print("Done loading ecoregions")
 
     # Intersects requires a single geometry, and a project is a list of polygons usually, so
     # need to make a single multipolygon
@@ -72,31 +67,23 @@ def generate_matching_area(
     step_2 = shapely.intersection(step_1, unified_ecoregions)
 
     # Now remove the project plus leakage buffer
-    print("Removing project")
     project_leakage = expand_boundaries(project_boundaries, LEAKAGE_BUFFER_IN_METRES)
     step_3 = shapely.difference(step_2, project_leakage.geometry)
 
     # Now for each other project, remove it and a leakage buffer
-    print("Removing other projects")
     for filename in glob.glob("*.geojson", root_dir=other_projects_directory):
-        print(f"\tRemoving {filename}...")
         other_project = gpd.read_file(os.path.join(other_projects_directory, filename))
 
         # Some of the projects have quite complex boundaries (e.g., 2363), and so we
         # do an initial check just based on the simplified bounary to see if we need to
         # do the hard work.
-        print("\t\tsimplifying...")
         outline = shapely.convex_hull(other_project.geometry)
         outline_dataframe = gpd.GeoDataFrame.from_features(gpd.GeoSeries(outline), crs=other_project.crs)
         extended_outline = expand_boundaries(outline_dataframe, LEAKAGE_BUFFER_IN_METRES)
 
         if not shapely.disjoint(step_3, extended_outline.geometry).any():
-            print("\t\tExtending...")
             extended_other_project = expand_boundaries(other_project, LEAKAGE_BUFFER_IN_METRES)
-            print("\t\tRemoving...")
             step_3 = shapely.difference(step_3, extended_other_project.geometry)
-        else:
-            print("\t\term")
 
     result = gpd.GeoDataFrame.from_features(gpd.GeoSeries(step_3), crs=project_boundaries.crs)
     result.to_file(output_shape_filename, driver="GeoJSON")
