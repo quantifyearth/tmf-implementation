@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+from typing import Optional
 from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps # type: ignore
 
 from methods.common import LandUseClass, dump_dir
@@ -49,6 +50,17 @@ def plot_carbon_trajectories(axis, title, idx, ts):
     axis[idx].set_xlabel('Year')
     axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
 
+def find_first_luc(columns: list[str]) -> Optional[str]:
+    for col in columns:
+        split = col.split("_luc_")
+        if len(split) < 2:
+            continue
+        try:
+            return int(split[1])
+        except:
+            continue
+    return None
+
 def generate_additionality(
     project_geojson_file: str,
     project_start: str,
@@ -82,7 +94,15 @@ def generate_additionality(
         logging.info("Computing additionality in treatment for %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        for year_index in range(project_start, end_year + 1):
+        columns = matches_df.columns.to_list()
+        columns.sort()
+
+        earliest_year = find_first_luc(columns)
+
+        if earliest_year is None:
+            raise ValueError("Failed to extract earliest year from LUCs")
+
+        for year_index in range(earliest_year, end_year + 1):
             total_pixels_t = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -138,7 +158,15 @@ def generate_additionality(
         logging.info("Computing additionality for control %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        for year_index in range(project_start, end_year + 1):
+        columns = matches_df.columns.to_list()
+        columns.sort()
+
+        earliest_year = find_first_luc(columns)
+
+        if earliest_year is None:
+            raise ValueError("Failed to extract earliest year from LUCs")
+
+        for year_index in range(earliest_year, end_year + 1):
             total_pixels_c = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -206,30 +234,30 @@ def generate_additionality(
         figure.savefig(path)
 
         # Now for all the pairs we create a GeoJSON for visualising
-        for pair_idx, pairs in enumerate(matches):
-            matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+        # for pair_idx, pairs in enumerate(matches):
+        #     matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-            linestrings = []
-            for _, row in matches_df.iterrows():
-                ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
-                linestrings.append(ls)
+        #     linestrings = []
+        #     for _, row in matches_df.iterrows():
+        #         ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+        #         linestrings.append(ls)
             
-            gc = FeatureCollection(linestrings)
-            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
+        #     gc = FeatureCollection(linestrings)
+        #     out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
 
-            with open(out_path, "w") as f:
-                f.write(dumps(gc))
+        #     with open(out_path, "w") as f:
+        #         f.write(dumps(gc))
 
-            points = []
-            for _, row in matches_df.iterrows():
-                ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
-                points.append(ls)
+        #     points = []
+        #     for _, row in matches_df.iterrows():
+        #         ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+        #         points.append(ls)
 
-            points_gc = FeatureCollection(points)
-            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
+        #     points_gc = FeatureCollection(points)
+        #     out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
 
-            with open(out_path, "w") as f:
-                f.write(dumps(points_gc))
+        #     with open(out_path, "w") as f:
+        #         f.write(dumps(points_gc))
 
 
     result = {}

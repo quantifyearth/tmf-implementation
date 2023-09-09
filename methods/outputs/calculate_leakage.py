@@ -3,12 +3,12 @@ import os
 import logging
 import csv
 import argparse
-from functools import partial
 
 import numpy as np
 import pandas as pd
 import geopandas as gpd
 import matplotlib.pyplot as plt
+from typing import Optional
 from yirgacheffe.layers import RasterLayer, VectorLayer, GroupLayer  # type: ignore
 from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps # type: ignore
 
@@ -47,6 +47,17 @@ def plot_carbon_trajectories(axis, title, idx, ts):
     axis[idx].set_title(title)
     axis[idx].set_xlabel('Year')
     axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
+
+def find_first_luc(columns: list[str]) -> Optional[str]:
+    for col in columns:
+        split = col.split("_luc_")
+        if len(split) < 2:
+            continue
+        try:
+            return int(split[1])
+        except:
+            continue
+    return None
 
 def generate_leakage(
     project_geojson_file: str,
@@ -91,7 +102,15 @@ def generate_leakage(
         logging.info("Computing leakage for %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        for year_index in range(project_start, end_year + 1):
+        columns = matches_df.columns.to_list()
+        columns.sort()
+
+        earliest_year = find_first_luc(columns)
+
+        if earliest_year is None:
+            raise ValueError("Failed to extract earliest year from LUCs")
+
+        for year_index in range(earliest_year, end_year + 1):
             total_pixels = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -138,7 +157,15 @@ def generate_leakage(
         logging.info("Computing leakage for %s", pairs)
         matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        for year_index in range(project_start, end_year + 1):
+        columns = matches_df.columns.to_list()
+        columns.sort()
+
+        earliest_year = find_first_luc(columns)
+
+        if earliest_year is None:
+            raise ValueError("Failed to extract earliest year from LUCs")
+
+        for year_index in range(earliest_year, end_year + 1):
             total_pixels_c = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
