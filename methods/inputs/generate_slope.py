@@ -83,16 +83,13 @@ def warp(
                   '+proj=longlat +datum=WGS84' {slope_path} {out_path}"
     res = subprocess.call(warp_cmd, shell=True)
     if res != 0:
-        logging.warning("Failed to run %s", warp_cmd)
-        sys.exit(res)
+        raise ValueError(f"Failed to run {warp_cmd} exited {res}")
     res = subprocess.call(slope, shell=True, close_fds=True)
     if res != 0:
-        logging.warning("Failed to run %s", slope)
-        sys.exit(res)
+        raise ValueError(f"Failed to run {slope} exited {res}")
     res = subprocess.call(warp_back, shell=True, close_fds=True)
     if res != 0:
-        logging.warning("Failed to run %s", warp_back)
-        sys.exit(res)
+        raise ValueError(f"Failed to run {warp_back} exited {res}")
 
 
 def generate_slope(input_elevation_directory: str, output_slope_directory: str):
