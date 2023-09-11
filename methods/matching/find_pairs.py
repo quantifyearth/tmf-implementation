@@ -107,8 +107,11 @@ def find_match_iteration(
             [match.lat, match.lng] + [match[x] for x in luc_columns]
         )
 
-    columns = ['k_lat', 'k_lng'] + [f'k_{x}' for x in luc_columns] + \
-        ['s_lat', 's_lng'] + [f's_{x}' for x in luc_columns]
+    columns = ['k_lat', 'k_lng'] + \
+        [f'k_{x}' for x in luc_columns] + \
+        ['s_lat', 's_lng'] + \
+        [f's_{x}' for x in luc_columns]
+
     results_df = pd.DataFrame(results, columns=columns)
     results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
 
