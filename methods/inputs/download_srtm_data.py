@@ -41,14 +41,14 @@ def download_srtm_data(
         max_x = max_x + 1
 
     if min_y > max_y + 1:
-        from_y, to_y = max_y, min_y
+        from_y, to_y = max_y, min_y + 1
     elif min_y == max_y:
         from_y, to_y = min_y, max_y + 1
     else:
-        from_y, to_y = min_y, max_y
+        from_y, to_y = min_y, max_y + 1
 
     for yoffset in range(from_y, to_y):
-        for xoffset in range(min_x, max_x):
+        for xoffset in range(min_x, max_x + 1):
             url = URL_TEMPLATE % (xoffset, yoffset)
             logging.info("Fetching SRTM tile %s", url)
             target_filename = url.split('/')[-1]
@@ -58,6 +58,12 @@ def download_srtm_data(
                 with tempfile.TemporaryDirectory() as tempdir:
                     download_target = os.path.join(tempdir, target_filename)
                     with requests.get(url, stream=True, timeout=60) as response:
+                        # We are pretty coarse with our max x and y and so we might
+                        # create a big rectangle that includes a tile that is all ocean
+                        # and it is easier to just drop 404s.
+                        if response.status_code == 404:
+                            logging.warning("URL %s not found", url)
+                            continue
                         response.raise_for_status()
                         with open(download_target, 'wb') as output_file:
                             for chunk in response.iter_content(chunk_size=1024*1024):
