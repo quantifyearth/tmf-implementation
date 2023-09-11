@@ -24,7 +24,7 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-def plot_carbon_stock(axis, arr, cf):
+def plot_carbon_stock(axis, arr, cf, start_year):
     x_axis = []
     treatment = []
     control = []
@@ -37,9 +37,10 @@ def plot_carbon_stock(axis, arr, cf):
     axis[0].set_title('Carbon stock (Average Treatment and Average Control)')
     axis[0].set_xlabel('Year')
     axis[0].set_ylabel('Carbon Stock (MgCO2e)')
+    axis[0].axvline(start_year)
     axis[0].legend(loc="lower left")
 
-def plot_carbon_trajectories(axis, title, idx, ts):
+def plot_carbon_trajectories(axis, title, idx, ts, start_year):
     x_axis = []
     y_axis = []
     for (k, v) in ts.items():
@@ -49,6 +50,7 @@ def plot_carbon_trajectories(axis, title, idx, ts):
     axis[idx].set_title(title)
     axis[idx].set_xlabel('Year')
     axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
+    axis[idx].axvline(start_year)
 
 def find_first_luc(columns: list[str]) -> Optional[str]:
     for col in columns:
@@ -225,13 +227,13 @@ def generate_additionality(
         figure.set_figheight(10)
         figure.set_figwidth(18)
 
-        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Treatment)', 1, treatment_data)
-        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Control)', 2, scvt)
-        plot_carbon_stock(axis, p_tot, c_tot)
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Treatment)', 1, treatment_data, project_start)
+        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Control)', 2, scvt, project_start)
+        plot_carbon_stock(axis, p_tot, c_tot, project_start)
 
         os.makedirs(dump_dir, exist_ok=True)
-        path = os.path.join(dump_dir, "1201-carbon-stock.png")
-        figure.savefig(path)
+        out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png")
+        figure.savefig(out_path)
 
         # Now for all the pairs we create a GeoJSON for visualising
         for pair_idx, pairs in enumerate(matches):
