@@ -234,30 +234,30 @@ def generate_additionality(
         figure.savefig(path)
 
         # Now for all the pairs we create a GeoJSON for visualising
-        # for pair_idx, pairs in enumerate(matches):
-        #     matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+        for pair_idx, pairs in enumerate(matches):
+            matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
-        #     linestrings = []
-        #     for _, row in matches_df.iterrows():
-        #         ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
-        #         linestrings.append(ls)
+            linestrings = []
+            for _, row in matches_df.iterrows():
+                ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                linestrings.append(ls)
             
-        #     gc = FeatureCollection(linestrings)
-        #     out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
+            gc = FeatureCollection(linestrings)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
 
-        #     with open(out_path, "w") as f:
-        #         f.write(dumps(gc))
+            with open(out_path, "w") as f:
+                f.write(dumps(gc))
 
-        #     points = []
-        #     for _, row in matches_df.iterrows():
-        #         ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
-        #         points.append(ls)
+            points = []
+            for _, row in matches_df.iterrows():
+                ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                points.append(ls)
 
-        #     points_gc = FeatureCollection(points)
-        #     out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
+            points_gc = FeatureCollection(points)
+            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
 
-        #     with open(out_path, "w") as f:
-        #         f.write(dumps(points_gc))
+            with open(out_path, "w") as f:
+                f.write(dumps(points_gc))
 
 
     result = {}
