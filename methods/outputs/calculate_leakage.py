@@ -232,6 +232,7 @@ def generate_leakage(
         figure.savefig(out_path)
 
         # Now for all the pairs we create a GeoJSON for visualising
+        smds = { "pair_id": [], "feature": [], "smd": [] }
         for pair_idx, pairs in enumerate(matches):
             matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
@@ -256,6 +257,26 @@ def generate_leakage(
 
             with open(out_path, "w") as f:
                 f.write(dumps(points_gc))
+
+            # We now compute statistics for each pairing mainly looking at SMD
+            mean_std = matches_df.agg(['mean', 'std'])
+            for col in matches_df.columns:
+                # only go from K to S so we don't double count
+                if col[0] == "k":
+                    treat_mean = mean_std[col]["mean"]
+                    feature = "_".join(col.split("_")[1:])
+                    control_col = "s_" + feature
+                    control_mean = mean_std[control_col]["mean"]
+                    treat_std = mean_std[col]["std"]
+                    control_std = mean_std[control_col]["std"]
+                    smd = (treat_mean - control_mean) / np.sqrt((treat_std ** 2 + control_std ** 2) / 2)
+                    smd = round(abs(smd), 8)
+                    smds["pair_id"].append(os.path.splitext(pairs)[0])
+                    smds["feature"].append(feature)
+                    smds["smd"].append(smd)
+        smd_path = os.path.join(dump_dir, os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-smd.csv")
+        df = pd.DataFrame.from_dict(smds)
+        df.to_csv(smd_path)
 
     for year, value in project.items():
         result[year] = max(0, (value - c_tot[year]))
