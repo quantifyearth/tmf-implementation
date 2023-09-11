@@ -11,12 +11,14 @@ import utm  # type: ignore
 from yirgacheffe.window import Area  # type: ignore
 from yirgacheffe.layers import RasterLayer, GroupLayer  # type: ignore
 
+UTM_EXPANSION_DEGREES = 0.3
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
 
-def utm_code(lng):
+def utm_code(lng: float) -> float:
     return (math.floor((lng + 180.0) / 6.0) % 60) + 1
 
 
@@ -95,11 +97,11 @@ def warp(
 
 def generate_slope(input_elevation_directory: str, output_slope_directory: str):
     elev = glob("*.tif", root_dir=input_elevation_directory)
+    os.makedirs(output_slope_directory, exist_ok=True)
 
     for elevation_path in elev:
         with tempfile.TemporaryDirectory() as tmpdir:
             elev_path = os.path.join(input_elevation_directory, elevation_path)
-            os.makedirs(output_slope_directory, exist_ok=True)
             out_path = os.path.join(output_slope_directory, "slope-" + elevation_path)
             elevation = RasterLayer.layer_from_file(elev_path)
 
@@ -132,11 +134,11 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                 # To capture the results here for later inspection just override the tmpdir variable
                 for actual_utm_code in range(lower_code, upper_code + 1):
                     for utm_letter in crange(lower_letter, upper_letter):
-                        logging.info("UTM(%s,%s)", actual_utm_code, utm_letter)
+                        logging.debug("UTM(%s,%s)", actual_utm_code, utm_letter)
 
                         # Note: we go a little bit around the UTM tiles and will crop them down to size later
                         # this is to remove some aliasing effects.
-                        bbox = bounding_box_of_utm(actual_utm_code, utm_letter, 0.3)
+                        bbox = bounding_box_of_utm(actual_utm_code, utm_letter, UTM_EXPANSION_DEGREES)
 
                         # Crop the elevation tile to a UTM zone
                         utm_layer = RasterLayer.empty_raster_layer_like(
@@ -194,7 +196,9 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                             final_path,
                             slope_tif.projection,
                         )
-                        final.set_window_for_intersection(intersection)
+                        print("Slope window", slope_tif.window)
+                        print("Final window", final.window)
+                        # final.set_window_for_intersection(intersection)
                         slope_tif.save(final)
 
                         # Flush
