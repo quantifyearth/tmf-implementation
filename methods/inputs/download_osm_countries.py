@@ -269,7 +269,8 @@ osm_id = {
 }
 
 def download_osm_polygons(target_filename: str) -> None:
-    source_url = "https://osm-boundaries.com/Download/Submit?apiKey=0cc5cf14238f15fa2573541ae1cead42&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326&landOnly&osmIds="
+    # simplify parameter is unclear
+    source_url = "https://osm-boundaries.com/Download/Submit?apiKey=0cc5cf14238f15fa2573541ae1cead42&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326&landOnly&simplify=0.01&osmIds="
     # TODO: we could filter by countries of interest here
     country_codes = osm_id.keys()
     # The IDs are negated by this API; I have no idea why and I'm not about to ask.
