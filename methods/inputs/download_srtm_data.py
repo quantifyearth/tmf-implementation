@@ -58,7 +58,7 @@ def download_srtm_data(
                 with tempfile.TemporaryDirectory() as tempdir:
                     download_target = os.path.join(tempdir, target_filename)
                     with requests.get(url, stream=True, timeout=60) as response:
-                        # We are pretty coares with our max x and y and so we might
+                        # We are pretty coarse with our max x and y and so we might
                         # create a big rectangle that includes a tile that is all ocean
                         # and it is easier to just drop 404s.
                         if response.status_code == 404:
