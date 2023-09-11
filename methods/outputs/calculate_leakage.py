@@ -274,7 +274,7 @@ def generate_leakage(
                     smds["pair_id"].append(os.path.splitext(pairs)[0])
                     smds["feature"].append(feature)
                     smds["smd"].append(smd)
-        smd_path = os.path.join(dump_dir, os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-smd.csv")
+        smd_path = os.path.join(dump_dir, os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-leakage-smd.csv")
         df = pd.DataFrame.from_dict(smds)
         df.to_csv(smd_path)
 
