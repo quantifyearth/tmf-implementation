@@ -2,7 +2,6 @@ from gzip import GzipFile
 import os
 import sys
 import tempfile
-from glob import glob
 
 import geopandas # type: ignore
 import pandas as pd # type: ignore
@@ -272,20 +271,22 @@ osm_id = {
 def download_osm_polygons(target_filename: str) -> None:
     # simplify parameter of 0.01 is better than the world bank data we
     # were using, and is aligned better
-    OSM_BOUNDARIES_KEY = os.environ["OSM_BOUNDARIES_KEY"]
-    if not OSM_BOUNDARIES_KEY:
+    osm_boundaries_key = os.environ["OSM_BOUNDARIES_KEY"]
+    if not osm_boundaries_key:
         raise ValueError("OSM_BOUNDARIES_KEY must be provided in the environment")
-    source_url = f"https://osm-boundaries.com/Download/Submit?apiKey={OSM_BOUNDARIES_KEY}&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326&landOnly&simplify=0.01&osmIds="
+    source_url = f"https://osm-boundaries.com/Download/Submit?apiKey={osm_boundaries_key}" \
+        "&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326" \
+        "&landOnly&simplify=0.01&osmIds="
 
     # The IDs are negated by this API; I have no idea why and I'm not about to ask.
-    osm_ids = {-osm_id[cc]: cc for cc in osm_id.keys()}
+    osm_ids = {-id: cc for cc, id in osm_id.items()}
     osm_keys = list(osm_ids.keys())
     shape_file_data_list = []
 
-    DOWNLOAD_AT_ONCE = 20 # Download limited number of countries at a time
+    download_at_once = 20 # Download limited number of countries at a time
                           # due to 100 limit in API & API reliability issues.
-    for i in range(0, len(osm_keys), DOWNLOAD_AT_ONCE):
-        keys_to_download = osm_keys[i:i+DOWNLOAD_AT_ONCE]
+    for i in range(0, len(osm_keys), download_at_once):
+        keys_to_download = osm_keys[i:i+download_at_once]
         download_url = source_url + ",".join([str(id) for id in keys_to_download])
         print("Downloading: ", download_url)
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -296,19 +297,21 @@ def download_osm_polygons(target_filename: str) -> None:
             with open(download_path, 'wb') as output_file:
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     output_file.write(chunk)
-                    print(".", file = sys.stderr, end = None)
-                print("", file = sys.stderr)
 
-            compressed_data = GzipFile(download_path, "rb")
             try:
+                compressed_data = GzipFile(download_path, "rb")
                 shape = geopandas.read_file(compressed_data)
                 shape_file_data_list.append(shape)
-            except:
+            except Exception as exception: # pylint: disable=broad-exception-caught
                 failed_countries = [osm_ids[osm_id] for osm_id in keys_to_download]
                 if failed_countries != ["AX"]: # Aland islands alone has no geometry
-                    raise RuntimeError("Failed to load geometry for countries: " + ", ".join(failed_countries))
+                    error_message = "Failed to load geometry for countries: " + ", ".join(failed_countries)
+                    raise RuntimeError(error_message) from exception
 
-    shape_file_data = geopandas.GeoDataFrame( pd.concat( shape_file_data_list, ignore_index=True ), crs = shape_file_data_list[0].crs ) # type: ignore
+    shape_file_data = geopandas.GeoDataFrame(
+        pd.concat( shape_file_data_list, ignore_index=True ),
+        crs = shape_file_data_list[0].crs,
+    ) # type: ignore
     # Later code expects the country code in this format
     shape_file_data['ISO_A2'] = shape_file_data['osm_id'].apply(lambda osm_id: osm_ids[osm_id]) # type: ignore
     shape_file_data.to_file(target_filename, driver='GeoJSON')
