@@ -37,17 +37,10 @@ def download_srtm_data(
     min_y = math.floor((60.0 - min_y) / 5.0) + 1
     max_y = math.floor((60.0 - max_y) / 5.0) + 1
 
-    if min_x == max_x:
-        max_x = max_x + 1
+    if min_y > max_y:
+        min_y, max_y = max_y, min_y
 
-    if min_y > max_y + 1:
-        from_y, to_y = max_y, min_y + 1
-    elif min_y == max_y:
-        from_y, to_y = min_y, max_y + 1
-    else:
-        from_y, to_y = min_y, max_y + 1
-
-    for yoffset in range(from_y, to_y):
+    for yoffset in range(min_y, max_y + 1):
         for xoffset in range(min_x, max_x + 1):
             url = URL_TEMPLATE % (xoffset, yoffset)
             logging.info("Fetching SRTM tile %s", url)
