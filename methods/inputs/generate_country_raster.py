@@ -32,7 +32,7 @@ def generate_country_raster(
 	)
 
 	countries.set_window_for_intersection(matching.area)
-	result = RasterLayer.empty_raster_layer_like(countries, output_filename)
+	result = RasterLayer.empty_raster_layer_like(countries, output_filename, compress=False)
 	countries.save(result)
 
 

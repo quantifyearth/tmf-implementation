@@ -23,7 +23,8 @@ def process_tile(
 	rescaled = RasterLayer.scaled_raster_from_raster(
 		RasterLayer.layer_from_file(tile_path),
 		pixel_scale,
-		filename=rescaled_name
+		filename=rescaled_name,
+		compress=False
 	)
 	# evil force GDAL to flush
 	del rescaled._dataset
