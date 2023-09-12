@@ -11,7 +11,7 @@ import pstats
 import pandas as pd
 from geopandas import gpd  # type: ignore
 from osgeo import gdal
-from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer  # type: ignore
+from yirgacheffe.layers import TiledGroupLayer, RasterLayer, VectorLayer  # type: ignore
 from yirgacheffe.window import PixelScale  # type: ignore
 
 from methods.common import LandUseClass
@@ -51,41 +51,41 @@ def build_layer_collection(
     outline_layer = VectorLayer.layer_from_file(boundary_filename, None, pixel_scale, projection)
 
     lucs = [
-        GroupLayer([
+        TiledGroupLayer([
             RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename)) for filename in
                 glob.glob(f"*{year}*.tif", root_dir=jrc_directory_path)
-        ]) for year in luc_years
+        ], name=f"luc_{year}") for year in luc_years
     ]
 
     cpcs = [
-        GroupLayer([
+        TiledGroupLayer([
             RasterLayer.layer_from_file(
                 os.path.join(cpc_directory_path, filename)
             ) for filename in
                 glob.glob(f"*{year_class[0]}_{year_class[1].value}.tif", root_dir=cpc_directory_path)
-        ]) for year_class in product(cpc_years, [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
+        ], name=f"cpc_{year}") for year_class in product(cpc_years, [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
     # as part of import of the ecoregions data
-    ecoregions = GroupLayer([
+    ecoregions = TiledGroupLayer([
         RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
             glob.glob("*.tif", root_dir=ecoregions_directory_path)
-    ])
+    ], name="ecoregions")
 
-    elevation = GroupLayer([
+    elevation = TiledGroupLayer([
         RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)) for filename in
             glob.glob("srtm*.tif", root_dir=elevation_directory_path)
-    ])
-    slopes = GroupLayer([
+    ], name="elevation")
+    slopes = TiledGroupLayer([
         RasterLayer.layer_from_file(os.path.join(slope_directory_path, filename)) for filename in
             glob.glob("slope*.tif", root_dir=slope_directory_path)
-    ])
+    ], name="slopes")
 
-    access = GroupLayer([
+    access = TiledGroupLayer([
         RasterLayer.layer_from_file(os.path.join(access_directory_path, filename)) for filename in
             glob.glob("*.tif", root_dir=access_directory_path)
-    ])
+    ], name="access")
 
     countries = RasterLayer.layer_from_file(countries_raster_filename)
 
