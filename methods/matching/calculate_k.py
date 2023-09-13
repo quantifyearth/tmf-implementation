@@ -5,12 +5,8 @@ from collections import namedtuple
 from itertools import product
 from typing import List
 
-import cProfile
-import pstats
-
 import pandas as pd
 from geopandas import gpd  # type: ignore
-from osgeo import gdal
 from yirgacheffe.layers import TiledGroupLayer, RasterLayer, VectorLayer  # type: ignore
 from yirgacheffe.window import PixelScale  # type: ignore
 
@@ -63,7 +59,8 @@ def build_layer_collection(
                 os.path.join(cpc_directory_path, filename)
             ) for filename in
                 glob.glob(f"*{year_class[0]}_{year_class[1].value}.tif", root_dir=cpc_directory_path)
-        ], name=f"cpc_{year}") for year_class in product(cpc_years, [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
+        ], name=f"cpc_{year_class}") for year_class in product(cpc_years,
+            [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
@@ -193,7 +190,8 @@ def calculate_k(
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     output = pd.DataFrame(
         results,
-        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country'] + luc_columns + cpc_columns
+        columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country'] \
+            + luc_columns + cpc_columns
     )
     output.to_parquet(result_dataframe_filename)
 
