@@ -3,16 +3,12 @@ import glob
 import os
 import sys
 import time
-from dataclasses import dataclass
 from multiprocessing import Manager, Process, Queue, cpu_count
-import cProfile
-import pstats
 
 from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
-import yirgacheffe.operators
 
 from methods.matching.calculate_k import build_layer_collection
 from methods.common.luc import luc_matching_columns, luc_range
@@ -20,28 +16,6 @@ from methods.common.luc import luc_matching_columns, luc_range
 # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
 # it pointlessly hogs memory, and then spends a long time tidying it up after.
 gdal.SetCacheMax(1024 * 1024 * 16)
-
-@dataclass
-class MatchedPixel:
-    match_lat: float
-    match_lng: float
-    xoffset: int
-    yoffset: int
-    ecoregion: int
-    elevation: float
-    slope: float
-    access: float
-    luc0: float
-
-    def __eq__(self, val):
-        return (self.xoffset, self.yoffset) == val
-
-    def __ne__(self, val):
-        return (self.xoffset, self.yoffset) != val
-
-    def __hash__(self):
-        return (self.xoffset, self.yoffset).__hash__()
-
 
 def load_k(
     k_filename: str,
@@ -159,7 +133,7 @@ def reduce_results(
     output.to_parquet(result_dataframe_filename)
 
 def worker(
-    worker_index: int,
+    _worker_index: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
     cpc_directory_path: str,
@@ -171,8 +145,7 @@ def worker(
     start_year: int,
     _evaluation_year: int,
     result_folder: str,
-    input_queue: Queue,
-    output_queue: Queue,
+    input_queue: Queue
 ) -> None:
     # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
     example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
@@ -195,14 +168,7 @@ def worker(
         countries_raster_filename,
     )
 
-    itercount = 0
-    profiler = None
-    if worker_index == 0:
-        profiler = cProfile.Profile()
     while True:
-        if profiler and (itercount == 1):
-            profiler.enable()
-
         row = input_queue.get()
         if row is None:
             break
@@ -213,7 +179,6 @@ def worker(
             try:
                 raster = RasterLayer.layer_from_file(result_path)
                 if raster.sum() > 0:
-                    output_queue.put(result_path)
                     continue
             except FileNotFoundError:
                 pass
@@ -239,17 +204,7 @@ def worker(
         calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * filtered_countries * \
             filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access
         calc.save(matching_pixels)
-        del matching_pixels._dataset
-        output_queue.put(result_path)
 
-        if profiler and (itercount == 1):
-            profiler.disable()
-            stats = pstats.Stats(profiler).sort_stats('ncalls')
-            stats.print_stats()
-        itercount += 1
-
-    # Signal worker exited
-    output_queue.put(None)
 
 def find_potential_matches(
     k_filename: str,
@@ -267,31 +222,13 @@ def find_potential_matches(
     processes_count: int
 ) -> None:
     os.makedirs(result_folder, exist_ok=True)
-    result_dataframe_filename = os.path.join(result_folder, "results.parquet")
 
     assert processes_count >= 3
 
     with Manager() as manager:
         source_queue = manager.Queue()
-        results_queue = manager.Queue()
 
         worker_count = processes_count - 2
-        consumer_process = Process(target=reduce_results, args=(
-            matching_zone_filename,
-            jrc_directory_path,
-            cpc_directory_path,
-            ecoregions_directory_path,
-            elevation_directory_path,
-            slope_directory_path,
-            access_directory_path,
-            countries_raster_filename,
-            start_year,
-            evaluation_year,
-            result_dataframe_filename,
-            worker_count,
-            results_queue
-        ))
-        consumer_process.start()
         workers = [Process(target=worker, args=(
             index,
             matching_zone_filename,
@@ -305,15 +242,14 @@ def find_potential_matches(
             start_year,
             evaluation_year,
             result_folder,
-            source_queue,
-            results_queue
+            source_queue
         )) for index in range(worker_count)]
         for worker_process in workers:
             worker_process.start()
         ingest_process = Process(target=load_k, args=(k_filename, worker_count, source_queue))
         ingest_process.start()
 
-        processes = workers + [ingest_process, consumer_process]
+        processes = workers + [ingest_process]
         while processes:
             candidates = [x for x in processes if not x.is_alive()]
             for candidate in candidates:
@@ -327,7 +263,7 @@ def find_potential_matches(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Finds all potential matches to K in matching zone, aka set S.")
+    parser = argparse.ArgumentParser(description="Generates a set of rasters per entry in K with potential matches.")
     parser.add_argument(
         "--k",
         type=str,

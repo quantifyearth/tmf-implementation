@@ -44,7 +44,8 @@ def process_tile(result_path: str, ecoregions_filename: str, jrc_path: str, ) ->
         )
 
         target_filename = os.path.join(tempdir, filename)
-        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename, datatype=ecoregions.datatype, compress=False)
+        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename,
+            datatype=ecoregions.datatype, compress=False)
         ecoregions.set_window_for_intersection(jrc_raster.area)
         ecoregions.save(result)
         del result._dataset
