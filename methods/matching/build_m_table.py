@@ -1,7 +1,7 @@
 import argparse
 from multiprocessing import cpu_count
 
-import pandas as pd
+import polars as pl
 from yirgacheffe.layers import RasterLayer
 
 from methods.matching.calculate_k import build_layer_collection
@@ -44,6 +44,9 @@ def build_m_table(
     assert matching_collection.boundary.area == merged_raster.area
 
     results = []
+    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
+    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
+    columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
 
     # now we we need to scan for matched pixels and store the data about them
     width = matching_collection.boundary.window.xsize
@@ -84,13 +87,9 @@ def build_m_table(
                 row_countries[0][xoffset],
             ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
 
-    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
-    output = pd.DataFrame(
-        results,
-        columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
-    )
-    output.to_parquet(result_dataframe_filename)
+
+    output = pl.DataFrame(results, columns)
+    output.write_parquet(result_dataframe_filename)
 
 
 def main() -> None:

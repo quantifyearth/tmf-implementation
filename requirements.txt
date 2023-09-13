@@ -2,6 +2,7 @@ numpy
 gdal[numpy]<3.7
 requests
 pandas
+polars
 geopandas
 scipy
 git+https://github.com/carboncredits/yirgacheffe@3c5ab3c9f7fc31b43c78f74a3bcfb735b687c9fe
