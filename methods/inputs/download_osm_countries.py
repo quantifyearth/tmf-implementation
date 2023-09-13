@@ -269,17 +269,17 @@ osm_id = {
 }
 
 def download_osm_polygons(target_filename: str) -> None:
-    # simplify parameter of 0.01 is better than the world bank data we
-    # were using, and is aligned better
     osm_boundaries_key = os.environ["OSM_BOUNDARIES_KEY"]
     if not osm_boundaries_key:
         raise ValueError("OSM_BOUNDARIES_KEY must be provided in the environment")
     source_url = f"https://osm-boundaries.com/Download/Submit?apiKey={osm_boundaries_key}" \
         "&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326" \
-        "&landOnly&simplify=0.01&osmIds="
+        "&osmIds="
 
     # The IDs are negated by this API; I have no idea why and I'm not about to ask.
-    osm_ids = {-id: cc for cc, id in osm_id.items()}
+    # Exclude Russia, Norway, Sweden, Finland and Canada. For whatever reason (Slartibartfast)
+    # these countries have a lot of geometry but not much tropical forest.
+    osm_ids = {-id: cc for cc, id in osm_id.items() if cc not in ['RU', 'NO', 'SE', 'FI', 'CA']}
     osm_keys = list(osm_ids.keys())
     shape_file_data_list = []
 
