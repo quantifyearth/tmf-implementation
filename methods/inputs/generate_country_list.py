@@ -11,7 +11,7 @@ def generate_country_list(
     leakage_boundaries = gpd.read_file(leakage_boundary_filename)
     countries = gpd.read_file(countries_vector_filename)
     matches = countries.sjoin(leakage_boundaries)
-    with open(output_filename, 'w') as outfd:
+    with open(output_filename, "w", encoding="utf-8") as outfd:
         outfd.write(json.dumps(list(set(matches['ISO_A2']))))
 
 def main() -> None:
