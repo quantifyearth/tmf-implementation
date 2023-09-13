@@ -98,6 +98,7 @@ def find_match_iteration(
                 min_index = index
         if min_index is None:
             logging.warning("We got no minimum despite having %d potential matches", len(filtered_s))
+            matchless.append(k_row)
             continue
         match = filtered_s.iloc[min_index]
 
