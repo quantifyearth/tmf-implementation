@@ -30,7 +30,7 @@ def generate_matching_area(
     extended_project = expand_boundaries(project_boundaries, MATCHING_RADIUS_IN_METRES)
     unified_extended_boundary = shapely.unary_union(extended_project)
 
-    with open(country_iso_a2_code_filename, 'r') as codesfs:
+    with open(country_iso_a2_code_filename, "r", encoding="utf-8") as codesfs:
         country_codes_list = json.loads(codesfs.read())
 
     country_shapes = gpd.read_file(countries_shape_filename)
