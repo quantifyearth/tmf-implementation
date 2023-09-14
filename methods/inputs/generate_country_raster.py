@@ -2,7 +2,7 @@ import argparse
 import glob
 import os
 
-from osgeo.gdal import GDT_Int16
+from osgeo.gdal import GDT_Byte
 from yirgacheffe.layers import RasterLayer, VectorLayer
 
 def generate_country_raster(
@@ -27,8 +27,8 @@ def generate_country_raster(
         None,
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        datatype=GDT_Int16,
-        burn_value="OBJECTID"
+        datatype=GDT_Byte,
+        burn_value="TMF_INDEX"
     )
 
     countries.set_window_for_intersection(matching.area)
