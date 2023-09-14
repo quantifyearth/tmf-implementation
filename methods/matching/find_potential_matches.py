@@ -1,5 +1,6 @@
 import argparse
 import glob
+import logging
 import os
 import sys
 import time
@@ -11,7 +12,9 @@ import pandas as pd
 from yirgacheffe.layers import RasterLayer  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
-from methods.common.luc import luc_matching_columns, luc_range
+from methods.common.luc import luc_matching_columns
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 # We do not re-use data in this, so set a small block cache size for GDAL, otherwise
 # it pointlessly hogs memory, and then spends a long time tidying it up after.
@@ -30,110 +33,8 @@ def load_k(
     for _ in range(sentinal_count):
         output_queue.put(None)
 
-def reduce_results(
-    matching_zone_filename: str,
-    jrc_directory_path: str,
-    cpc_directory_path: str,
-    ecoregions_directory_path: str,
-    elevation_directory_path: str,
-    slope_directory_path: str,
-    access_directory_path: str,
-    countries_shape_filename: str,
-    start_year: int,
-    evaluation_year: int,
-    result_dataframe_filename: str,
-    sentinal_count: int,
-    input_queue: Queue
-) -> None:
-    # lazily created
-    merged_result = None
-
-    while True:
-        partial_raster_filename = input_queue.get()
-        if partial_raster_filename is None:
-            sentinal_count -= 1
-            if sentinal_count == 0:
-                break
-        else:
-            partial_raster = RasterLayer.layer_from_file(partial_raster_filename)
-            if merged_result is None:
-                merged_result = partial_raster
-            else:
-                calc = merged_result + partial_raster
-                temp = RasterLayer.empty_raster_layer_like(merged_result)
-                calc.save(temp)
-                merged_result = temp
-
-    # merged result should be all the pixels now
-    assert merged_result is not None
-    matching_collection = build_layer_collection(
-        merged_result.pixel_scale,
-        merged_result.projection,
-        list(luc_range(start_year, evaluation_year)),
-        [start_year, start_year - 5, start_year - 10],
-        matching_zone_filename,
-        jrc_directory_path,
-        cpc_directory_path,
-        ecoregions_directory_path,
-        elevation_directory_path,
-        slope_directory_path,
-        access_directory_path,
-        countries_shape_filename,
-    )
-
-    assert matching_collection.boundary.window == merged_result.window
-    assert matching_collection.boundary.area == merged_result.area
-
-    results = []
-
-    # now we we need to scan for matched pixels and store the data about them
-    width = matching_collection.boundary.window.xsize
-    for yoffset in range(matching_collection.boundary.window.ysize):
-        row_matches = merged_result.read_array(0, yoffset, width, 1)
-        if row_matches.sum() == 0:
-            continue
-        row_elevation = matching_collection.elevation.read_array(0, yoffset, width, 1)
-        row_ecoregion = matching_collection.ecoregions.read_array(0, yoffset, width, 1)
-        row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
-        row_access = matching_collection.access.read_array(0, yoffset, width, 1)
-        row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
-        row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
-        # For CPC, which is at a different pixel_scale, we need to do a little math
-        coord = matching_collection.boundary.latlng_for_pixel(0, yoffset)
-        _, cpc_yoffset = matching_collection.cpcs[0].pixel_for_latlng(*coord)
-        row_cpc = [
-            cpc.read_array(0, cpc_yoffset, matching_collection.cpcs[0].window.xsize, 1)
-            for cpc in matching_collection.cpcs
-        ]
-
-        for xoffset in range(width):
-            if not row_matches[0][xoffset]:
-                continue
-
-            coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-            cpc_xoffset, _ = matching_collection.cpcs[0].pixel_for_latlng(*coord)
-            cpcs = [x[0][cpc_xoffset] for x in row_cpc]
-
-            results.append([
-                coord[0],
-                coord[1],
-                row_ecoregion[0][xoffset],
-                row_elevation[0][xoffset],
-                row_slope[0][xoffset],
-                row_access[0][xoffset],
-                row_countries[0][xoffset],
-            ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
-
-    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
-    output = pd.DataFrame(
-        results,
-        columns=['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
-    )
-    output.to_parquet(result_dataframe_filename)
-
 def worker(
-    _worker_index: int,
+    worker_index: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
     cpc_directory_path: str,
@@ -168,7 +69,14 @@ def worker(
         countries_raster_filename,
     )
 
+    # To help with such a long running job, we log every 100th element
+    # motivated by issues with the pipeline hanging before during multi hour jobs
+    count = 0
     while True:
+        if count % 100 == 0:
+            logging.info("%d: processing %d", worker_index, count)
+        count += 1
+
         row = input_queue.get()
         if row is None:
             break
@@ -338,8 +246,8 @@ def main():
         "--output",
         type=str,
         required=True,
-        dest="output_filename",
-        help="Destination parquet file for results."
+        dest="output_directory",
+        help="Destination directory for storing per-K rasters."
     )
     parser.add_argument(
         "--countries-raster",
@@ -370,7 +278,7 @@ def main():
         args.slope_directory_path,
         args.access_directory_path,
         args.countries_raster_filename,
-        args.output_filename,
+        args.output_directory,
         args.processes_count
     )
 

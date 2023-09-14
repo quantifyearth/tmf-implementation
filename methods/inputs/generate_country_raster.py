@@ -50,7 +50,7 @@ def main() -> None:
         type=str,
         required=True,
         dest="matching_zone_filename",
-        help="Filename of GeoJSON file desribing area from which matching pixels may be selected."
+        help="Filename of GeoJSON file describing area from which matching pixels may be selected."
     )
     parser.add_argument(
         "--countries",

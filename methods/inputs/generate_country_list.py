@@ -35,7 +35,7 @@ def main() -> None:
         type=str,
         required=True,
         dest="output_filename",
-        help="JSON file listing contry codes."
+        help="JSON file listing country codes."
     )
     args = parser.parse_args()
 

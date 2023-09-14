@@ -120,7 +120,7 @@ def main() -> None:
         type=int,
         required=True,
         dest="evaluation_year",
-        help="Year of project evalation"
+        help="Year of project evaluation"
     )
     parser.add_argument(
         "--jrc",
@@ -134,7 +134,7 @@ def main() -> None:
         type=str,
         required=True,
         dest="cpc_directory_path",
-        help="Filder containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
+        help="Directory containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
     )
     parser.add_argument(
         "--ecoregions",
