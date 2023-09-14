@@ -39,9 +39,12 @@ def find_match_iteration(
         random_state=random.randint(0, 1000000),
     )
 
-    # in the current methodology version (1.1), it's possible for
+    # Notes:
+    # 1. in the current methodology version (1.1), it's possible for
     # multiple pixels in k to map to the same pixel in S
+    # 2. Not all pixels may have matches
     results = []
+    matchless = []
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
@@ -72,7 +75,8 @@ def find_match_iteration(
         ]
 
         if len(filtered_s) == 0:
-            # No matches found for this pixel, move on
+            # No matches found for this pixel, note it down and move on
+            matchless.append(k_row)
             continue
 
         # and then a soft match based on Mahalanobis distance of
@@ -99,6 +103,7 @@ def find_match_iteration(
                 min_index = index
         if min_index is None:
             logging.warning("We got no minimum despite having %d potential matches", len(filtered_s))
+            matchless.append(k_row)
             continue
         match = filtered_s.iloc[min_index]
 
@@ -114,6 +119,9 @@ def find_match_iteration(
 
     results_df = pd.DataFrame(results, columns=columns)
     results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
+
+    matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
+    matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
 
 
 def find_pairs(
