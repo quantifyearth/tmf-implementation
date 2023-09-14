@@ -13,7 +13,7 @@ def utm_for_geometry(lat: float, lng: float) -> int:
         epsg_code = 32600 + utm_band
     return epsg_code
 
-def expand_recurse_geoms(shape: shapely.Geometry, radius: float):
+def expand_recurse_geoms(shape: shapely.Geometry, radius: float) -> shapely.Geometry:
     # Calling .buffer directly on a shape is incredibly slow when it contains lots of geometry.
     # So we call it on each piece of geometry instead. No reason that should be faster, but it is
     if hasattr(shape, 'geoms'):
