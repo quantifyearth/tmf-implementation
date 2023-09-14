@@ -12,7 +12,7 @@ from biomassrecovery.utils.unzip import unzip  # type: ignore
 # As taken from https://malariaatlas.org/open-access-policy/
 # Under "Creative Commons Attribution 3.0 Unported License"
 ACCESS_DATA = "https://data.malariaatlas.org/geoserver/Accessibility/ows?service=CSW&version=2.0.1" \
-    "&request=DirectDownload&ResourceId=Accessibility:202001_Global_Walking_Only_Travel_Time_To_Healthcare"
+    "&request=DirectDownload&ResourceId=Accessibility:202001_Global_Motorized_Travel_Time_to_Healthcare"
 
 class DownloadError(Exception):
     """Indicate the download failed"""
