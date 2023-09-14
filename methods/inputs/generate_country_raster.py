@@ -2,8 +2,8 @@ import argparse
 import glob
 import os
 
-from osgeo.gdal import GDT_Byte
-from yirgacheffe.layers import RasterLayer, VectorLayer
+from osgeo.gdal import GDT_Byte # type: ignore
+from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
 
 def generate_country_raster(
     jrc_directory_path: str,

@@ -6,8 +6,8 @@ import tempfile
 from functools import partial
 from multiprocessing import Pool, cpu_count
 
-from yirgacheffe.layers import RasterLayer
-from yirgacheffe.window import PixelScale
+from yirgacheffe.layers import RasterLayer  # type: ignore
+from yirgacheffe.window import PixelScale  # type: ignore
 
 def process_tile(
     tile_directory_path: str,

@@ -6,7 +6,7 @@ import tempfile
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
 
-from yirgacheffe.layers import RasterLayer
+from yirgacheffe.layers import RasterLayer  # type: ignore
 
 def worker(
     filename: str,
@@ -32,6 +32,7 @@ def worker(
             merged_result = temp
 
     final = RasterLayer.empty_raster_layer_like(merged_result, filename=output_tif)
+    assert merged_result is not None
     merged_result.save(final)
     del merged_result
 

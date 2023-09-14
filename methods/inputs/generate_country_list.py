@@ -1,7 +1,7 @@
 import argparse
 import json
 
-from geopandas import gpd
+from geopandas import gpd  # type: ignore
 
 def generate_country_list(
     leakage_boundary_filename: str,

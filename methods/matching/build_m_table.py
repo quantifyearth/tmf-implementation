@@ -2,7 +2,7 @@ import argparse
 from multiprocessing import cpu_count
 
 import polars as pl
-from yirgacheffe.layers import RasterLayer
+from yirgacheffe.layers import RasterLayer  # type: ignore
 
 from methods.matching.calculate_k import build_layer_collection
 from methods.common.luc import luc_range
