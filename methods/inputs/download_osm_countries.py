@@ -313,7 +313,8 @@ def download_osm_polygons(target_filename: str) -> None:
         crs = shape_file_data_list[0].crs,
     ) # type: ignore
     # Later code expects the country code in this format
-    shape_file_data['ISO_A2'] = shape_file_data['osm_id'].apply(lambda osm_id: osm_ids[osm_id]) # type: ignore
+    shape_file_data['ISO_A2'] = shape_file_data['osm_id'].apply(lambda osm_id: osm_ids[osm_id])
+    shape_file_data['TMF_INDEX'] = shape_file_data['ISO_A2'].apply(lambda code: sorted(osm_id.keys()).index(code))
     shape_file_data.to_file(target_filename, driver='GeoJSON')
 
 def main() -> None:

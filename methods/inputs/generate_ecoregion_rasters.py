@@ -19,6 +19,19 @@ yirgacheffe.operators.YSTEP = 1024 * 8
 os.environ["OGR_GEOJSON_MAX_OBJ_SIZE"] = "0"
 
 def process_tile(result_path: str, ecoregions_filename: str, jrc_path: str, ) -> None:
+    matches = re.match(r".*_([NS]\d+)_([WE]\d+).tif", jrc_path)
+    assert matches is not None
+    filename = f"ecoregion_{matches[1]}_{matches[2]}.tif"
+    final_filename = os.path.join(result_path, filename)
+
+    try:
+        raster = RasterLayer.layer_from_file(final_filename)
+        if raster.sum() > 0:
+            return
+    except (FileNotFoundError, TypeError):
+        # File doesn't exist or is corrupt, so we need to do the work
+        pass
+
     with tempfile.TemporaryDirectory() as tempdir:
         jrc_raster = RasterLayer.layer_from_file(jrc_path)
         ecoregions = VectorLayer.layer_from_file(
@@ -30,16 +43,13 @@ def process_tile(result_path: str, ecoregions_filename: str, jrc_path: str, ) ->
             burn_value="ECO_ID"
         )
 
-        matches = re.match(r".*_([NS]\d+)_([WE]\d+).tif", jrc_path)
-        assert matches is not None
-
-        filename = f"ecoregion_{matches[1]}_{matches[2]}.tif"
         target_filename = os.path.join(tempdir, filename)
-        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename, datatype=ecoregions.datatype)
+        result = RasterLayer.empty_raster_layer_like(jrc_raster, filename=target_filename,
+            datatype=ecoregions.datatype, compress=False)
         ecoregions.set_window_for_intersection(jrc_raster.area)
         ecoregions.save(result)
         del result._dataset
-        shutil.move(target_filename, os.path.join(result_path, filename))
+        shutil.move(target_filename, final_filename)
 
 def generate_ecoregion_rasters(
     ecoregions_filename: str,
