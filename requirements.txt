@@ -5,7 +5,7 @@ pandas
 polars
 geopandas
 scipy
-git+https://github.com/carboncredits/yirgacheffe@3c5ab3c9f7fc31b43c78f74a3bcfb735b687c9fe
+git+https://github.com/carboncredits/yirgacheffe@272e420b1579d40fad1a6090956f2e569b5353a3
 git+https://github.com/carboncredits/biomass-recovery@170630d50e42083c545643928747d67aa7245291
 
 # developement
