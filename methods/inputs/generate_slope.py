@@ -195,7 +195,7 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                         )
                         print("Slope window", slope_tif.window)
                         print("Final window", final.window)
-                        # final.set_window_for_intersection(intersection)
+                        final.set_window_for_intersection(intersection)
                         slope_tif.save(final)
 
                         # Flush
