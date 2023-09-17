@@ -17,14 +17,25 @@ class DTree:
     
     def dump(self, space: str) -> None:
         raise NotImplemented
+    
+    def size(self) -> int:
+        return 1
 
 class SingletonTree(DTree):
     def __init__(self, rects):
         self.rects = rects
     def contains(self, point):
-        return (point >= self.rects[0]) & (point <= self.rects[1])
+        return np.all((point >= self.rects[0]) & (point <= self.rects[1]))
     def dump(self, space):
         print(space, f"singleton {self.rects}")
+
+class ListTree(DTree):
+    def __init__(self, rects):
+        self.rects = rects
+    def contains(self, point):
+        return np.any(np.all((point >= self.rects[:, 0]) & (point <= self.rects[:, 1]), axis=1))
+    def dump(self, space):
+        print(space, f"list {self.rects}")
 
 class EmptyTree(DTree):
     def contains(self, point):
@@ -47,6 +58,10 @@ class FulfilledTree(DTree):
     def dump(self, space):
         print(space, f"fulfilled axis {self.axis} ->")
         self.subtree.dump(space + "\t")
+    def depth(self):
+        return 1 + self.subtree.depth()
+    def size(self):
+        return 1 + self.subtree.size()
 
 class SplitDTree(DTree):
     def __init__(self, left: DTree, right: DTree, axis: int, value: float):
@@ -65,23 +80,30 @@ class SplitDTree(DTree):
         self.left.dump(space + "\t")
         print(space + "  >")
         self.right.dump(space + "\t")
+    def depth(self):
+        return 1 + max(self.left.depth(), self.right.depth())
+    def size(self):
+        return 1 + self.left.size() + self.right.size()
 
 def without(items, j):
     axis = items.ndim - 1
     indices = [k for k in range(items.shape[axis]) if k != j]
     return np.take(items, indices, axis=axis)
 
-def make_tree_internal(rects, bounds, j: int, space: str):
+def make_tree_internal(rects, bounds, j: int, depth: int):
     # print(f"Tree j:{j} bounds:")
     # print(bounds)
     # print("rects")
     # print(f"{rects}")
-    print(space, f"T {len(rects)},{rects.shape[2]}")
+    #print(" " * depth, f"T {len(rects)},{rects.shape[2]}")
+
     if len(rects) == 0:
         return EmptyTree()
     if len(rects) == 1:
         return SingletonTree(rects[0])
-    
+    if len(rects) < 30:
+        return ListTree(rects)
+
     # if all rects completely fill bounds, then fulfilled
     if np.all((rects[:, 0, j] <= bounds[0, j]) & (rects[:, 1, j] >= bounds[1, j])):
         if rects.shape[2] == 1:
@@ -90,8 +112,12 @@ def make_tree_internal(rects, bounds, j: int, space: str):
             sub_rects = without(rects, j)
             sub_bounds = without(bounds, j)
             next_j = j % sub_rects.shape[2]
-            subtree = make_tree_internal(sub_rects, sub_bounds, next_j, space + "\t")
+            subtree = make_tree_internal(sub_rects, sub_bounds, next_j, depth + 1)
             return FulfilledTree(subtree, j)
+        
+    # TODO: if min and max of left sides are equal or min and max of right sides, put a cut there
+    # TODO: if min of left and max of right are equal, single value so need a new tree node that checks that value
+    #       then drops the dimension
     
     # Doesn't matter which axis so just cycle through
     # TODO: find a median that is aligned with *something*, so in case of even number (always even due to left/right),
@@ -103,30 +129,25 @@ def make_tree_internal(rects, bounds, j: int, space: str):
     # TODO: clip rects by bounds here so we don't need to clip below
     # print(f"values {rects[:, :, j]}")
     centers = np.mean(rects[:, :, j], axis=1)
-    # print(f"centers {centers}")
-    median = np.median(centers)
-    # print(f"median {median}")
-    mean = np.mean(bounds[:, j])
-    if math.isnan(mean) or math.isinf(mean):
-        # Bounds not bounded, so use average of centers instead
-        mean = np.mean(centers)
-    # print(f"mean {mean}")
-    # Find point in rects[:, :, j] closest to median in direction of mean
-    # We want to find a specific point to make the split as efficient as possibles
+    widths = rects[:, 1, j] - rects[:, 0, j]
+    total_widths = np.sum(widths)
+
+    weighted_center = np.sum(centers * widths) / total_widths
+
+    # Find point in rects[:, :, j] closest to weighted_center in direction of FIXME:???
+    # We want to find a specific point to make the split as efficient as possible
     sorted_points = np.sort(rects[:, :, j], axis=None)
 
-    mean = np.median(sorted_points) # Not really a mean, more of the target point
-    # We cannot use the first or last value to split, as that's not a split
     min = sorted_points[0]
     max = sorted_points[-1]
     sorted_points = sorted_points[(sorted_points > min) & (sorted_points < max)]
     if len(sorted_points > 0):
         # print(f"sorted_points {sorted_points}")
-        side = "right" if mean < median else "left"
-        chosen = np.searchsorted(sorted_points, median, side=side)
-        if side == "right" or chosen == len(sorted_points):
+        side = "left"
+        chosen = np.searchsorted(sorted_points, weighted_center, side=side)
+        if chosen == len(sorted_points):
             chosen -= 1
-        median = sorted_points[chosen]
+        split_at = sorted_points[chosen]
         # print(f"side {side} chosen {chosen} final median {median}")
     else:
         # Optimise: all points cover all area, so we just need a bounds check here and we're golden
@@ -135,49 +156,95 @@ def make_tree_internal(rects, bounds, j: int, space: str):
         if bound[0] < min:
             new_bounds = np.copy(bounds)
             new_bounds[0, j] = min
-            rest = make_tree_internal(rects, new_bounds, next_j, space + "\t")
+            rest = make_tree_internal(rects, new_bounds, next_j, depth + 1)
             return SplitDTree(EmptyTree(), rest, j, min)
         elif bound[1] > max:
             new_bounds = np.copy(bounds)
             new_bounds[1, j] = max
-            rest = make_tree_internal(rects, new_bounds, next_j, space + "\t")
+            rest = make_tree_internal(rects, new_bounds, next_j, depth + 1)
             return SplitDTree(rest, EmptyTree(), j, max)
         else:
             raise RuntimeError(f"j: {j} min: {min} max: {max} bounds: {bounds} now what?")
+    
+    if False:
+        # print(f"centers {centers}")
+        median = np.median(centers)
+        # print(f"median {median}")
+        mean = np.mean(bounds[:, j])
+        if math.isnan(mean) or math.isinf(mean):
+            # Bounds not bounded, so use average of centers instead
+            mean = np.mean(centers)
+        # print(f"mean {mean}")
+        # Find point in rects[:, :, j] closest to median in direction of mean
+        # We want to find a specific point to make the split as efficient as possibles
+        sorted_points = np.sort(rects[:, :, j], axis=None)
 
-    lefts = rects[rects[:, 0, j] <= median]
-    lefts[:, 1, j] = np.clip(lefts[:, 1, j], a_max = median, a_min = None)
-    lefts = lefts[lefts[:, 0, j] < lefts[:, 1, j]] # Filter out empty rectangles
+        mean = np.median(sorted_points) # Not really a mean, more of the target point
+        # We cannot use the first or last value to split, as that's not a split
+        min = sorted_points[0]
+        max = sorted_points[-1]
+        sorted_points = sorted_points[(sorted_points > min) & (sorted_points < max)]
+        if len(sorted_points > 0):
+            # print(f"sorted_points {sorted_points}")
+            side = "right" if mean < median else "left"
+            chosen = np.searchsorted(sorted_points, median, side=side)
+            if side == "right" or chosen == len(sorted_points):
+                chosen -= 1
+            median = sorted_points[chosen]
+            # print(f"side {side} chosen {chosen} final median {median}")
+        else:
+            # Optimise: all points cover all area, so we just need a bounds check here and we're golden
+            bound = bounds[:, j]
+            next_j = (j + 1) % rects.shape[2]
+            if bound[0] < min:
+                new_bounds = np.copy(bounds)
+                new_bounds[0, j] = min
+                rest = make_tree_internal(rects, new_bounds, next_j, depth + 1)
+                return SplitDTree(EmptyTree(), rest, j, min)
+            elif bound[1] > max:
+                new_bounds = np.copy(bounds)
+                new_bounds[1, j] = max
+                rest = make_tree_internal(rects, new_bounds, next_j, depth + 1)
+                return SplitDTree(rest, EmptyTree(), j, max)
+            else:
+                raise RuntimeError(f"j: {j} min: {min} max: {max} bounds: {bounds} now what?")
+
+    lefts = rects[rects[:, 0, j] < split_at] # FIXME: do some thinking about how to handle on the line cases
+    lefts[:, 1, j] = np.clip(lefts[:, 1, j], a_max = split_at, a_min = None)
+    lefts = np.unique(lefts, axis = 0)
+    #lefts = lefts[lefts[:, 0, j] < lefts[:, 1, j]] # Filter out empty rectangles
 
     # print("lefts")
     # print(lefts)
 
-    rights = rects[rects[:, 1, j] > median] # On the line is considered left
-    rights[:, 0, j] = np.clip(rights[:, 0, j], a_min = median, a_max = None)
-    rights = rights[rights[:, 0, j] < rights[:, 1, j]] # Filter out empty rectangles
+    rights = rects[rects[:, 1, j] > split_at] # On the line is considered left
+    rights[:, 0, j] = np.clip(rights[:, 0, j], a_min = split_at, a_max = None)
+    rights = np.unique(rights, axis = 0)
+    #rights = rights[rights[:, 0, j] < rights[:, 1, j]] # Filter out empty rectangles
 
     # print("rights")
     # print(rights)
 
     left_bounds = np.copy(bounds)
-    left_bounds[1, j] = median
+    left_bounds[1, j] = split_at
 
     right_bounds = np.copy(bounds)
-    right_bounds[0, j] = median
+    right_bounds[0, j] = split_at
 
     next_j = (j + 1) % rects.shape[2]
-    left = make_tree_internal(lefts, left_bounds, next_j, space + "\t")
-    right = make_tree_internal(rights, right_bounds, next_j, space + "\t")
-    return SplitDTree(left, right, j, median)
+    left = make_tree_internal(lefts, left_bounds, next_j, depth + 1)
+    right = make_tree_internal(rights, right_bounds, next_j, depth + 1)
+    return SplitDTree(left, right, j, split_at)
 
 
 def make_tree(items, widths):
     axis = items.ndim - 1
     # Reshape each item into a rect
+    items = np.unique(items, axis = 0) # No need to look at duplicate items for this process
     rects = np.array([[item - widths, item + widths] for item in items])
     bounds = np.transpose(np.array([[-math.inf, math.inf] for _ in range(items.shape[axis])]))
     # Call internal with the rects and the bounds
-    return make_tree_internal(rects, bounds, 0, "")
+    return make_tree_internal(rects, bounds, 0, 0)
 
     if len(sources) == 0:
         return FailTree()
@@ -316,8 +383,10 @@ def k_search_test(
             found += 1 if np.any(pos) else 0
         return found
     
+    print("making tree...")
     tree = make_tree(sources, np.array([elevation_width, slope_width, access_width]))
     print("depth", tree.depth())
+    print("size", tree.size())
 
     def do_nd_tree_matching():
         found = 0
