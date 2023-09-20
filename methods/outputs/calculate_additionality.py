@@ -63,6 +63,16 @@ def find_first_luc(columns: list[str]) -> Optional[str]:
             continue
     return None
 
+def is_not_matchless(path: str) -> bool:
+    name = os.path.basename(path)
+    parts = name.split("_")
+    if len(parts) < 2:
+        return True
+    else:
+        if parts[1] == "matchless.parquet":
+            return False
+    return True
+
 def generate_additionality(
     project_geojson_file: str,
     project_start: str,
@@ -88,7 +98,8 @@ def generate_additionality(
     logging.info("Project area: %.2fmsq", project_area_msq)
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
-    # assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
+    matches = list(filter(is_not_matchless, matches))
+    assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
 
     treatment_data = {}
 
@@ -149,10 +160,6 @@ def generate_additionality(
                 arr = [0 for _ in range(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)]
                 arr[pair_idx] = s_t_value
                 treatment_data[year_index] = arr
-
-    matches = glob.glob("*.parquet", root_dir=matches_directory)
-
-    assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
 
     scvt = {}
 
