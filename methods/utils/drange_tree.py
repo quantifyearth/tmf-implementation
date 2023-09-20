@@ -15,7 +15,6 @@ from __future__ import annotations
 import numpy as np
 import math
 
-# TODO: Implement without numpy for actual matching
 # TODO: Try an implementation with a BSP so we can actually merge ranges together.
 
 class DRangeTree:
@@ -302,7 +301,7 @@ def _self_test():
     print("tree depth", tree.depth())
     print("tree size", tree.size())
 
-    def do_nd_tree_matching():
+    def do_drange_tree_matching():
         found = 0
         for i in range(length):
             found += 1 if tree.contains(np.array([elevation[i], slopes[i], access[i]])) else 0
@@ -314,7 +313,7 @@ def _self_test():
         loops, time = t.autorange()
         print(what, ": ", time / loops, "per call")
     speed_of("NP matching", do_np_matching)
-    speed_of("Tree matching", do_nd_tree_matching)
+    speed_of("Tree matching", do_drange_tree_matching)
 
 if __name__ == "__main__":
     _self_test()
