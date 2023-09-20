@@ -154,6 +154,7 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
         return EmptyTree()
     if len(rects) == 1:
         return SingletonTree(rects[0])
+    # If there are less than 30 rectangles, just run through them as a numpy list.
     if len(rects) < 30:
         return ListTree(rects)
 
@@ -179,9 +180,9 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
     best_d = 0
     best_classes = 0
     for d in range(dimensions):
-        min = np.min(splits[d])
-        max = np.max(splits[d])
-        r = max - min
+        min_split = np.min(splits[d])
+        max_split = np.max(splits[d])
+        r = max_split - min_split
         max_classes = r / widths[d]
         # TODO: Hoist len(split) < 3 check to here
         if max_classes > best_classes:
@@ -203,33 +204,9 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
         print(f"WARNING: Can't split as {split} has <3 members, falling back to list of {len(rects)} members")
         return ListTree(rects)
     
-    # This is slow but worth it to find the "best" split.
-    # We score a split as the maximum of items on either side of the split, divided by the total items.
-    # The intuition is that a 80/20 split is bad, as is a 75/75 split. The best split is the closest
-    # to 50/50. score can never drop below half the length of list, as then we'd be losing items somewhere.
-    # (Intuitively, scale score by len(rects))
-    # TODO: max(split) + excess(min(split)) might be a better score. So 80/20 should score 0.8, which would be
-    #       better than 75/75 which currently scores 0.75 but would score 0.75+0.25=1.0. Max score will become
-    #       1.5 for a 100/100 split, so we could subtract 0.5 to get this to scale from 0-1.
-    #       Simpler calculation would then be excess(left) + excess(right), which feels plausible. 
-
-    # Intially, we'll assume the best split is in the middle.
-    # We give this a score as if it was a 60/60 split; that might not be realistic and might need revising,
-    # but the intuition is that if we can't do better than a 60/60 split, we might as well just cut down
-    # the middle which might free up other cuts better than some lop-sided cut.
+    # We used to assume we could find a "best" split point that balanced the split.
+    # But just going for the median seems to work well and is fast, so that's what we do.
     best_split_pos = len(split) // 2
-    best_score = len(rects) * 0.6
-
-    lefts = rects[:, 0, d]
-    rights = rects[:, 1, d]
-    for split_pos in range(len(split)):
-        split_at = split[split_pos]
-        left_count = (lefts < split_at).sum()
-        right_count = (rights > split_at).sum()
-        score = left_count if left_count > right_count else right_count
-        if best_score is None or score < best_score:
-            best_score = score
-            best_split_pos = split_pos
 
     # Record the point we split at
     split_at = split[best_split_pos]
@@ -237,12 +214,12 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
     # Split and clip the rectangles at the split point
     # Rectangles do not include their end points in either direction.
     # We clip to make split point calculations accurate later on.
-    lefts = rects[lefts < split_at]
+    lefts = rects[rects[:, 0, d] < split_at]
     lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
     lefts = np.unique(lefts, axis = 0)
     lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
 
-    rights = rects[rights > split_at]
+    rights = rects[rects[:, 1, d] > split_at]
     rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
     rights = np.unique(rights, axis = 0)
     rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
