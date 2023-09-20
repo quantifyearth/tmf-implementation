@@ -53,8 +53,6 @@ class SingletonTree(DRangeTree):
 
 class ListTree(DRangeTree):
     def __init__(self, rects):
-        # Sort rects by size, largest first
-        # self.rects = rects[np.argsort(-np.prod(rects[:, 1] - rects[:, 0]))]
         self.rects = rects
     def contains(self, point):
         return np.any(np.all((point >= self.rects[:, 0]) & (point <= self.rects[:, 1]), axis=1))
@@ -202,7 +200,7 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
     # if there are less than three split points (i.e. no inner split points) there is no point
     # splitting, so fall back to a list.
     if len(split) < 3:
-        print(f"WARNING: Can't split as {split} has <3 members, falling back to list")
+        print(f"WARNING: Can't split as {split} has <3 members, falling back to list of {len(rects)} members")
         return ListTree(rects)
     
     # This is slow but worth it to find the "best" split.
