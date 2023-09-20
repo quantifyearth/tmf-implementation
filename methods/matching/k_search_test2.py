@@ -11,6 +11,7 @@ import pandas as pd
 
 from methods.common.luc import luc_matching_columns
 
+# TODO: Implement without numpy for actual matching
 class DTree:
     def contains(self, point):
         raise NotImplemented
@@ -179,8 +180,8 @@ def make_tree_internal(rects, bounds, widths, state: TreeState):
     
     # Try different split positions
     best_split_pos = len(split) // 2
-    best_score = len(rects) * 0.6 # If we can't do better than a 75/25 split, might as well just cut down the middle
-                                  # with the intuition that might free up other cuts
+    best_score = len(rects) * 0.6 # If we can't do better than a 60/60 split, might as well just cut down the middle
+                                  # with the intuition that might free up other cuts better than some lop-sided cut.
     lefts = rects[:, 0, j]
     rights = rects[:, 1, j]
     for split_pos in range(len(split)):
@@ -284,7 +285,7 @@ def k_search_test(
     
     print("making tree...")
     start = time.time()
-    tree = make_rtree(sources, np.array([elevation_width, slope_width, access_width]))
+    tree = make_tree(sources, np.array([elevation_width, slope_width, access_width]))
     print("build time", time.time() - start)
     print("depth", tree.depth())
     print("size", tree.size())
