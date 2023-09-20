@@ -167,22 +167,7 @@ def make_tree_internal(rects, bounds, widths, state: TreeState):
 
     if best_classes < 1.1: # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
         # Hardly going to split anything whatever we do, so fall out to a list
-        # TODO: This part of the space is almost certainly full, so it would be better to return a FullTree here if possible
-        #       (Another doubling of run-time is possible if these are all full)
-        # TODO: Just promote the largest rect
-        smallest_covered = np.array([np.max(rects[:, 0], axis=0), np.min(rects[:, 1], axis=0)])
-        covered_size = np.prod(smallest_covered[1] - smallest_covered[0])
-        bounds_size = np.prod(bounds[1] - bounds[0])
-        rects_bounds = np.array([np.min(rects[:, 0], axis=0), np.max(rects[:, 1], axis=0)])
-        rects_bounds_size = np.prod(rects_bounds[1] - rects_bounds[0])
-        covered_fraction = covered_size / rects_bounds_size
-        if covered_fraction > 0.1:
-            # remainder = rects[np.any(rects[:, 0] < smallest_covered[0], axis=1) | np.any(rects[:, 1] > smallest_covered[1], axis=1)]
-            # print(f"fraction: {covered_fraction} rects: {len(rects)} remainder: {len(remainder)} dropped: {len(rects) - len(remainder)}")
-            new_rects = np.array([smallest_covered, *rects])
-            return ListTree(new_rects)
-        else:
-            return ListTree(rects)
+        return ListTree(rects)
 
     j = best_j
     split = splits[j]
