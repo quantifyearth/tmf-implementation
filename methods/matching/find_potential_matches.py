@@ -114,28 +114,28 @@ def worker(
                 chunk <= (matching["cpc0_u"] + matching["cpc0_u"] * 0.1)
             )
         )
-        filtered_cpc_u5 = matching_collection.cpcs[1].numpy_apply(
-            lambda chunk: np.logical_and(
-                chunk >= (matching["cpc5_u"] - matching["cpc5_u"] * 0.1),
-                chunk <= (matching["cpc5_u"] + matching["cpc5_u"] * 0.1)
-            )
-        )
-        filtered_cpc_u10 = matching_collection.cpcs[2].numpy_apply(
-            lambda chunk: np.logical_and(
-                chunk >= (matching["cpc10_u"] - matching["cpc10_u"] * 0.1),
-                chunk <= (matching["cpc10_u"] + matching["cpc10_u"] * 0.1)
-            )
-        )
-        filtered_cpc_d0 = matching_collection.cpcs[3].numpy_apply(
+        filtered_cpc_d0 = matching_collection.cpcs[1].numpy_apply(
             lambda chunk: np.logical_and(
                 chunk >= (matching["cpc0_d"] - matching["cpc0_d"] * 0.1),
                 chunk <= (matching["cpc0_d"] + matching["cpc0_d"] * 0.1)
             )
         )
-        filtered_cpc_d5 = matching_collection.cpcs[4].numpy_apply(
+        filtered_cpc_u5 = matching_collection.cpcs[2].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc5_u"] - matching["cpc5_u"] * 0.1),
+                chunk <= (matching["cpc5_u"] + matching["cpc5_u"] * 0.1)
+            )
+        )
+        filtered_cpc_d5 = matching_collection.cpcs[3].numpy_apply(
             lambda chunk: np.logical_and(
                 chunk >= (matching["cpc5_d"] - matching["cpc5_d"] * 0.1),
                 chunk <= (matching["cpc5_d"] + matching["cpc5_d"] * 0.1)
+            )
+        )
+        filtered_cpc_u10 = matching_collection.cpcs[4].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc10_u"] - matching["cpc10_u"] * 0.1),
+                chunk <= (matching["cpc10_u"] + matching["cpc10_u"] * 0.1)
             )
         )
         filtered_cpc_d10 = matching_collection.cpcs[5].numpy_apply(
