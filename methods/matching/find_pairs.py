@@ -11,7 +11,7 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 from methods.common.luc import luc_matching_columns
 
-REPEAT_MATCH_FINDING = 1
+REPEAT_MATCH_FINDING = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -59,13 +59,7 @@ def find_match_iteration(
 
     m_distances = np.full((len(k_subset), len(s_subset)), 10000000.0)
 
-    # Sanity check: these are the S indices that were actually matched on
-    s_used = []
-
-    idx = 0
     for k_idx, k_row in k_subset.iterrows():
-        idx += 1
-        print(f"Analysing {idx}/{len(k_subset)}")
         # Methodology 6.5.7: find the matches.
         # There's two stages to matching - first a hard match
         # based on:
@@ -104,35 +98,28 @@ def find_match_iteration(
         just_cols_idx = filtered_s.index.to_numpy()
         just_cols = filtered_s[distance_columns].to_numpy()
 
-        # min_distance = 10000000000.0
-        # min_index = None
         for index in range(len(just_cols)): # pylint: disable=C0200
-            print(f"Running {index}/{len(just_cols)}")
-            s_row = just_cols[idx]
+            s_row = just_cols[index]
             s_idx = just_cols_idx[index]
-            if s_idx not in s_used:
-                s_used.append(s_idx)
             distance = mahalanobis(k_soft, s_row, invconv)
             m_distances[k_idx][s_idx] = distance
 
     # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
     # for each k and s without replacement
     s_already_matched = []
-    idx = 0
     for k_idx, k_row in k_subset.iterrows():
-        idx += 1
-        print(f"Finding min {idx}/{len(k_subset)}")
-        dists = m_distances[s_idx]
+        dists = m_distances[k_idx]
         for s_idx in reversed(dists.argsort()):
-            if s_idx not in s_used:
-                raise ValueError("Adding a match that was never a match!")
+            # if s_idx not in s_used:
+            #     raise ValueError("Adding a match that was never a match!")
             if s_idx not in s_already_matched:
                 s_already_matched.append(s_idx)
-                match = s_subset[s_idx]
+                match = s_subset.iloc[s_idx]
                 results.append(
                     [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
                     [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
                 )
+                break
 
     columns = ['k_lat', 'k_lng'] + \
         [f'k_{x}' for x in luc_columns + distance_columns] + \
