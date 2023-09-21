@@ -131,17 +131,14 @@ def worker(
     matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
     xsize = matching_collection.boundary.window.xsize
     ysize = matching_collection.boundary.window.ysize
-    print("Size", xsize, ysize)
     xstride = math.ceil(xsize / 10)
     ystride = math.ceil(ysize / 10)
 
     # Iterate our assigned pixels
     while True:
         coords = coordinate_queue.get()
-        print("Processing coordinates: ", coords)
         if coords == None:
-            # Finished
-            return
+            break
         y, x = coords
         ymin = y * ystride
         xmin = x * xstride
@@ -149,25 +146,37 @@ def worker(
         xmax = min(xmin + xstride, xsize)
         xwidth = xmax - xmin
         ywidth = ymax - ymin
-        print(f"Reading {xmin}, {ymin} width {xwidth} height {ywidth}...")
+        boundary = matching_collection.boundary.read_array(xmin, ymin, xwidth, ywidth)
         elevations = matching_collection.elevation.read_array(xmin, ymin, xwidth, ywidth)
         ecoregions = matching_collection.ecoregions.read_array(xmin, ymin, xwidth, ywidth)
         slopes = matching_collection.slope.read_array(xmin, ymin, xwidth, ywidth)
         accesses = matching_collection.access.read_array(xmin, ymin, xwidth, ywidth)
         lucs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.lucs]
 
-        for cpc in matching_collection.cpcs:
-            print("CPC size", cpc.window.xsize, cpc.window.ysize)
-        cpcs = [debug(f"read_array {index}", x.read_array(xmin, ymin, xwidth, ywidth)) for index, x in enumerate(matching_collection.cpcs)]
+        #cpcs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.cpcs]
+
+        # FIXME: This needs fixing to handle boundaries and scale correctly
+        tl = matching_collection.boundary.latlng_for_pixel(xmin, ymin)
+        cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*tl)
+        br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
+        cpc_br = matching_collection.cpcs[0].pixel_for_latlng(*br)
+        cpc_width = cpc_br[0] - cpc_tl[0]
+        cpc_height = cpc_br[1] - cpc_tl[1]
+        cpcs = [
+            cpc.read_array(cpc_tl[0], cpc_tl[1], cpc_width, cpc_height)
+            for cpc in matching_collection.cpcs
+        ]
+        cpc_x_scale = cpc_width / xwidth
+        cpc_y_scale = cpc_height / ywidth
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
-        print("Processing block")
         for y in range(ywidth):
-            if y%10 == 0:
-                print(f"y: {y} of {ywidth}")
+            if y%(ywidth // 10) == 0 or (ywidth % 10 == 0 and y == ywidth - 1):
+                print(f"Worker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete")
             for x in range(xwidth):
-                # FIXME: Check in boundary
+                if boundary[y, x] == 0:
+                    continue
                 ecoregion = ecoregions[y, x]
                 country = countries[y, x]
                 luc0 = lucs[0][y, x]
@@ -175,20 +184,28 @@ def worker(
                 luc10 = lucs[2][y, x]
                 key = build_key(ecoregion, country, luc0, luc5, luc10)
                 if key in ktrees:
-                    points[y, x] = 1 if ktrees[key].contains(np.array([
+                    cpcx = math.floor(x * cpc_x_scale)
+                    cpcy = math.floor(y * cpc_y_scale)
+                    points[y, x] = 3 if ktrees[key].contains(np.array([
                         elevations[y, x],
                         slopes[y, x],
                         accesses[y, x],
-                        cpcs[0][y, x],
-                        cpcs[1][y, x],
-                        cpcs[2][y, x],
-                        cpcs[3][y, x],
-                        cpcs[4][y, x],
-                        cpcs[5][y, x],
-                    ])) else 0
-        
+                        cpcs[0][cpcy, cpcx],
+                        cpcs[1][cpcy, cpcx],
+                        cpcs[2][cpcy, cpcx],
+                        cpcs[3][cpcy, cpcx],
+                        cpcs[4][cpcy, cpcx],
+                        cpcs[5][cpcy, cpcx],
+                    ])) else 2
+                else:
+                    points[y, x] = 1
+        print(np.sum(points))
         # Write points to output
         matching_pixels._dataset.GetRasterBand(1).WriteArray(points, xmin, ymin)
+
+    # Ensure we flush pixels to disk now we're finished
+    del matching_pixels._dataset
+
 
 
 def find_potential_matches(
@@ -218,7 +235,7 @@ def find_potential_matches(
         #for y in range(10):
         #    for x in range(10):
         #        coordinate_queue.put([y, x])
-        coordinate_queue.put([6, 7])
+        coordinate_queue.put([3, 3])
         for _ in range(worker_count):
             coordinate_queue.put(None)
 
