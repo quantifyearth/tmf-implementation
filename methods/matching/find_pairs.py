@@ -60,10 +60,7 @@ def find_match_iteration(
 
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
-    idx = 0
     for k_idx, k_row in k_subset.iterrows():
-        idx += 1
-        print(f"Running {idx}/{len(k_subset)}")
         # Methodology 6.5.7: find the matches.
         # There's two stages to matching - first a hard match
         # based on:
@@ -128,12 +125,10 @@ def find_match_iteration(
     k_added = 0
     k_total = len(k_subset)
     s_already_added = [ False for _ in s_subset.iterrows() ]
-    dists_len = len(sorted_dists)
     for g, (k_idx, s_idx, dist) in enumerate(sorted_dists):
         # We only add k and s once
         k_idx_int = int(k_idx)
         s_idx_int = int(s_idx)
-        print(f"Collected {k_added}/{len(k_subset)} ({dists_len - g} left)")
         if k_already_added[k_idx_int] or s_already_added[s_idx_int]:
             continue
 
