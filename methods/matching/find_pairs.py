@@ -109,7 +109,7 @@ def find_match_iteration(
     s_already_matched = []
     for k_idx, k_row in k_subset.iterrows():
         dists = m_distances[k_idx]
-        for s_idx in reversed(dists.argsort()):
+        for s_idx in dists.argsort():
             # if s_idx not in s_used:
             #     raise ValueError("Adding a match that was never a match!")
             if s_idx not in s_already_matched:
