@@ -244,7 +244,6 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         # If a good fraction of this dimension has a single value, drop that value
         needed_values = len(rects) * 0.1
         if (len(widths[d]) - len(widths_without_zeros[d])) > needed_values:
-            state.print(f" Looking for single value for ∂{d} in {len(rects)} rects")
             # Find the single values
             single_valued_points = lefts[d][lefts[d] == rights[d]]
             svp_values, svp_counts = np.unique(single_valued_points, return_counts=True)
@@ -254,7 +253,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
                 value = svp_values[best_index]
                 swallowed = (rects[:, 0, d] == value) & (rects[:, 1, d] == value)
                 remainder = rects[~swallowed]
-                state.print(f"  found value: {svp_values[best_index]} with {svp_counts[best_index]} instances and remainder of {len(remainder)} out of {len(rects)}")
+                #state.print(f"  found value: {svp_values[best_index]} with {svp_counts[best_index]} instances and remainder of {len(remainder)} out of {len(rects)}")
                 if len(remainder) + svp_counts[best_index] != len(rects):
                     raise RuntimeError("Incorrect number items in remainder")
                 continuation = _make_tree_internal(remainder, bounds, state.descend(d))
@@ -264,6 +263,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     # Find the dimension with the most variety with respect to its width.
     best_d = 0
     best_classes = 0
+    best_width_estimate = 0
     for d in range(dimensions):
         split = splits[d]
         min_split = np.min(split)
@@ -272,6 +272,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
             # If all widths are zero, we can calculate estimate the number of classes as
             # the number of unique split(value) points.
             max_classes = len(split)
+            width_estimate = (max_split - min_split) / max_classes
         elif len(split) >= 3:
             # We want to split this dimension into two spaces. Given the outermost points don't
             # actually reduce the number of nodes (because everything is on one side of the outermost point)
@@ -282,6 +283,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
             max_classes = r / width_estimate
             best_split_pos = len(split) // 2
             split_at = split[best_split_pos]
+
             left_count = np.sum(lefts[d] <= split_at)
             right_count = np.sum(rights[d] >= split_at)
             target = len(rects) * 1
@@ -291,19 +293,21 @@ def _make_tree_internal(rects, bounds, state: TreeState):
             # in the following layer on either side.
             # We need a heuristic between layers to consume the overlap, or to detect and generate
             # a 3-tree where there is an overlap.
-            if left_count > target or right_count > target or left_count + right_count > total_target:
-                max_classes = 0 # Don't split here as the two side trees are too large or unbalanced
+            #if left_count > target or right_count > target or left_count + right_count > total_target:
+            #    max_classes = 0 # Don't split here as the two side trees are too large or unbalanced
         else:
             max_classes = 0 # Not a good dimension to split on
+            width_estimate = 0
 
         if max_classes > best_classes:
             best_d = d
             best_classes = max_classes
+            best_width_estimate = width_estimate
     if best_classes < 1.3:
         # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
         # Wherever we split we're hardly going to achieve much, so fall out to a list
         return ListTree(rects)
-
+    
     d = best_d
     split = splits[d]
 
@@ -316,6 +320,44 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         # so we can simply split at a point between the two classes.
         split_at = np.mean(split)
     else:        
+        if best_classes < 3:
+            # Chance there is an overlap here, so let's check and eliminate it if possible
+            # L  L L LL LL
+            #                R  R RR R     R
+            #            L   R
+            #              ^- overlap here which we can consume the dimension in
+
+            left_cut = np.max(lefts[d])
+            right_cut = np.min(rights[d])
+            overlap_width = right_cut - left_cut
+            # Only worth doing if at least 20% overlap.
+            # FIXME: currently this code leads to fewer matches in test for unknown reasons
+            if False and overlap_width > 0.2 * best_width_estimate:
+                lefts = np.copy(rects)
+                lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = left_cut, a_min = None)
+                lefts = np.unique(lefts, axis = 0)
+
+                rights = np.copy(rects)
+                rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = right_cut, a_max = None)
+                rights = np.unique(rights, axis = 0)
+
+                middle = without(rects, d)
+
+                state.print(f" swallowing ∂{d} from {left_cut} to {right_cut} from estimated_width {best_width_estimate} of size: {len(rects)}")
+
+                # Update the bounds we're tracking to know about the split we've just made.
+                left_bounds = np.copy(bounds)
+                left_bounds[1, d] = left_cut
+
+                right_bounds = np.copy(bounds)
+                right_bounds[0, d] = right_cut
+
+                # Build the subtrees
+                left = _make_tree_internal(lefts, left_bounds, state.descend(d))
+                middle = make_tree_without_d(d, middle)
+                right = _make_tree_internal(rights, right_bounds, state.descend(d))
+                return SplitDTree(left, SplitDTree(middle, right, d, right_cut), d, left_cut)
+
         # We used to assume we could find a "best" split point that balanced the split.
         # But just going for the median seems to work well and is fast, so that's what we do.
         best_split_pos = len(split) // 2
@@ -331,12 +373,12 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     lefts = np.unique(lefts, axis = 0)
     #lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
 
-    rights = rects[rects[:, 1, d] >= split_at]
+    rights = rects[rects[:, 1, d] > split_at]
     rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
     rights = np.unique(rights, axis = 0)
     #rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
 
-    state.print(f" splitting ∂{d} at {split_at} (of {len(splits[d])} splits: {splits[d][:10]}) lefts: {len(lefts)} rights: {len(rights)}")
+    #state.print(f" splitting ∂{d} at {split_at} (of {len(splits[d])} splits: {splits[d][:10]}) lefts: {len(lefts)} rights: {len(rights)}")
 
     # Update the bounds we're tracking to know about the split we've just made.
     left_bounds = np.copy(bounds)
@@ -423,6 +465,7 @@ def _self_test():
         return found
     
     def speed_of(what, func):
+        print(func())
         assert(func() == 314) # If you change the random seed, change this.
         t = timeit.Timer(stmt=func)
         loops, time = t.autorange()
