@@ -1,0 +1,333 @@
+"""
+This file and associated classes represent a dimensional-ranged-tree, which is a name I made up.
+The idea of a d-ranged tree is you can build it from a list of N-dimensional ranges,
+and then query points for membership. It is like a k-d tree, but items can end up
+clipped on both sides of a partition. This is a time-memory trade-off in favour of
+quicker search times.
+
+Ranges can be specified in absolute or relative terms. This also makes this structure easier to query than a k-d tree,
+whilst also being 10x faster to query - the reason being, our ranges overlap a lot, so a structure that merges
+those ranges together will be faster than a k-d tree which knows nothing about the overlapped structure.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import math
+
+# TODO: Try an implementation with a BSP so we can actually merge ranges together.
+
+class DRangedTree:
+    def contains(self, point):
+        raise NotImplemented
+
+    def depth(self) -> int:
+        return 1
+    
+    def dump(self, space: str) -> None:
+        raise NotImplemented
+    
+    def size(self) -> int:
+        return 1
+    
+    @staticmethod
+    def build(items, widths) -> DRangedTree:
+        """
+        Build a DRangedTree for the items in list. Each item has the corresponding width for each dimension +/- to it.
+        If the width for a dimension is negative, it is treated as a relative fractional width.
+        So a width of 10 means the value of item +/- 10, whereas a width of -0.1 means +/- 10% of the original value.
+        """
+        items = np.unique(items, axis = 0) # Ditch duplicate points
+        # Reshape each point into a hyper-rect +- width
+        rects = []
+        for item in items:
+            lefts = []
+            rights = []
+            for d, value in enumerate(item):
+                width = widths[d]
+                if width < 0:
+                    fraction = -width
+                    width = value * fraction
+                lefts.append(value - width)
+                rights.append(value + width)
+            rects.append([lefts, rights])
+        rects = np.array(rects)
+        # Calculate initial bounds
+        dimensions = items.shape[items.ndim - 1]
+        bounds = np.transpose(np.array([[-math.inf, math.inf] for _ in range(dimensions)]))
+
+        # Build the tree
+        return _make_tree_internal(rects, bounds, TreeState(dimensions))
+
+class SingletonTree(DRangedTree):
+    def __init__(self, rects):
+        self.rects = rects
+    def contains(self, point):
+        return np.all((point >= self.rects[0]) & (point <= self.rects[1]))
+    def dump(self, space):
+        print(space, f"singleton {self.rects}")
+
+class ListTree(DRangedTree):
+    def __init__(self, rects):
+        self.rects = rects
+    def contains(self, point):
+        return np.any(np.all((point >= self.rects[:, 0]) & (point <= self.rects[:, 1]), axis=1))
+    def dump(self, space):
+        print(space, f"list ({len(self.rects)}) {self.rects[:5]}...")
+
+class EmptyTree(DRangedTree):
+    def contains(self, point):
+        return False
+    def dump(self, space):
+        print(space, "empty")
+
+class FullTree(DRangedTree):
+    def contains(self, point):
+        return True
+    def dump(self, space):
+        print(space, "full")
+
+class FulfilledTree(DRangedTree):
+    def __init__(self, subtree: DRangedTree, axis: int):
+        self.subtree = subtree
+        self.axis = axis
+    def contains(self, point):
+        return self.subtree.contains(without(point, self.axis))
+    def dump(self, space):
+        print(space, f"fulfilled axis {self.axis} ->")
+        self.subtree.dump(space + "\t")
+    def depth(self):
+        return 1 + self.subtree.depth()
+    def size(self):
+        return 1 + self.subtree.size()
+
+class SplitDTree(DRangedTree):
+    def __init__(self, left: DRangedTree, right: DRangedTree, axis: int, value: float):
+        self.left = left
+        self.right = right
+        self.axis = axis
+        self.value = value
+    def contains(self, point):
+        if point[self.axis] > self.value:
+            return self.right.contains(point)
+        else:
+            return self.left.contains(point)
+    def dump(self, space):
+        print(space, f"split axis {self.axis} at {self.value}")
+        print(space + "  <")
+        self.left.dump(space + "\t")
+        print(space + "  >")
+        self.right.dump(space + "\t")
+    def depth(self):
+        return 1 + max(self.left.depth(), self.right.depth())
+    def size(self):
+        return 1 + self.left.size() + self.right.size()
+
+class TreeState:
+    def __init__(self, dimensions_or_tree, j: int = -1, drop: bool = False):
+        if isinstance(dimensions_or_tree, TreeState):
+            existing = dimensions_or_tree
+            assert(j < existing.dimensions)
+            self.depth = existing.depth + 1
+            if drop:
+                self.dimensions = existing.dimensions - 1
+                self.descent = without(existing.descent, j)
+            else:
+                self.dimensions = existing.dimensions
+                self.descent = np.copy(existing.descent)
+                self.descent[j] += 1
+        else:
+            self.depth = 0
+            self.dimensions = dimensions_or_tree
+            self.descent = np.zeros(dimensions_or_tree)
+
+    def descend(self, j: int) -> TreeState:
+        return TreeState(self, j)
+    
+    def drop(self, j: int) -> TreeState:
+        return TreeState(self, j, drop=True)
+
+"""
+Remove the j-th column from the final dimension of items.
+"""
+def without(items, j):
+    axis = items.ndim - 1
+    indices = [k for k in range(items.shape[axis]) if k != j]
+    return np.take(items, indices, axis=axis)
+
+def _make_tree_internal(rects, bounds, state: TreeState):
+    """
+    Internal function to make a DRangeTree for the hyper-rectangles specified.
+
+    Args:
+        rects: hyper-rectangles as a numpy array with dimensions N*2*d, where d is the number of dimensions.
+        bounds: the current edges of the search area as a hyper-rectangle as a numpy array of 2*d.
+        state: an internal object for tracking state, used for debugging and developing.
+    """
+
+    if len(rects) == 0:
+        return EmptyTree()
+    if len(rects) == 1:
+        return SingletonTree(rects[0])
+    # If there are less than 30 rectangles, just run through them as a numpy list.
+    if len(rects) < 30:
+        return ListTree(rects)
+
+    dimensions = rects.shape[2]
+
+    # If all rects completely fill bounds in a dimension, then that dimension is fulfilled (no further tests needed on it).
+    for d in range(dimensions):
+        if np.all((rects[:, 0, d] <= bounds[0, d]) & (rects[:, 1, d] >= bounds[1, d])):
+            if rects.shape[2] == 1:
+                return FullTree()
+            else:
+                sub_rects = np.unique(without(rects, d), axis=0)
+                sub_bounds = without(bounds, d)
+                subtree = _make_tree_internal(sub_rects, sub_bounds, state.drop(d))
+                return FulfilledTree(subtree, d)
+
+    # Identify possible split points for each dimension. Logically, these are the edges of the hyper-rects,
+    # as it doesn't make sense to split not on an edge.
+    splits = [np.unique(values) for values in (rects[:, :, j] for j in range(dimensions))]
+    
+    # Find the dimension with the most variety with respect to its width.
+    best_d = 0
+    best_classes = 0
+    for d in range(dimensions):
+        min_split = np.min(splits[d])
+        max_split = np.max(splits[d])
+        width_estimate = np.median(rects[:, 1, d] - rects[:, 0, d])
+        r = max_split - min_split
+        max_classes = r / width_estimate
+        if max_classes > best_classes:
+            best_d = d
+            best_classes = max_classes
+    if best_classes < 1.3: # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
+        # Wherever we split we're hardly going to achieve much, so fall out to a list
+        return ListTree(rects)
+
+    d = best_d
+    split = splits[d]
+
+    # We want to split this dimension into two spaces. Given the outermost points don't
+    # actually reduce the number of nodes (because everything is on one side of the outermost point)
+    # if there are less than three split points (i.e. no inner split points) there is no point
+    # splitting, so fall back to a list.
+    if len(split) < 3:
+        print(f"WARNING: Can't split as {split} has <3 members, falling back to list of {len(rects)} members")
+        return ListTree(rects)
+    
+    # We used to assume we could find a "best" split point that balanced the split.
+    # But just going for the median seems to work well and is fast, so that's what we do.
+    best_split_pos = len(split) // 2
+
+    # Record the point we split at
+    split_at = split[best_split_pos]
+
+    # Split and clip the rectangles at the split point
+    # Rectangles do not include their end points in either direction.
+    # We clip to make split point calculations accurate later on.
+    lefts = rects[rects[:, 0, d] < split_at]
+    lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
+    lefts = np.unique(lefts, axis = 0)
+    lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
+
+    rights = rects[rects[:, 1, d] > split_at]
+    rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
+    rights = np.unique(rights, axis = 0)
+    rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
+
+    # Update the bounds we're tracking to know about the split we've just made.
+    left_bounds = np.copy(bounds)
+    left_bounds[1, d] = split_at
+
+    right_bounds = np.copy(bounds)
+    right_bounds[0, d] = split_at
+
+    # Build the subtrees
+    left = _make_tree_internal(lefts, left_bounds, state.descend(d))
+    right = _make_tree_internal(rights, right_bounds, state.descend(d))
+    return SplitDTree(left, right, d, split_at)
+
+def _self_test():
+    import pandas as pd
+    from methods.common.luc import luc_matching_columns
+    from collections import defaultdict
+    from time import time
+    import timeit
+
+    luc0, luc5, luc10 = luc_matching_columns(2012)
+
+    source_pixels = pd.read_parquet("./test/data/1201-k.parquet")
+    # Split source_pixels into classes
+    source_classes = defaultdict(list)
+    elevation_range = [math.inf, -math.inf]
+    slope_range = [math.inf, -math.inf]
+    access_range = [math.inf, -math.inf]
+    elevation_width = 200
+    slope_width = 2.5
+    access_width = 10
+    for _, row in source_pixels.iterrows():
+        key = (int(row.ecoregion) << 16) | (int(row[luc0]) << 10) | (int(row[luc5]) << 5) | (int(row[luc10]))
+        if key != 1967137: continue
+        source_classes[key].append(row)
+        if row.elevation - elevation_width < elevation_range[0]: elevation_range[0] = row.elevation - elevation_width
+        if row.elevation + elevation_width > elevation_range[1]: elevation_range[1] = row.elevation + elevation_width
+
+        if row.slope - slope_width < slope_range[0]: slope_range[0] = row.slope - slope_width
+        if row.slope + slope_width > slope_range[1]: slope_range[1] = row.slope + slope_width
+
+        if row.access - access_width < access_range[0]: access_range[0] = row.access - access_width
+        if row.access + access_width > access_range[1]: access_range[1] = row.access + access_width
+
+    source_nps = dict()
+    for key, values in source_classes.items():
+        source_nps[key] = np.array([(row.elevation, row.slope, row.access) for row in values])
+    
+
+    # Invent an array of values
+    length = 1000
+    np.random.seed(42)
+    elevation = np.random.uniform(elevation_range[0] - elevation_width, elevation_range[1] + elevation_width, (length))
+    slopes = np.random.uniform(slope_range[0] - slope_width, slope_range[1] + slope_width, (length))
+    access = np.random.uniform(access_range[0] - access_width, access_range[1] + access_width, (length))
+
+    sources = source_nps[1967137]
+
+    def do_np_matching():
+        found = 0
+        for i in range(length):
+            pos = np.where(elevation[i] + 200 < sources[:, 0], False,
+                            np.where(elevation[i] - 200 > sources[:, 0], False,
+                            np.where(slopes[i] + 2.5 < sources[:, 1], False,
+                            np.where(slopes[i] - 2.5 > sources[:, 1], False,
+                            np.where(access[i] + 10 < sources[:, 2], False,
+                            np.where(access[i] - 10 > sources[:, 2], False,
+                                        True
+                        ))))))
+            found += 1 if np.any(pos) else 0
+        return found
+    
+    print("making tree... (this will take a few seconds)")
+    start = time()
+    tree = DRangedTree.build(sources, np.array([elevation_width, slope_width, access_width]))
+    print("build time", time() - start)
+    print("tree depth", tree.depth())
+    print("tree size", tree.size())
+
+    def do_drange_tree_matching():
+        found = 0
+        for i in range(length):
+            found += 1 if tree.contains(np.array([elevation[i], slopes[i], access[i]])) else 0
+        return found
+    
+    def speed_of(what, func):
+        assert(func() == 314) # If you change the random seed, change this.
+        t = timeit.Timer(stmt=func)
+        loops, time = t.autorange()
+        print(what, ": ", time / loops, "per call")
+    speed_of("NP matching", do_np_matching)
+    speed_of("Tree matching", do_drange_tree_matching)
+
+if __name__ == "__main__":
+    _self_test()
