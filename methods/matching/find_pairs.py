@@ -30,14 +30,14 @@ def find_match_iteration(
     k_subset = k_set.sample(
         frac=0.1,
         random_state=random.randint(0, 1000000),
-    )
+    ).reset_index()
 
     # Methodology 6.5.5: S should be 10 times the size of K
     s_set = pd.read_parquet(s_parquet_filename)
     s_subset = s_set.sample(
         n=k_set.shape[0] * 10,
         random_state=random.randint(0, 1000000),
-    )
+    ).reset_index()
 
     # Notes:
     # 1. in the current methodology version (1.1), it's possible for
@@ -57,7 +57,7 @@ def find_match_iteration(
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     invconv = np.linalg.inv(covarience)
 
-    m_distances = np.full((len(k_set), len(s_set)), 10000000.0)
+    m_distances = np.full((len(k_subset), len(s_subset)), 10000000.0)
 
     # Sanity check: these are the S indices that were actually matched on
     s_used = []
@@ -106,8 +106,10 @@ def find_match_iteration(
 
         # min_distance = 10000000000.0
         # min_index = None
-        for just_idx, s_row in enumerate(just_cols): # pylint: disable=C0200
-            s_idx = just_cols_idx[just_idx]
+        for index in range(len(just_cols)): # pylint: disable=C0200
+            print(f"Running {index}/{len(just_cols)}")
+            s_row = just_cols[idx]
+            s_idx = just_cols_idx[index]
             if s_idx not in s_used:
                 s_used.append(s_idx)
             distance = mahalanobis(k_soft, s_row, invconv)
@@ -126,7 +128,7 @@ def find_match_iteration(
                 raise ValueError("Adding a match that was never a match!")
             if s_idx not in s_already_matched:
                 s_already_matched.append(s_idx)
-                match = s_set[s_idx]
+                match = s_subset[s_idx]
                 results.append(
                     [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
                     [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
