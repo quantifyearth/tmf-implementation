@@ -7,6 +7,7 @@ import os
 import sys
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
+from typing import Tuple
 
 from osgeo import gdal  # type: ignore
 import numpy as np
@@ -32,19 +33,13 @@ def key_builder(start_year: int):
         return  build_key(row.ecoregion, row.country, row[luc0], row[luc5], row[luc10])
     return _build_key
 
-from pprint import pprint
-
-def debug(msg, item):
-    print('\n' + msg + ':')
-    pprint(item)
-    return item
-
 def load_k(
     k_filename: str,
     start_year: int,
     worker_count: int,
     ktree_queue: Queue,
 ) -> None:
+
     print("Reading k...")
     source_pixels = pd.read_parquet(k_filename)
     
@@ -88,6 +83,18 @@ def load_k(
     for _ in range(worker_count):
         ktree_queue.put(source_trees)
 
+def exact_pixel_for_lat_lng(layer, lat: float, lng: float) -> Tuple[int,int]:
+    """Get pixel for geo coords. This is relative to the set view window.
+    Result is rounded down to nearest pixel."""
+    if "WGS 84" not in layer.projection:
+        raise NotImplementedError("Not yet supported for other projections")
+    pixel_scale = layer.pixel_scale
+    if pixel_scale is None:
+        raise ValueError("Layer has no pixel scale")
+    return (
+        (lng - layer.area.left) / pixel_scale.xstep,
+        (lat - layer.area.top) / pixel_scale.ystep,
+    )
 
 def worker(
     worker_index: int,
@@ -160,20 +167,30 @@ def worker(
         cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*tl)
         br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
         cpc_br = matching_collection.cpcs[0].pixel_for_latlng(*br)
-        cpc_width = cpc_br[0] - cpc_tl[0]
-        cpc_height = cpc_br[1] - cpc_tl[1]
+        cpc_width = cpc_br[0] - cpc_tl[0] + 2 # Get a few spare pixels
+        cpc_height = cpc_br[1] - cpc_tl[1] + 2
         cpcs = [
             cpc.read_array(cpc_tl[0], cpc_tl[1], cpc_width, cpc_height)
             for cpc in matching_collection.cpcs
         ]
-        cpc_x_scale = cpc_width / xwidth
-        cpc_y_scale = cpc_height / ywidth
+
+        exact_cpc_tl = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *tl)
+        exact_cpc_br = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *br)
+        cpc_width = exact_cpc_br[0] - exact_cpc_tl[0]
+        cpc_height = exact_cpc_br[1] - exact_cpc_tl[1]
+
+        cpc_scale = (cpc_width / xwidth, cpc_height / ywidth)
+        cpc_offset = (exact_cpc_tl[0] - cpc_tl[0] + 0.5, exact_cpc_tl[1] - cpc_tl[1] + 0.5)
+        print(f"scale:{cpc_scale} offset:{cpc_offset}")
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
         for y in range(ywidth):
             if y%(ywidth // 10) == 0 or (ywidth % 10 == 0 and y == ywidth - 1):
-                print(f"Worker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete")
+                print(f"\nWorker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete", end="", flush=True)
+            else:
+                if y%10 == 0:
+                    print(".", end="", flush=True)
             for x in range(xwidth):
                 if boundary[y, x] == 0:
                     continue
@@ -184,8 +201,8 @@ def worker(
                 luc10 = lucs[2][y, x]
                 key = build_key(ecoregion, country, luc0, luc5, luc10)
                 if key in ktrees:
-                    cpcx = math.floor(x * cpc_x_scale)
-                    cpcy = math.floor(y * cpc_y_scale)
+                    cpcx = math.floor(x * cpc_scale[0] + cpc_offset[0])
+                    cpcy = math.floor(y * cpc_scale[1] + cpc_offset[1])
                     points[y, x] = 3 if ktrees[key].contains(np.array([
                         elevations[y, x],
                         slopes[y, x],
