@@ -58,7 +58,7 @@ class DRangedTree:
 
         # Build the tree
         state = TreeState(dimensions)
-        state.logging = True
+        state.logging = False
         return _make_tree_internal(rects, bounds, state)
 
 class SingletonTree(DRangedTree):
@@ -205,7 +205,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         return ListTree(rects)
     if state.depth == 30:
         print(f"Limiting depth to {state.depth} with {len(rects)} rects remaining")
-        exit()
+        #exit()
         return ListTree(rects)
 
     dimensions = rects.shape[2]
@@ -287,14 +287,14 @@ def _make_tree_internal(rects, bounds, state: TreeState):
             left_count = np.sum(lefts[d] <= split_at)
             right_count = np.sum(rights[d] >= split_at)
             target = len(rects) * 1
-            total_target = len(rects) * 2
+            total_target = len(rects) * 1.99
             # FIXME: limitied this to less than 2 breaks splitting which consumes dimensions
             # by putting a split in the middle of a overlap area, which can then be consumed
             # in the following layer on either side.
             # We need a heuristic between layers to consume the overlap, or to detect and generate
             # a 3-tree where there is an overlap.
-            #if left_count > target or right_count > target or left_count + right_count > total_target:
-            #    max_classes = 0 # Don't split here as the two side trees are too large or unbalanced
+            if left_count > target or right_count > target or left_count + right_count > total_target:
+                max_classes = 0 # Don't split here as the two side trees are too large or unbalanced
         else:
             max_classes = 0 # Not a good dimension to split on
             width_estimate = 0
