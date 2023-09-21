@@ -11,7 +11,8 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 from methods.common.luc import luc_matching_columns
 
-REPEAT_MATCH_FINDING = 100
+REPEAT_MATCH_FINDING = 2
+DEFAULT_DISTANCE = 10000000.0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -57,8 +58,12 @@ def find_match_iteration(
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     invconv = np.linalg.inv(covarience)
 
-    m_distances = np.full((len(k_subset), len(s_subset)), 10000000.0)
+    m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
+
+    idx = 0
     for k_idx, k_row in k_subset.iterrows():
+        idx += 1
+        print(f"Running {idx}/{len(k_subset)}")
         # Methodology 6.5.7: find the matches.
         # There's two stages to matching - first a hard match
         # based on:
@@ -106,41 +111,54 @@ def find_match_iteration(
     # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
     # for each k and s without replacement. This is a naive implementation of finding the
     # optimal solution.
-    s_already_matched = []
-    min_dists = {}
+    min_dists = []
+    print("Creating min distances...")
     for k_idx, k_row in k_subset.iterrows():
         dists = m_distances[k_idx]
-        dists_idx = dists.argsort()
-        min_dists[k_idx] = dists_idx
+        for s_idx, d in enumerate(dists):
+            if d < DEFAULT_DISTANCE:
+                min_dists.append([k_idx, s_idx, d])
     
-    k_already_added = []
-    for k_idx, k_row in k_subset.iterrows():
-        if k_idx in k_already_added:
+    # Sort by the distance
+    min_dists_arr = np.array(min_dists)
+    print("Sorting distances...")
+    sorted_dists = min_dists_arr[min_dists_arr[:, 2].argsort()]
+    
+    k_already_added = [ False for _ in k_subset.iterrows() ]
+    k_added = 0
+    k_total = len(k_subset)
+    s_already_added = [ False for _ in s_subset.iterrows() ]
+    dists_len = len(sorted_dists)
+    for g, (k_idx, s_idx, dist) in enumerate(sorted_dists):
+        # We only add k and s once
+        k_idx_int = int(k_idx)
+        s_idx_int = int(s_idx)
+        print(f"Collected {k_added}/{len(k_subset)} ({dists_len - g} left)")
+        if k_already_added[k_idx_int] or s_already_added[s_idx_int]:
             continue
-        # For every k, we now check for its minimal s that is minimal across all other k's
-        # that also include that s.
-        for s_idx in min_dists[k_idx]:
-            if s_idx not in s_already_matched:
-                # Now check all other ks
-                min_idx = k_idx
-                min_dist = m_distances[k_idx][s_idx]
-                for other_k_idx, _ in k_subset.iterrows():
-                    if other_k_idx not in k_already_added:
-                        other_dist = m_distances[other_k_idx][s_idx]
-                        if other_dist < min_dist:
-                            min_dist = other_dist
-                            min_idx = other_k_idx
-                s_already_matched.append(s_idx)
-                k_already_added.append(min_idx)
-                match = s_subset.iloc[s_idx]
-                actual_k_row = k_subset.iloc[min_idx]
-                results.append(
-                    [actual_k_row.lat, actual_k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
-                    [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
-                )
-                # Our current k was indeed the minimal for this s
-                if min_idx == k_idx:
-                    break
+
+        k_row = k_subset.iloc[k_idx_int]
+        match = s_subset.iloc[s_idx_int]
+        k_already_added[k_idx_int] = True
+        s_already_added[s_idx_int] = True
+        k_added += 1
+
+        results.append(
+            [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
+            [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
+        )
+
+        # If we've added all the points, then we're done
+        if k_added == k_total:
+            break
+
+    # There's a chance that didn't put every k into our results. This is 
+    # because the algorithm is greedy. So no we add those not matches to
+    # matchless
+    if k_added != k_total:
+        for k_idx, k_row in k_subset.iterrows():
+            if k_idx not in k_already_added:
+                matchless.append(k_row)
     
     columns = ['k_lat', 'k_lng'] + \
         [f'k_{x}' for x in luc_columns + distance_columns] + \
@@ -177,7 +195,7 @@ def find_pairs(
                 start_year,
                 output_folder
             ),
-            iteration_seeds
+            iteration_seeds[1:]
         )
 
 def main():
