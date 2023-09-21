@@ -58,7 +58,6 @@ def find_match_iteration(
     invconv = np.linalg.inv(covarience)
 
     m_distances = np.full((len(k_subset), len(s_subset)), 10000000.0)
-
     for k_idx, k_row in k_subset.iterrows():
         # Methodology 6.5.7: find the matches.
         # There's two stages to matching - first a hard match
@@ -105,22 +104,44 @@ def find_match_iteration(
             m_distances[k_idx][s_idx] = distance
 
     # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
-    # for each k and s without replacement
+    # for each k and s without replacement. This is a naive implementation of finding the
+    # optimal solution.
     s_already_matched = []
+    min_dists = {}
     for k_idx, k_row in k_subset.iterrows():
         dists = m_distances[k_idx]
-        for s_idx in reversed(dists.argsort()):
-            # if s_idx not in s_used:
-            #     raise ValueError("Adding a match that was never a match!")
+        dists_idx = dists.argsort()
+        min_dists[k_idx] = dists_idx
+    
+    k_already_added = []
+    for k_idx, k_row in k_subset.iterrows():
+        if k_idx in k_already_added:
+            continue
+        # For every k, we now check for its minimal s that is minimal across all other k's
+        # that also include that s.
+        for s_idx in min_dists[k_idx]:
             if s_idx not in s_already_matched:
+                # Now check all other ks
+                min_idx = k_idx
+                min_dist = m_distances[k_idx][s_idx]
+                for other_k_idx, _ in k_subset.iterrows():
+                    if other_k_idx not in k_already_added:
+                        other_dist = m_distances[other_k_idx][s_idx]
+                        if other_dist < min_dist:
+                            min_dist = other_dist
+                            min_idx = other_k_idx
                 s_already_matched.append(s_idx)
+                k_already_added.append(min_idx)
                 match = s_subset.iloc[s_idx]
+                actual_k_row = k_subset.iloc[min_idx]
                 results.append(
-                    [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
+                    [actual_k_row.lat, actual_k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
                     [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
                 )
-                break
-
+                # Our current k was indeed the minimal for this s
+                if min_idx == k_idx:
+                    break
+    
     columns = ['k_lat', 'k_lng'] + \
         [f'k_{x}' for x in luc_columns + distance_columns] + \
         ['s_lat', 's_lng'] + \
