@@ -1,7 +1,9 @@
 """
 This file and associated classes represent a d-range-tree, which is a name I made up.
 The idea of a d-range tree is you can build it from a list of N-dimensional ranges,
-and then query points for membership.
+and then query points for membership. It is like a k-d tree, but items can end up
+clipped on both sides of a partition. This is a time-memory trade-off in favour of
+quicker search times.
 
 Currently all the ranges are the same size but you could easily build it with more varied ranges.
 Given all ranges are the same size, you might be wondering "why not just do a range query on a k-d tree?"
@@ -188,7 +190,7 @@ def _make_tree_internal(rects, bounds, widths, state: TreeState):
             best_d = d
             best_classes = max_classes
 
-    if best_classes < 0.9: # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
+    if best_classes < 0.6: # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
         # Wherever we split we're hardly going to achieve much, so fall out to a list
         return ListTree(rects)
 
