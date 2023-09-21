@@ -11,7 +11,7 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 from methods.common.luc import luc_matching_columns
 
-REPEAT_MATCH_FINDING = 2
+REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -190,7 +190,7 @@ def find_pairs(
                 start_year,
                 output_folder
             ),
-            iteration_seeds[1:]
+            iteration_seeds
         )
 
 def main():
