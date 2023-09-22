@@ -146,6 +146,7 @@ def worker(
         coords = coordinate_queue.get()
         if coords == None:
             break
+        print(f"Worker {worker_index} starting coords {coords}...")
         y, x = coords
         ymin = y * ystride
         xmin = x * xstride
@@ -160,9 +161,7 @@ def worker(
         accesses = matching_collection.access.read_array(xmin, ymin, xwidth, ywidth)
         lucs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.lucs]
 
-        #cpcs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.cpcs]
-
-        # FIXME: This needs fixing to handle boundaries and scale correctly
+        # FIXME: This still doesn't match perfectly with Patrick's scaled CPCs.
         tl = matching_collection.boundary.latlng_for_pixel(xmin, ymin)
         cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*tl)
         br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
@@ -181,16 +180,12 @@ def worker(
 
         cpc_scale = (cpc_width / xwidth, cpc_height / ywidth)
         cpc_offset = (exact_cpc_tl[0] - cpc_tl[0] + 0.5, exact_cpc_tl[1] - cpc_tl[1] + 0.5)
-        print(f"scale:{cpc_scale} offset:{cpc_offset}")
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
         for y in range(ywidth):
             if y%(ywidth // 10) == 0 or (ywidth % 10 == 0 and y == ywidth - 1):
-                print(f"\nWorker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete", end="", flush=True)
-            else:
-                if y%10 == 0:
-                    print(".", end="", flush=True)
+                print(f"    worker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete", flush=True)
             for x in range(xwidth):
                 if boundary[y, x] == 0:
                     continue
@@ -203,7 +198,7 @@ def worker(
                 if key in ktrees:
                     cpcx = math.floor(x * cpc_scale[0] + cpc_offset[0])
                     cpcy = math.floor(y * cpc_scale[1] + cpc_offset[1])
-                    points[y, x] = 3 if ktrees[key].contains(np.array([
+                    points[y, x] = 1 if ktrees[key].contains(np.array([
                         elevations[y, x],
                         slopes[y, x],
                         accesses[y, x],
@@ -213,16 +208,13 @@ def worker(
                         cpcs[3][cpcy, cpcx],
                         cpcs[4][cpcy, cpcx],
                         cpcs[5][cpcy, cpcx],
-                    ])) else 2
-                else:
-                    points[y, x] = 1
-        print(np.sum(points))
+                    ])) else 0
         # Write points to output
         matching_pixels._dataset.GetRasterBand(1).WriteArray(points, xmin, ymin)
+        print(f"Worker {worker_index} completed coords {coords}.")
 
     # Ensure we flush pixels to disk now we're finished
     del matching_pixels._dataset
-
 
 
 def find_potential_matches(
@@ -249,10 +241,9 @@ def find_potential_matches(
         worker_count = processes_count
 
         # Fill the co-ordinate queue
-        #for y in range(10):
-        #    for x in range(10):
-        #        coordinate_queue.put([y, x])
-        coordinate_queue.put([3, 3])
+        for y in range(10):
+            for x in range(10):
+                coordinate_queue.put([y, x])
         for _ in range(worker_count):
             coordinate_queue.put(None)
 
