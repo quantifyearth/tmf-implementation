@@ -96,6 +96,8 @@ def exact_pixel_for_lat_lng(layer, lat: float, lng: float) -> Tuple[int,int]:
         (lat - layer.area.top) / pixel_scale.ystep,
     )
 
+DIVISIONS = 40
+
 def worker(
     worker_index: int,
     matching_zone_filename: str,
@@ -138,8 +140,8 @@ def worker(
     matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
     xsize = matching_collection.boundary.window.xsize
     ysize = matching_collection.boundary.window.ysize
-    xstride = math.ceil(xsize / 10)
-    ystride = math.ceil(ysize / 10)
+    xstride = math.ceil(xsize / DIVISIONS)
+    ystride = math.ceil(ysize / DIVISIONS)
 
     # Iterate our assigned pixels
     while True:
@@ -184,8 +186,6 @@ def worker(
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
         for y in range(ywidth):
-            if y%(ywidth // 10) == 0 or (ywidth % 10 == 0 and y == ywidth - 1):
-                print(f"    worker {worker_index} processing tile {coords}, {math.ceil(100 * y/ywidth)}% complete", flush=True)
             for x in range(xwidth):
                 if boundary[y, x] == 0:
                     continue
@@ -212,6 +212,7 @@ def worker(
         # Write points to output
         matching_pixels._dataset.GetRasterBand(1).WriteArray(points, xmin, ymin)
         print(f"Worker {worker_index} completed coords {coords}.")
+    print(f"Worker {worker_index} finished.")
 
     # Ensure we flush pixels to disk now we're finished
     del matching_pixels._dataset
@@ -241,8 +242,8 @@ def find_potential_matches(
         worker_count = processes_count
 
         # Fill the co-ordinate queue
-        for y in range(10):
-            for x in range(10):
+        for y in range(DIVISIONS):
+            for x in range(DIVISIONS):
                 coordinate_queue.put([y, x])
         for _ in range(worker_count):
             coordinate_queue.put(None)
