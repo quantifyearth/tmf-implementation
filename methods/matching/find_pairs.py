@@ -16,6 +16,14 @@ DEFAULT_DISTANCE = 10000000.0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+# optimised batch implementation of mahalanobis distance that returns a distance per row
+def batch_mahalanobis(rows, vector, invcov):
+    # calculate the difference between the vector and each row (broadcasted)
+    diff = rows - vector
+    # calculate the distance for each row in one batch
+    dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
+    return dists
+
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -26,6 +34,7 @@ def find_match_iteration(
     logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
     random.seed(idx_and_seed[1])
 
+    logging.info(f"Loading K from {k_parquet_filename}")
     # Methodology 6.5.7: For a 10% sample of K
     k_set = pd.read_parquet(k_parquet_filename)
     k_subset = k_set.sample(
@@ -33,6 +42,7 @@ def find_match_iteration(
         random_state=random.randint(0, 1000000),
     ).reset_index()
 
+    logging.info(f"Loading S from {s_parquet_filename}")
     # Methodology 6.5.5: S should be 10 times the size of K
     s_set = pd.read_parquet(s_parquet_filename)
     s_subset = s_set.sample(
@@ -55,7 +65,9 @@ def find_match_iteration(
 
     s_subset_for_cov = s_subset[['elevation', 'slope', 'access', \
         'cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']]
+    logging.info("Calculating covariance...")
     covarience = np.cov(s_subset_for_cov, rowvar=False)
+    logging.info("Calculating inverse covariance...")
     invconv = np.linalg.inv(covarience)
 
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
@@ -67,6 +79,9 @@ def find_match_iteration(
         #  * country
         #  * historic LUC
         #  * ecoregion
+
+        if k_idx % 100 == 0 or k_idx == len(k_subset) - 1:
+            logging.info(f"Calculating distances... {k_idx} of {len(k_subset)}")
 
         # Country is implicit in the methodology, so we don't filter
         # for it here
@@ -99,62 +114,85 @@ def find_match_iteration(
         just_cols_idx = filtered_s.index.to_numpy()
         just_cols = filtered_s[distance_columns].to_numpy()
 
-        for index in range(len(just_cols)): # pylint: disable=C0200
-            s_row = just_cols[index]
-            s_idx = just_cols_idx[index]
-            distance = mahalanobis(k_soft, s_row, invconv)
-            m_distances[k_idx][s_idx] = distance
+        batch_distances = batch_mahalanobis(just_cols, k_soft, invconv)
+        m_distances[k_idx][just_cols_idx] = batch_distances
 
     # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
     # for each k and s without replacement. This is a naive implementation of finding the
     # optimal solution.
-    min_dists = []
-    print("Creating min distances...")
-    for k_idx, k_row in k_subset.iterrows():
-        dists = m_distances[k_idx]
-        for s_idx, d in enumerate(dists):
-            if d < DEFAULT_DISTANCE:
-                min_dists.append([k_idx, s_idx, d])
-    
-    # Sort by the distance
-    min_dists_arr = np.array(min_dists)
-    print("Sorting distances...")
-    sorted_dists = min_dists_arr[min_dists_arr[:, 2].argsort()]
-    
-    k_already_added = [ False for _ in k_subset.iterrows() ]
+    logging.info("Creating fast min distances...")
+
+    # Create a mask for all entries in m_distances below DEFAULT_DISTANCE
+    # This is a boolean array of the same shape as m_distances
+    m_distances_mask = m_distances < DEFAULT_DISTANCE
+
+    # Create an array of zeros with three columns and the same number of rows as m_distances_mask has True values
+    # This will be used to store the k_idx, s_idx and distance for each match
+    num_matches = m_distances_mask.sum()
+    min_dists_idxs = np.zeros((num_matches, 2), dtype=np.int32)
+    min_dists_d = np.zeros((num_matches, 1), dtype=np.float32)
+
+    # Use the mask to fill min_dists with the k_idx, s_idx and distance for each match
+    min_dists_idxs[:, 0] = np.where(m_distances_mask)[0]
+    min_dists_idxs[:, 1] = np.where(m_distances_mask)[1]
+    min_dists_d[:, 0] = m_distances[m_distances_mask]
+
+    logging.info(f"Created fast min distances...")
+
+    logging.info("Sorting fast min distances....")
+
+    d_sorted = min_dists_d[:, 0].argsort()
+    min_dists_idxs = min_dists_idxs[d_sorted]
+    min_dists_d = min_dists_d[d_sorted]
+
+    logging.info("Sorted fast min distances....")
+
+    logging.info("Adding matches...")
+    # mask for min_dists_* that we've already added
+    already_added_mask = np.zeros((min_dists_idxs.shape[0],), dtype=np.bool_)
+
     k_added = 0
     k_total = len(k_subset)
-    s_already_added = [ False for _ in s_subset.iterrows() ]
-    for g, (k_idx, s_idx, dist) in enumerate(sorted_dists):
-        # We only add k and s once
-        k_idx_int = int(k_idx)
-        s_idx_int = int(s_idx)
-        if k_already_added[k_idx_int] or s_already_added[s_idx_int]:
-            continue
 
-        k_row = k_subset.iloc[k_idx_int]
-        match = s_subset.iloc[s_idx_int]
-        k_already_added[k_idx_int] = True
-        s_already_added[s_idx_int] = True
-        k_added += 1
+    k_not_added = []
+
+    while k_added < k_total:
+        logging.info(f"Adding match {k_added} of {k_total}")
+
+        available_idxs = np.where(~already_added_mask)[0]
+
+        if len(available_idxs) == 0:
+            k_not_added.append(k_idx)
+            break
+
+        logging.info(f"Available idxs {len(available_idxs)}")
+
+        k_idx = available_idxs[0]
+        s_idx = available_idxs[1]
+
+        k_row = k_subset.iloc[k_idx]
+        match = s_subset.iloc[s_idx]
 
         results.append(
             [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
             [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
         )
 
-        # If we've added all the points, then we're done
-        if k_added == k_total:
-            break
+        logging.info(f"Computing mask for {k_idx} {s_idx}")
 
-    # There's a chance that didn't put every k into our results. This is 
+        already_added_mask = np.logical_or(already_added_mask, np.logical_or(min_dists_idxs[:,0] == k_idx, min_dists_idxs[:,1] == s_idx))
+
+        k_added += 1
+
+    logging.info("Finished adding matches...")
+
+    # There's a chance that didn't put every k into our results. This is
     # because the algorithm is greedy. So no we add those not matches to
     # matchless
     if k_added != k_total:
-        for k_idx, k_row in k_subset.iterrows():
-            if k_idx not in k_already_added:
-                matchless.append(k_row)
-    
+        for k_idx in k_not_added:
+            matchless.append(k_row)
+
     columns = ['k_lat', 'k_lng'] + \
         [f'k_{x}' for x in luc_columns + distance_columns] + \
         ['s_lat', 's_lng'] + \
@@ -179,7 +217,7 @@ def find_pairs(
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
-    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
+    iteration_seeds = [(0,0)] # [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
 
     with Pool(processes=processes_count) as pool:
         pool.map(
