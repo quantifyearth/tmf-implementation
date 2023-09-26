@@ -196,8 +196,8 @@ def worker(
                 luc10 = lucs[2][y, x]
                 key = build_key(ecoregion, country, luc0, luc5, luc10)
                 if key in ktrees:
-                    cpcx = math.floor(x * cpc_scale[0] + cpc_offset[0])
-                    cpcy = math.floor(y * cpc_scale[1] + cpc_offset[1])
+                    cpcx = math.floor((x + 4) * cpc_scale[0] + cpc_offset[0]) # Alignment WHY?
+                    cpcy = math.floor((y - 6) * cpc_scale[1] + cpc_offset[1]) # WHY WHY WHY
                     points[y, x] = 1 if ktrees[key].contains(np.array([
                         elevations[y, x],
                         slopes[y, x],
