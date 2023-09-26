@@ -16,14 +16,6 @@ DEFAULT_DISTANCE = 10000000.0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-# optimised batch implementation of mahalanobis distance that returns a distance per row
-def batch_mahalanobis(rows, vector, invcov):
-    # calculate the difference between the vector and each row (broadcasted)
-    diff = rows - vector
-    # calculate the distance for each row in one batch
-    dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
-    return dists
-
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -159,7 +151,7 @@ def find_match_iteration(
     while k_added < k_total:
         logging.info(f"Adding match {k_added} of {k_total}")
 
-        available_idxs = np.where(~already_added_mask)[0]
+        available_idxs = min_dists_idxs[~already_added_mask][0]
 
         if len(available_idxs) == 0:
             k_not_added.append(k_idx)
@@ -204,6 +196,13 @@ def find_match_iteration(
     matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
     matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
 
+# optimised batch implementation of mahalanobis distance that returns a distance per row
+def batch_mahalanobis(rows, vector, invcov):
+    # calculate the difference between the vector and each row (broadcasted)
+    diff = rows - vector
+    # calculate the distance for each row in one batch
+    dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
+    return dists
 
 def find_pairs(
     k_parquet_filename: str,
