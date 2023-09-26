@@ -4,7 +4,7 @@ import random
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-
+from numba import jit, float32, int32  # type: ignore
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import mahalanobis  # type: ignore
@@ -27,6 +27,7 @@ def find_match_iteration(
     random.seed(idx_and_seed[1])
 
     logging.info(f"Loading K from {k_parquet_filename}")
+
     # Methodology 6.5.7: For a 10% sample of K
     k_set = pd.read_parquet(k_parquet_filename)
     k_subset = k_set.sample(
@@ -112,7 +113,7 @@ def find_match_iteration(
     # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
     # for each k and s without replacement. This is a naive implementation of finding the
     # optimal solution.
-    logging.info("Creating fast min distances...")
+    logging.info("Creating min distances...")
 
     # Create a mask for all entries in m_distances below DEFAULT_DISTANCE
     # This is a boolean array of the same shape as m_distances
@@ -129,39 +130,27 @@ def find_match_iteration(
     min_dists_idxs[:, 1] = np.where(m_distances_mask)[1]
     min_dists_d[:, 0] = m_distances[m_distances_mask]
 
-    logging.info(f"Created fast min distances...")
+    logging.info(f"Created min distances...")
 
-    logging.info("Sorting fast min distances....")
+    logging.info("Sorting min distances....")
 
     d_sorted = min_dists_d[:, 0].argsort()
     min_dists_idxs = min_dists_idxs[d_sorted]
     min_dists_d = min_dists_d[d_sorted]
 
-    logging.info("Sorted fast min distances....")
+    logging.info("Sorted min distances....")
 
     logging.info("Adding matches...")
-    # mask for min_dists_* that we've already added
-    already_added_mask = np.zeros((min_dists_idxs.shape[0],), dtype=np.bool_)
 
-    k_added = 0
     k_total = len(k_subset)
+    s_total = len(s_subset)
 
-    k_not_added = []
+    add_results, k_added = add_matches(k_total, s_total, min_dists_idxs, min_dists_d)
 
-    while k_added < k_total:
-        logging.info(f"Adding match {k_added} of {k_total}")
+    logging.info(f"Got {len(add_results)} results, assembling..")
 
-        available_idxs = min_dists_idxs[~already_added_mask][0]
-
-        if len(available_idxs) == 0:
-            k_not_added.append(k_idx)
-            break
-
-        logging.info(f"Available idxs {len(available_idxs)}")
-
-        k_idx = available_idxs[0]
-        s_idx = available_idxs[1]
-
+    for result in add_results:
+        (k_idx, s_idx) = result
         k_row = k_subset.iloc[k_idx]
         match = s_subset.iloc[s_idx]
 
@@ -170,19 +159,17 @@ def find_match_iteration(
             [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
         )
 
-        logging.info(f"Computing mask for {k_idx} {s_idx}")
-
-        already_added_mask = np.logical_or(already_added_mask, np.logical_or(min_dists_idxs[:,0] == k_idx, min_dists_idxs[:,1] == s_idx))
-
-        k_added += 1
-
     logging.info("Finished adding matches...")
 
     # There's a chance that didn't put every k into our results. This is
     # because the algorithm is greedy. So no we add those not matches to
     # matchless
-    if k_added != k_total:
-        for k_idx in k_not_added:
+    if len(k_added) != k_total:
+        all_k = np.unique(min_dists_idxs[:,0])
+        # matchless is all_k minus k_added
+        matchless_k = np.setdiff1d(all_k, k_added)
+        for k_idx in matchless_k:
+            k_row = k_subset.iloc[k_idx]
             matchless.append(k_row)
 
     columns = ['k_lat', 'k_lng'] + \
@@ -204,6 +191,31 @@ def batch_mahalanobis(rows, vector, invcov):
     dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
     return dists
 
+@jit("(int64, int64, int32[:,:], float32[:,:])", nopython=True, fastmath=True, error_model='numpy')
+def add_matches(k_total, s_total, min_dists_idxs, min_dists_d):
+    k_added = []
+    results = []
+
+    k_already_added = np.zeros((k_total,), dtype=np.bool_)
+    s_already_added = np.zeros((s_total,), dtype=np.bool_)
+
+    for r in range(min_dists_idxs.shape[0]):
+        row = min_dists_idxs[r]
+
+        k_idx = row[0]
+        s_idx = row[1]
+
+        if k_already_added[k_idx] or s_already_added[s_idx]:
+            continue
+
+        results.append((k_idx, s_idx))
+        k_added.append(k_idx)
+
+        k_already_added[k_idx] = True
+        s_already_added[s_idx] = True
+
+    return results, k_added
+
 def find_pairs(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -216,7 +228,7 @@ def find_pairs(
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
-    iteration_seeds = [(0,0)] # [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
+    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
 
     with Pool(processes=processes_count) as pool:
         pool.map(
