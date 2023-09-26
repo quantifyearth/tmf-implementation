@@ -102,7 +102,7 @@ def find_match_iteration(
             "cpc5_u", "cpc5_d",
             "cpc10_u", "cpc10_d"
         ]
-        k_soft =  np.array(k_row[distance_columns].to_list())
+        k_soft =  k_row[distance_columns].to_numpy()
 
         just_cols_idx = filtered_s.index.to_numpy()
         just_cols = filtered_s[distance_columns].to_numpy()
@@ -135,8 +135,8 @@ def find_match_iteration(
     logging.info("Sorting min distances....")
 
     d_sorted = min_dists_d[:, 0].argsort()
-    min_dists_idxs = min_dists_idxs[d_sorted]
     min_dists_d = min_dists_d[d_sorted]
+    min_dists_idxs = min_dists_idxs[d_sorted]
 
     logging.info("Sorted min distances....")
 
