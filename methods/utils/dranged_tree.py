@@ -393,67 +393,130 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     return SplitDTree(left, right, d, split_at)
 
 def _self_test():
+    ALLOWED_VARIATION = np.array([
+        200,
+        2.5,
+        10,
+        -0.1,
+        -0.1,
+        -0.1,
+        -0.1,
+        -0.1,
+        -0.1,
+    ])
+    def build_rects(items):
+        rects = []
+        for item in items:
+            lefts = []
+            rights = []
+            for d, value in enumerate(item):
+                width = ALLOWED_VARIATION[d]
+                if width < 0:
+                    fraction = -width
+                    width = value * fraction
+                lefts.append(value - width)
+                rights.append(value + width)
+            rects.append([lefts, rights])
+        return np.array(rects)
+
     import pandas as pd
     from methods.common.luc import luc_matching_columns
-    from collections import defaultdict
     from time import time
-    import timeit
+
+    def build_dranged_tree_for_k(k_rows) -> DRangedTree:
+        return DRangedTree.build(np.array([(
+                row.elevation,
+                row.slope,
+                row.access,
+                row["cpc0_u"],
+                row["cpc0_d"],
+                row["cpc5_u"],
+                row["cpc5_d"],
+                row["cpc10_u"],
+                row["cpc10_d"],
+                ) for row in k_rows
+            ]), ALLOWED_VARIATION)
 
     luc0, luc5, luc10 = luc_matching_columns(2012)
 
     source_pixels = pd.read_parquet("./test/data/1201-k.parquet")
+    expected_fraction = 1 / 300 # This proportion of pixels we end up matching
+
     # Split source_pixels into classes
-    source_classes = defaultdict(list)
-    elevation_range = [math.inf, -math.inf]
-    slope_range = [math.inf, -math.inf]
-    access_range = [math.inf, -math.inf]
-    elevation_width = 200
-    slope_width = 2.5
-    access_width = 10
+    source_rows = []
     for _, row in source_pixels.iterrows():
         key = (int(row.ecoregion) << 16) | (int(row[luc0]) << 10) | (int(row[luc5]) << 5) | (int(row[luc10]))
         if key != 1967137: continue
-        source_classes[key].append(row)
-        if row.elevation - elevation_width < elevation_range[0]: elevation_range[0] = row.elevation - elevation_width
-        if row.elevation + elevation_width > elevation_range[1]: elevation_range[1] = row.elevation + elevation_width
-
-        if row.slope - slope_width < slope_range[0]: slope_range[0] = row.slope - slope_width
-        if row.slope + slope_width > slope_range[1]: slope_range[1] = row.slope + slope_width
-
-        if row.access - access_width < access_range[0]: access_range[0] = row.access - access_width
-        if row.access + access_width > access_range[1]: access_range[1] = row.access + access_width
-
-    source_nps = dict()
-    for key, values in source_classes.items():
-        source_nps[key] = np.array([(row.elevation, row.slope, row.access) for row in values])
+        source_rows.append(row)
     
+    source = np.array([
+        [
+            row.elevation,
+            row.slope,
+            row.access,
+            row["cpc0_u"],
+            row["cpc0_d"],
+            row["cpc5_u"],
+            row["cpc5_d"],
+            row["cpc10_u"],
+            row["cpc10_d"],
+        ] for row in source_rows
+    ])
 
-    # Invent an array of values
-    length = 1000
+    # Invent an array of values that matches the expected_fraction
+    length = 10000
     np.random.seed(42)
-    elevation = np.random.uniform(elevation_range[0] - elevation_width, elevation_range[1] + elevation_width, (length))
-    slopes = np.random.uniform(slope_range[0] - slope_width, slope_range[1] + slope_width, (length))
-    access = np.random.uniform(access_range[0] - access_width, access_range[1] + access_width, (length))
 
-    sources = source_nps[1967137]
+    # Safe ranges (exclude 10% of outliers)
+    ranges = np.transpose(np.array([
+        np.quantile(source, 0.05, axis=0),
+        np.quantile(source, 0.95, axis=0)
+    ]))
+
+    # Need to put an estimate here of how much of the area inside those 90% bounds is actually filled
+    filled_fraction = 0.35
+
+    # Proportion of values that should fall inside each dimension
+    inside_fraction = math.pow(expected_fraction / filled_fraction, 1/len(ranges))
+    widths = ranges[:, 1] - ranges[:, 0]
+    outside_fraction = 1 - inside_fraction
+    # Proportion to go outside uniform range
+    range_extension = 0.5 * widths * (outside_fraction / inside_fraction)
+    #range_extension = 0
+
+    distribution_ranges = np.transpose([ranges[:, 0] - range_extension, ranges[:, 1] + range_extension])
+
+    test_values = np.random.uniform(distribution_ranges[:, 0], distribution_ranges[:, 1], (length, len(ranges)))
+    
+    # Special case for the zero-width zero columns (CPC deforestation; if an original block has no deforestation, then
+    # it can only match to exactly zero deforestation)
+    special_zero_columns = [4, 6, 8]
+    for d in special_zero_columns:
+        fix_fraction = math.pow(expected_fraction / filled_fraction, 1/len(special_zero_columns)) * np.sum(source[:, d] == 0) / len(source)
+        fix_rows = np.random.choice(len(test_values), math.floor(len(test_values) * fix_fraction), replace=False)
+        test_values[fix_rows, d] = 0
 
     def do_np_matching():
+        source_rects = build_rects(source)
         found = 0
         for i in range(length):
-            pos = np.where(elevation[i] + 200 < sources[:, 0], False,
-                            np.where(elevation[i] - 200 > sources[:, 0], False,
-                            np.where(slopes[i] + 2.5 < sources[:, 1], False,
-                            np.where(slopes[i] - 2.5 > sources[:, 1], False,
-                            np.where(access[i] + 10 < sources[:, 2], False,
-                            np.where(access[i] - 10 > sources[:, 2], False,
-                                        True
-                        ))))))
+            pos = np.all((test_values[i] >= source_rects[:, 0]) & (test_values[i] <= source_rects[:, 1]), axis=1)
             found += 1 if np.any(pos) else 0
         return found
     
+    def speed_of(what, func):
+        EXPECTED = 33
+        start = time()
+        value = func()
+        end = time()
+        if value != EXPECTED:
+            print(f"Got wrong value {value} for method {what}, expected {EXPECTED}")
+            exit(1)
+        print(what, ": ", (end - start) / length, "per call")
+
     print("making tree... (this will take a few seconds)")
     start = time()
-    tree = DRangedTree.build(sources, np.array([elevation_width, slope_width, access_width]))
+    tree = build_dranged_tree_for_k(source_rows)
     print("build time", time() - start)
     print("tree depth", tree.depth())
     print("tree size", tree.size())
@@ -461,15 +524,9 @@ def _self_test():
     def do_drange_tree_matching():
         found = 0
         for i in range(length):
-            found += 1 if tree.contains(np.array([elevation[i], slopes[i], access[i]])) else 0
+            found += 1 if tree.contains(test_values[i]) else 0
         return found
     
-    def speed_of(what, func):
-        print(func())
-        assert(func() == 314) # If you change the random seed, change this.
-        t = timeit.Timer(stmt=func)
-        loops, time = t.autorange()
-        print(what, ": ", time / loops, "per call")
     speed_of("NP matching", do_np_matching)
     speed_of("Tree matching", do_drange_tree_matching)
 
