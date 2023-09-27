@@ -16,6 +16,6 @@ def test_batch_mahalanovis():
     # calculate the scipy implementation
     scipy_dists = [mahalanobis(row, vector, invcov) for row in rows]
     # calculate the batch implementation
-    batch_dists = find_pairs.batch_mahalanobis(rows, vector, invcov)
+    batch_dists = np.sqrt(find_pairs.batch_mahalanobis_squared(rows, vector, invcov))
     # check that the results are the same
     assert np.allclose(scipy_dists, batch_dists)

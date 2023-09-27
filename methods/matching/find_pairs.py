@@ -94,10 +94,7 @@ def find_match_iteration(
 
     logging.info("Finished greedy matching...")
 
-    greedy_match.inspect_types(file=open("greedy_match.type", "w"))
-    logging.info(f"greedy_match signature: {greedy_match.signatures[0]}")
-    # logging.info(f"greedy_match asm: {greedy_match.inspect_asm(signature=greedy_match.signatures[0])}")
-    greedy_match.inspect_cfg(signature=greedy_match.signatures[0]).display(filename="cfg.png")
+    logging.info("Starting storing matches...")
 
     for result in add_results:
         (k_idx, s_idx) = result
@@ -110,8 +107,6 @@ def find_match_iteration(
         )
 
     logging.info("Finished storing matches...")
-
-    logging.info(f"total results: {len(results)}")
 
     for k_idx in k_idx_matchless:
         k_row = k_subset.iloc[k_idx]
@@ -130,56 +125,65 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-@jit(nopython=True, fastmath=True, error_model="numpy")
+# Function which returns a boolean array indicating whether all values in a row are true
+@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+def rows_all_true(rows: np.ndarray):
+    # Don't use np.all because not supported by numba
+
+    # Create an array of booleans for rows in s still available
+    all_true = np.ones((rows.shape[0],), dtype=np.bool_)
+    for row_idx in range(rows.shape[0]):
+        for col_idx in range(rows.shape[1]):
+            if not rows[row_idx, col_idx]:
+                all_true[row_idx] = False
+                break
+
+    return all_true
+
+@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
 def greedy_match(
     k_subset: np.ndarray,
     s_subset: np.ndarray,
     invcov: np.ndarray
 ):
-    s_already = np.zeros((s_subset.shape[0],), dtype=np.bool_)
+    # Create an array of booleans for rows in s still available
+    s_available = np.ones((s_subset.shape[0],), dtype=np.bool_)
 
     results = []
     matchless = []
 
+    s_tmp = np.zeros((s_subset.shape[0],), dtype=np.float32)
+
     for k_idx in range(k_subset.shape[0]):
-        min_dist = DEFAULT_DISTANCE
-        min_dist_idx = -1
-        # We go through several steps now. First we hard match on columns 0, 1, 2, 3 and 4
-        for s_idx in range(s_subset.shape[0]):
-            if s_already[s_idx]:
-                continue
+        k_row = k_subset[k_idx, :]
 
-            k_hard = k_subset[k_idx, 0:5]
-            s_hard = s_subset[s_idx, 0:5]
+        # Find all rows in s_subset that match on the first 5 columns
+        hard_matches = rows_all_true(s_subset[:, :5] == k_row[:5]) & s_available
+        hard_matches = hard_matches.reshape(-1,)
 
-            if not np.array_equal(k_hard, s_hard):
-                continue
+        # Now calculate the distance between the k_row and all the hard matches we haven't already matched
+        s_tmp[hard_matches] = batch_mahalanobis_squared(s_subset[hard_matches, 5:], k_row[5:], invcov)
 
-            k_soft = k_subset[k_idx, 5:]
-            s_soft = s_subset[s_idx, 5:]
+        # Find the minimum distance if there are any hard matches
+        if np.any(hard_matches):
+            min_dist = np.min(s_tmp[hard_matches])
+            # Find the index of the minimum distance (in s_subset)
+            min_dist_idx = np.argmin(s_tmp[hard_matches])
 
-            # Now we calculate the distance between the two rows
-            diff = k_soft - s_soft
-            dist = np.dot(np.dot(diff, invcov), diff.T)
-
-            if dist < min_dist:
-                min_dist = dist
-                min_dist_idx = s_idx
-
-        if min_dist_idx != -1:
             results.append((k_idx, min_dist_idx))
-            s_already[min_dist_idx] = True
+            s_available[min_dist_idx] = False
         else:
             matchless.append(k_idx)
 
-    return results, matchless
+    return (results, matchless)
 
 # optimised batch implementation of mahalanobis distance that returns a distance per row
-def batch_mahalanobis(rows, vector, invcov):
+@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+def batch_mahalanobis_squared(rows, vector, invcov):
     # calculate the difference between the vector and each row (broadcasted)
     diff = rows - vector
     # calculate the distance for each row in one batch
-    dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
+    dists = (np.dot(diff, invcov) * diff).sum(axis=1)
     return dists
 
 def find_pairs(
@@ -194,7 +198,7 @@ def find_pairs(
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
-    """    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
+    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
 
     with Pool(processes=processes_count) as pool:
         pool.map(
@@ -206,9 +210,7 @@ def find_pairs(
                 output_folder
             ),
             iteration_seeds
-        )"""
-
-    find_match_iteration(k_parquet_filename, s_parquet_filename, start_year, output_folder, (0, 0))
+        )
 
 def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
