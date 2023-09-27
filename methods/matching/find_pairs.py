@@ -4,10 +4,13 @@ import random
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-from numba import jit, float32, int32  # type: ignore
+from numba import jit, float32, int32, gdb  # type: ignore
 import numpy as np
 import pandas as pd
 from scipy.spatial.distance import mahalanobis  # type: ignore
+
+import llvmlite.binding as llvm
+# llvm.set_option('', '--debug-only=loop-vectorize')
 
 from methods.common.luc import luc_matching_columns
 
@@ -56,98 +59,45 @@ def find_match_iteration(
     # As well as all the LUC columns for later use
     luc_columns = [x for x in s_set.columns if x.startswith('luc')]
 
-    s_subset_for_cov = s_subset[['elevation', 'slope', 'access', \
-        'cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']]
+    distance_columns = [
+        "elevation", "slope", "access",
+        "cpc0_u", "cpc0_d",
+        "cpc5_u", "cpc5_d",
+        "cpc10_u", "cpc10_d"
+    ]
+
+    s_subset_for_cov = s_subset[distance_columns]
     logging.info("Calculating covariance...")
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     logging.info("Calculating inverse covariance...")
-    invconv = np.linalg.inv(covarience)
+    invconv = np.linalg.inv(covarience).astype(np.float32)
 
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
-    for k_idx, k_row in k_subset.iterrows():
-        # Methodology 6.5.7: find the matches.
-        # There's two stages to matching - first a hard match
-        # based on:
-        #  * country
-        #  * historic LUC
-        #  * ecoregion
+    # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
+    s_subset_match = s_subset[['country', 'ecoregion', luc10, luc5, luc0] + distance_columns].to_numpy().astype(np.float32)
+    # this is required so numba can vectorise the loop in greedy_match
+    s_subset_match = np.ascontiguousarray(s_subset_match)
 
-        if k_idx % 100 == 0 or k_idx == len(k_subset) - 1:
-            logging.info(f"Calculating distances... {k_idx} of {len(k_subset)}")
+    # Now we do the same thing for k_subset
+    k_subset_match = k_subset[['country', 'ecoregion', luc10, luc5, luc0] + distance_columns].to_numpy().astype(np.float32)
+    # this is required so numba can vectorise the loop in greedy_match
+    k_subset_match = np.ascontiguousarray(k_subset_match)
 
-        # Country is implicit in the methodology, so we don't filter
-        # for it here
-        filtered_s = s_subset[
-            (s_subset.ecoregion == k_row.ecoregion) &
-            (s_subset[luc10] == k_row[luc10]) &
-            (s_subset[luc5] == k_row[luc5]) &
-            (s_subset[luc0] == k_row[luc0]) &
-            (s_subset.country == k_row.country)
-        ]
+    logging.info("Starting greedy matching...")
 
-        if len(filtered_s) == 0:
-            # No matches found for this pixel, note it down and move on
-            matchless.append(k_row)
-            continue
+    add_results, k_idx_matchless = greedy_match(
+        k_subset_match,
+        s_subset_match,
+        invconv
+    )
 
-        # and then a soft match based on Mahalanobis distance of
-        #  * elevation
-        #  * slope
-        #  * accessibility
-        #  * coarsened proportional coverage
-        distance_columns = [
-            "elevation", "slope", "access",
-            "cpc0_u", "cpc0_d",
-            "cpc5_u", "cpc5_d",
-            "cpc10_u", "cpc10_d"
-        ]
-        k_soft =  k_row[distance_columns].to_numpy()
+    logging.info("Finished greedy matching...")
 
-        just_cols_idx = filtered_s.index.to_numpy()
-        just_cols = filtered_s[distance_columns].to_numpy()
-
-        batch_distances = batch_mahalanobis(just_cols, k_soft, invconv)
-        m_distances[k_idx][just_cols_idx] = batch_distances
-
-    # Having now built up the entire Mahalanobis matrix, we now choose the minimum distance
-    # for each k and s without replacement. This is a naive implementation of finding the
-    # optimal solution.
-    logging.info("Creating min distances...")
-
-    # Create a mask for all entries in m_distances below DEFAULT_DISTANCE
-    # This is a boolean array of the same shape as m_distances
-    m_distances_mask = m_distances < DEFAULT_DISTANCE
-
-    # Create an array of zeros with three columns and the same number of rows as m_distances_mask has True values
-    # This will be used to store the k_idx, s_idx and distance for each match
-    num_matches = m_distances_mask.sum()
-    min_dists_idxs = np.zeros((num_matches, 2), dtype=np.int32)
-    min_dists_d = np.zeros((num_matches, 1), dtype=np.float32)
-
-    # Use the mask to fill min_dists with the k_idx, s_idx and distance for each match
-    min_dists_idxs[:, 0] = np.where(m_distances_mask)[0]
-    min_dists_idxs[:, 1] = np.where(m_distances_mask)[1]
-    min_dists_d[:, 0] = m_distances[m_distances_mask]
-
-    logging.info(f"Created min distances...")
-
-    logging.info("Sorting min distances....")
-
-    d_sorted = min_dists_d[:, 0].argsort()
-    min_dists_d = min_dists_d[d_sorted]
-    min_dists_idxs = min_dists_idxs[d_sorted]
-
-    logging.info("Sorted min distances....")
-
-    logging.info("Adding matches...")
-
-    k_total = len(k_subset)
-    s_total = len(s_subset)
-
-    add_results, k_added = add_matches(k_total, s_total, min_dists_idxs, min_dists_d)
-
-    logging.info(f"Got {len(add_results)} results, assembling..")
+    greedy_match.inspect_types(file=open("greedy_match.type", "w"))
+    logging.info(f"greedy_match signature: {greedy_match.signatures[0]}")
+    # logging.info(f"greedy_match asm: {greedy_match.inspect_asm(signature=greedy_match.signatures[0])}")
+    greedy_match.inspect_cfg(signature=greedy_match.signatures[0]).display(filename="cfg.png")
 
     for result in add_results:
         (k_idx, s_idx) = result
@@ -159,18 +109,13 @@ def find_match_iteration(
             [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
         )
 
-    logging.info("Finished adding matches...")
+    logging.info("Finished storing matches...")
 
-    # There's a chance that didn't put every k into our results. This is
-    # because the algorithm is greedy. So no we add those not matches to
-    # matchless
-    if len(k_added) != k_total:
-        all_k = np.unique(min_dists_idxs[:,0])
-        # matchless is all_k minus k_added
-        matchless_k = np.setdiff1d(all_k, k_added)
-        for k_idx in matchless_k:
-            k_row = k_subset.iloc[k_idx]
-            matchless.append(k_row)
+    logging.info(f"total results: {len(results)}")
+
+    for k_idx in k_idx_matchless:
+        k_row = k_subset.iloc[k_idx]
+        matchless.append(k_row)
 
     columns = ['k_lat', 'k_lng'] + \
         [f'k_{x}' for x in luc_columns + distance_columns] + \
@@ -183,6 +128,52 @@ def find_match_iteration(
     matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
     matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
 
+    logging.info("Finished find match iteration")
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def greedy_match(
+    k_subset: np.ndarray,
+    s_subset: np.ndarray,
+    invcov: np.ndarray
+):
+    s_already = np.zeros((s_subset.shape[0],), dtype=np.bool_)
+
+    results = []
+    matchless = []
+
+    for k_idx in range(k_subset.shape[0]):
+        min_dist = DEFAULT_DISTANCE
+        min_dist_idx = -1
+        # We go through several steps now. First we hard match on columns 0, 1, 2, 3 and 4
+        for s_idx in range(s_subset.shape[0]):
+            if s_already[s_idx]:
+                continue
+
+            k_hard = k_subset[k_idx, 0:5]
+            s_hard = s_subset[s_idx, 0:5]
+
+            if not np.array_equal(k_hard, s_hard):
+                continue
+
+            k_soft = k_subset[k_idx, 5:]
+            s_soft = s_subset[s_idx, 5:]
+
+            # Now we calculate the distance between the two rows
+            diff = k_soft - s_soft
+            dist = np.dot(np.dot(diff, invcov), diff.T)
+
+            if dist < min_dist:
+                min_dist = dist
+                min_dist_idx = s_idx
+
+        if min_dist_idx != -1:
+            results.append((k_idx, min_dist_idx))
+            s_already[min_dist_idx] = True
+        else:
+            matchless.append(k_idx)
+
+    return results, matchless
+
 # optimised batch implementation of mahalanobis distance that returns a distance per row
 def batch_mahalanobis(rows, vector, invcov):
     # calculate the difference between the vector and each row (broadcasted)
@@ -190,31 +181,6 @@ def batch_mahalanobis(rows, vector, invcov):
     # calculate the distance for each row in one batch
     dists = np.sqrt((np.dot(diff, invcov) * diff).sum(axis=1))
     return dists
-
-@jit("(int64, int64, int32[:,:], float32[:,:])", nopython=True, fastmath=True, error_model='numpy')
-def add_matches(k_total, s_total, min_dists_idxs, min_dists_d):
-    k_added = []
-    results = []
-
-    k_already_added = np.zeros((k_total,), dtype=np.bool_)
-    s_already_added = np.zeros((s_total,), dtype=np.bool_)
-
-    for r in range(min_dists_idxs.shape[0]):
-        row = min_dists_idxs[r]
-
-        k_idx = row[0]
-        s_idx = row[1]
-
-        if k_already_added[k_idx] or s_already_added[s_idx]:
-            continue
-
-        results.append((k_idx, s_idx))
-        k_added.append(k_idx)
-
-        k_already_added[k_idx] = True
-        s_already_added[s_idx] = True
-
-    return results, k_added
 
 def find_pairs(
     k_parquet_filename: str,
@@ -228,7 +194,7 @@ def find_pairs(
     os.makedirs(output_folder, exist_ok=True)
 
     random.seed(seed)
-    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
+    """    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
 
     with Pool(processes=processes_count) as pool:
         pool.map(
@@ -240,7 +206,9 @@ def find_pairs(
                 output_folder
             ),
             iteration_seeds
-        )
+        )"""
+
+    find_match_iteration(k_parquet_filename, s_parquet_filename, start_year, output_folder, (0, 0))
 
 def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
