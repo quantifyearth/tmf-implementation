@@ -438,6 +438,9 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     right = _make_tree_internal(rights, right_bounds, state.descend(d))
     return SplitDTree(left, right, d, split_at)
 
+# ========================================
+# Self test code, not needed for operation
+# ========================================
 def _self_test():
     ALLOWED_VARIATION = np.array([
         200,
@@ -537,7 +540,7 @@ def _self_test():
     
     # Special case for the zero-width zero columns (CPC deforestation; if an original block has no deforestation, then
     # it can only match to exactly zero deforestation)
-    special_zero_columns = [4, 6, 8]
+    special_zero_columns = [-5, -3, -1]
     for d in special_zero_columns:
         fix_fraction = math.pow(expected_fraction / filled_fraction, 1/len(special_zero_columns)) * np.sum(source[:, d] == 0) / len(source)
         fix_rows = np.random.choice(len(test_values), math.floor(len(test_values) * fix_fraction), replace=False)
@@ -573,8 +576,8 @@ def _self_test():
         for i in range(length):
             found += 1 if tree.contains(test_values[i]) else 0
         return found
-    
-    speed_of("NP matching", do_np_matching)
+
+    #speed_of("NP matching", do_np_matching)
     speed_of("Tree matching", do_drange_tree_matching)
 
 if __name__ == "__main__":
