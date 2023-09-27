@@ -168,12 +168,14 @@ def greedy_match(
 
         # Find the minimum distance if there are any hard matches
         if np.any(hard_matches):
-            min_dist = np.min(s_tmp[hard_matches])
+            # min_dist = np.min(s_tmp[hard_matches])
             # Find the index of the minimum distance (in s_subset)
-            min_dist_idx = np.argmin(s_tmp)
+            min_dist_idx = np.argmin(s_tmp[hard_matches])
+            counts = np.cumsum(hard_matches)
+            idx = np.searchsorted(counts, min_dist_idx + 1)
 
-            results.append((k_idx, min_dist_idx))
-            s_available[min_dist_idx] = False
+            results.append((k_idx, idx))
+            s_available[idx] = False
         else:
             matchless.append(k_idx)
 
