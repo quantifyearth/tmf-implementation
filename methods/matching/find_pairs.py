@@ -9,9 +9,6 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import mahalanobis  # type: ignore
 
-import llvmlite.binding as llvm
-# llvm.set_option('', '--debug-only=loop-vectorize')
-
 from methods.common.luc import luc_matching_columns
 
 REPEAT_MATCH_FINDING = 100
