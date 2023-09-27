@@ -76,7 +76,7 @@ def load_k(
             -0.1,
             -0.1,
             -0.1,
-        ]))
+        ]), 1 / 300)
 
     print("Sending k trees to workers...")
 
