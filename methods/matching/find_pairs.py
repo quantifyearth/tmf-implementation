@@ -98,6 +98,11 @@ def find_match_iteration(
         k_row = k_subset.iloc[k_idx]
         match = s_subset.iloc[s_idx]
 
+        if k_row["country"] != match["country"]:
+            print(k_row)
+            print(match)
+            raise ValueError("Nah!!!!")
+
         results.append(
             [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
             [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
@@ -149,7 +154,7 @@ def greedy_match(
     results = []
     matchless = []
 
-    s_tmp = np.zeros((s_subset.shape[0],), dtype=np.float32)
+    s_tmp = np.full((s_subset.shape[0],), dtype=np.float32, fill_value=100000.0)
 
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
@@ -165,7 +170,7 @@ def greedy_match(
         if np.any(hard_matches):
             min_dist = np.min(s_tmp[hard_matches])
             # Find the index of the minimum distance (in s_subset)
-            min_dist_idx = np.argmin(s_tmp[hard_matches])
+            min_dist_idx = np.argmin(s_tmp)
 
             results.append((k_idx, min_dist_idx))
             s_available[min_dist_idx] = False
