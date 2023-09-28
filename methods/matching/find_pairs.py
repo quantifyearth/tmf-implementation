@@ -16,6 +16,15 @@ DEFAULT_DISTANCE = 10000000.0
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+# Implement similar logic to the R matchit package
+# https://github.com/kosukeimai/MatchIt/blob/7b7b48af995ad1d2ab83a72bad9a689bbb9e8151/R/aux_functions.R#L550
+def pooled_scaled_cov(treatment, control):
+    treatment -= np.mean(treatment, axis=0)
+    control -= np.mean(control, axis=0)
+    combined_scaled = np.concatenate([treatment, control])
+    n = len(combined_scaled)
+    return np.cov(combined_scaled, rowvar=False) * (n-1) / (n-2)
+
 def find_match_iteration(
     k_parquet_filename: str,
     s_parquet_filename: str,
@@ -63,13 +72,31 @@ def find_match_iteration(
         "cpc10_u", "cpc10_d"
     ]
 
-    s_subset_for_cov = s_subset[distance_columns]
-    logging.info("Calculating covariance...")
-    covarience = np.cov(s_subset_for_cov, rowvar=False)
-    logging.info("Calculating inverse covariance...")
-    invconv = np.linalg.inv(covarience).astype(np.float32)
+    np.set_printoptions(linewidth=196, floatmode='maxprec_equal', precision=3)
 
-    m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
+    s_subset_for_cov = s_subset[distance_columns]
+    k_subset_for_cov = k_subset[distance_columns]
+
+    logging.info("Scaling the columns...")
+
+    # Scale the columns as per matchit
+    # https://github.com/kosukeimai/MatchIt/blob/7b7b48af995ad1d2ab83a72bad9a689bbb9e8151/R/dist_functions.R#L240
+    combined = np.concatenate([s_subset_for_cov, k_subset_for_cov])
+    means = np.mean(combined, axis=0)
+    stds = np.std(combined - means, axis=0)
+    s_subset_for_cov -= means
+    s_subset_for_cov /= stds
+    k_subset_for_cov -= means
+    k_subset_for_cov /= stds
+
+    s_subset[distance_columns] = s_subset_for_cov
+    k_subset[distance_columns] = k_subset_for_cov
+
+    logging.info("Calculating pooled covariance...")
+    covariance = pooled_scaled_cov(k_subset_for_cov, s_subset_for_cov)
+
+    logging.info("Calculating inverse covariance...")
+    invconv = np.linalg.inv(covariance).astype(np.float32)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
     s_subset_match = s_subset[['country', 'ecoregion', luc10, luc5, luc0] + distance_columns].to_numpy().astype(np.float32)
