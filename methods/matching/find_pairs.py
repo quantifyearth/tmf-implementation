@@ -13,6 +13,7 @@ from methods.common.luc import luc_matching_columns
 
 REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
+DEBUG = False
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -63,6 +64,8 @@ def find_match_iteration(
         "cpc10_u", "cpc10_d"
     ]
 
+    hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
+
     s_subset_for_cov = s_subset[distance_columns]
     logging.info("Calculating covariance...")
     covarience = np.cov(s_subset_for_cov, rowvar=False)
@@ -72,12 +75,12 @@ def find_match_iteration(
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_subset_match = s_subset[['country', 'ecoregion', luc10, luc5, luc0] + distance_columns].to_numpy().astype(np.float32)
+    s_subset_match = s_subset[hard_match_columns + distance_columns].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     s_subset_match = np.ascontiguousarray(s_subset_match)
 
     # Now we do the same thing for k_subset
-    k_subset_match = k_subset[['country', 'ecoregion', luc10, luc5, luc0] + distance_columns].to_numpy().astype(np.float32)
+    k_subset_match = k_subset[hard_match_columns + distance_columns].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     k_subset_match = np.ascontiguousarray(k_subset_match)
 
@@ -97,6 +100,13 @@ def find_match_iteration(
         (k_idx, s_idx) = result
         k_row = k_subset.iloc[k_idx]
         match = s_subset.iloc[s_idx]
+
+        if DEBUG:
+            for hard_match_column in hard_match_columns:
+                if k_row[hard_match_column] != match[hard_match_column]:
+                    print(k_row)
+                    print(match)
+                    raise ValueError("Hard match inconsistency")
 
         results.append(
             [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
@@ -164,8 +174,9 @@ def greedy_match(
         # Find the minimum distance if there are any hard matches
         if np.any(hard_matches):
             min_dist = np.min(s_tmp[hard_matches])
-            # Find the index of the minimum distance (in s_subset)
+            # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_subset
             min_dist_idx = np.argmin(s_tmp[hard_matches])
+            min_dist_idx = np.arange(s_tmp.shape[0])[hard_matches][min_dist_idx]
 
             results.append((k_idx, min_dist_idx))
             s_available[min_dist_idx] = False
