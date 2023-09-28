@@ -39,10 +39,44 @@ def find_match_iteration(
     logging.info(f"Loading S from {s_parquet_filename}")
     # Methodology 6.5.5: S should be 10 times the size of K
     s_set = pd.read_parquet(s_parquet_filename)
-    s_subset = s_set.sample(
-        n=k_set.shape[0] * 10,
-        random_state=random.randint(0, 1000000),
-    ).reset_index()
+
+    distance_columns = [
+        "elevation", "slope", "access",
+        "cpc0_u", "cpc0_d",
+        "cpc5_u", "cpc5_d",
+        "cpc10_u", "cpc10_d"
+    ]
+
+    # get the column ids for distance_columns
+    thresholds_for_columns = np.array([
+            200.0, # Elev
+            2.5, # Slope
+            10.0,  # Access
+            0.1, # CPCs
+            0.1, # CPCs
+            0.1, # CPCs
+            0.1, # CPCs
+            0.1, # CPCs
+            0.1, # CPCs
+    ])
+
+    s_dist_thresholded = s_set[distance_columns] / thresholds_for_columns
+    k_dist_thresholded = k_subset[distance_columns] / thresholds_for_columns
+
+    s_dist_thresholded = np.ascontiguousarray(s_dist_thresholded.to_numpy(), dtype=np.float32)
+    k_dist_thresholded = np.ascontiguousarray(k_dist_thresholded.to_numpy(), dtype=np.float32)
+
+    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded)
+    s_subset = s_set[s_subset_mask].reset_index()
+
+    # if s_subset is > (k_subset.shape[0] * 10) rows then reduce s_subset to (k_subset.shape[0] * 10) rows
+    if s_subset.shape[0] > (k_subset.shape[0] * 10):
+        s_subset = s_subset.sample(
+            n=k_subset.shape[0] * 10,
+            random_state=random.randint(0, 1000000),
+        ).reset_index()
+
+    logging.info(f"s_subset shape: {s_subset.shape}")
 
     # Notes:
     # 1. in the current methodology version (1.1), it's possible for
@@ -56,13 +90,6 @@ def find_match_iteration(
     luc0, luc5, luc10 = luc_matching_columns(start_year)
     # As well as all the LUC columns for later use
     luc_columns = [x for x in s_set.columns if x.startswith('luc')]
-
-    distance_columns = [
-        "elevation", "slope", "access",
-        "cpc0_u", "cpc0_d",
-        "cpc5_u", "cpc5_d",
-        "cpc10_u", "cpc10_d"
-    ]
 
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
 
@@ -132,6 +159,26 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
+@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray):
+    s_include = np.zeros((s_dist_thresholded.shape[0],), dtype=np.bool_)
+
+    for i in range(s_dist_thresholded.shape[0]):
+        s_row = s_dist_thresholded[i, :]
+
+        for k in range(k_dist_thresholded.shape[0]):
+            k_row = k_dist_thresholded[k, :]
+
+            should_include = True
+
+            for j in range(s_row.shape[0]):
+                if abs(s_row[j] - k_row[j]) > 1.0:
+                    should_include = False
+
+            s_include[i] = should_include
+
+    return s_include
+
 # Function which returns a boolean array indicating whether all values in a row are true
 @jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
 def rows_all_true(rows: np.ndarray):
@@ -146,6 +193,7 @@ def rows_all_true(rows: np.ndarray):
                 break
 
     return all_true
+
 
 @jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
 def greedy_match(
