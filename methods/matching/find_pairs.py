@@ -78,17 +78,18 @@ def find_match_iteration(
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
 
     # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    s_dist_hard = np.ascontiguousarray(s_set[hard_match_columns].to_numpy()).astype(np.float32)
-    k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.float32)
+    s_dist_hard = np.ascontiguousarray(s_set[hard_match_columns].to_numpy()).astype(np.int32)
+    k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
 
-    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard)
+    required = k_set.shape[0] * 10
+
+    logging.info(f"Running make_s_subset_mask... required: {required}")
+
+    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard, required)
+
+    logging.info(f"Done make_s_subset_mask. s_subset_mask.shape: {s_subset_mask.shape}")
+
     s_subset = s_set[s_subset_mask].reset_index()
-
-    if s_subset.shape[0] > (k_set.shape[0] * 10):
-        s_subset = s_subset.sample(
-            n=k_set.shape[0] * 10,
-            random_state=random.randint(0, 1000000),
-        ).reset_index()
 
     logging.info(f"Finished preparing s_subset. shape: {s_subset.shape}")
 
@@ -117,7 +118,7 @@ def find_match_iteration(
     # this is required so numba can vectorise the loop in greedy_match
     k_subset_match = np.ascontiguousarray(k_subset_match)
 
-    logging.info("Starting greedy matching...")
+    logging.info(f"Starting greedy matching... k_subset_match.shape: {k_subset_match.shape}, s_subset_match.shape: {s_subset_match.shape}")
 
     add_results, k_idx_matchless = greedy_match(
         k_subset_match,
@@ -165,11 +166,16 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
-def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, s_dist_hard: np.ndarray, k_dist_hard: np.ndarray):
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, s_dist_hard: np.ndarray, k_dist_hard: np.ndarray, n: int):
     s_include = np.zeros((s_dist_thresholded.shape[0],), dtype=np.bool_)
+    # create an array that is the indexes of the rows in s_dist_thresholded and shuffle it
+    s_indexes = np.arange(s_dist_thresholded.shape[0])
+    np.random.shuffle(s_indexes)
+    found = 0
 
-    for i in range(s_dist_thresholded.shape[0]):
+    for p in range(s_dist_thresholded.shape[0]):
+        i = s_indexes[p]
         s_row = s_dist_thresholded[i, :]
         s_hard = s_dist_hard[i]
 
@@ -180,19 +186,33 @@ def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.nd
             should_include = True
 
             # check that every element of s_hard matches k_hard
-            if not np.allclose(s_hard, k_hard):
+            hard_equals = True
+            for j in range(s_hard.shape[0]):
+                if s_hard[j] != k_hard[j]:
+                    hard_equals = False
+                    break
+
+            if not hard_equals:
                 should_include = False
             else:
                 for j in range(s_row.shape[0]):
                     if abs(s_row[j] - k_row[j]) > 1.0:
                         should_include = False
+                        break
 
-            s_include[i] |= should_include
+            if should_include:
+                s_include[i] = True
+                break
+
+        if s_include[i]:
+            found += 1
+            if found >= n:
+                break
 
     return s_include
 
 # Function which returns a boolean array indicating whether all values in a row are true
-@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+@jit(nopython=True, fastmath=True, error_model="numpy")
 def rows_all_true(rows: np.ndarray):
     # Don't use np.all because not supported by numba
 
@@ -207,7 +227,7 @@ def rows_all_true(rows: np.ndarray):
     return all_true
 
 
-@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+@jit(nopython=True, fastmath=True, error_model="numpy")
 def greedy_match(
     k_subset: np.ndarray,
     s_subset: np.ndarray,
@@ -215,6 +235,7 @@ def greedy_match(
 ):
     # Create an array of booleans for rows in s still available
     s_available = np.ones((s_subset.shape[0],), dtype=np.bool_)
+    total_available = s_subset.shape[0]
 
     results = []
     matchless = []
@@ -224,11 +245,10 @@ def greedy_match(
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
 
-        # Now calculate the distance between the k_row and all the hard matches we haven't already matched
-        s_tmp[s_available] = batch_mahalanobis_squared(s_subset[s_available, 5:], k_row[5:], invcov)
+        if total_available > 0:
+            # Now calculate the distance between the k_row and all the hard matches we haven't already matched
+            s_tmp[s_available] = batch_mahalanobis_squared(s_subset[s_available], k_row, invcov)
 
-        # Find the minimum distance if there are any hard matches
-        if np.any(s_available):
             min_dist = np.min(s_tmp[s_available])
             # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_subset
             min_dist_idx = np.argmin(s_tmp[s_available])
@@ -236,19 +256,21 @@ def greedy_match(
 
             results.append((k_idx, min_dist_idx))
             s_available[min_dist_idx] = False
+            total_available -= 1
         else:
             matchless.append(k_idx)
 
     return (results, matchless)
 
 # optimised batch implementation of mahalanobis distance that returns a distance per row
-@jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
+@jit(nopython=True, fastmath=True, error_model="numpy")
 def batch_mahalanobis_squared(rows, vector, invcov):
     # calculate the difference between the vector and each row (broadcasted)
     diff = rows - vector
     # calculate the distance for each row in one batch
     dists = (np.dot(diff, invcov) * diff).sum(axis=1)
     return dists
+
 
 def find_pairs(
     k_parquet_filename: str,
