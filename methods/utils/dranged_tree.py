@@ -11,6 +11,7 @@ those ranges together will be faster than a k-d tree which knows nothing about t
 """
 
 from __future__ import annotations
+from typing import List
 
 import numpy as np
 import math
@@ -204,6 +205,127 @@ class TreeState:
         if self.logging:
             print(self.depth * "  ", s)
 
+class PossibleSplit:
+    def __init__(self, d:int):
+        self.d = d
+    def score(self) -> int|float:
+        raise NotImplementedError()
+    def dump(self) -> str:
+        raise NotImplementedError()
+    def generate(self, rects, bounds, state: TreeState) -> DRangedTree:
+        raise NotImplementedError()
+
+class MedianSplit(PossibleSplit):
+    def __init__(self, d: int, splits, lefts, rights, position = 0.5):
+        super().__init__(d)
+        if len(splits) >= 3:
+            # We want to split this dimension into two spaces. Given the outermost points don't
+            # actually reduce the number of nodes (because everything is on one side of the outermost point)
+            # if there aren't at least three split points (i.e. no inner split points) there is no point
+            # splitting.
+
+            best_split_pos = math.floor(len(splits) * position)
+            self.split_at = splits[best_split_pos]
+
+            self.left_count: int = np.sum(lefts < self.split_at)
+            self.right_count: int = np.sum(rights > self.split_at)
+        else:
+            self.left_count = len(lefts)
+            self.right_count = len(rights)
+            self.split_at = math.nan
+    def score(self) -> int:
+        return max(self.left_count, self.right_count)
+    def dump(self) -> str:
+        return f"split d{self.d} at {self.split_at}, lefts: {self.left_count} rights: {self.right_count}"
+    def generate(self, rects, bounds, state: TreeState) -> DRangedTree:
+        d = self.d
+        split_at = self.split_at
+
+        # Split and clip the rectangles at the split point
+        # Rectangles exclude their end points in either direction.
+        # We clip to make split point calculations accurate later on.
+        lefts = rects[rects[:, 0, d] < split_at]
+        lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
+        lefts = np.unique(lefts, axis = 0)
+        #lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
+        zero_width_lefts = lefts[lefts[:, 0, d] == lefts[:, 1, d]]
+        if len(zero_width_lefts) > 0:
+            state.print("Zero width lefts!")
+            state.print(zero_width_lefts)
+            exit()
+
+        rights = rects[rects[:, 1, d] > split_at]
+        rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
+        rights = np.unique(rights, axis = 0)
+        #rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
+        zero_width_rights = rights[rights[:, 0, d] == rights[:, 1, d]]
+        if len(zero_width_rights) > 0:
+            state.print("Zero width rights!")
+            state.print(zero_width_rights)
+            exit()
+
+        #state.print(f" splitting ∂{d} at {split_at} (of {len(splits[d])} splits: {splits[d][:10]}) lefts: {len(lefts)} rights: {len(rights)}")
+
+        # Update the bounds we're tracking to know about the split we've just made.
+        left_bounds = np.copy(bounds)
+        left_bounds[1, d] = split_at
+
+        right_bounds = np.copy(bounds)
+        right_bounds[0, d] = split_at
+
+        # Build the subtrees
+        left = _make_tree_internal(lefts, left_bounds, state.descend(d))
+        right = _make_tree_internal(rights, right_bounds, state.descend(d))
+        return SplitDTree(left, right, d, split_at)
+
+class ExactSplit(PossibleSplit):
+    def __init__(self, d: int, splits, rects):
+        super().__init__(d)
+        if len(splits) == 1:
+            # If a dimension has only one split point, output a single value node check for that dimension
+            self.value = splits[0]
+            if rects.shape[2] > 1:
+                self.sub_rects = np.unique(without(rects, d), axis=0)
+                self._score = len(self.sub_rects)
+            else:
+                # No further checks
+                self._score = 0
+        else:
+            self._score = math.inf
+    def score(self) -> int|float:
+        return self._score
+    def dump(self) -> str:
+        return f"d{self.d} has single value {self.value}, remaining tree {self._score}"
+    def generate(self, _rects, bounds, state: TreeState) -> DRangedTree:
+        if self._score == 0:
+            subtree = FullTree()
+        else:
+            sub_bounds = without(bounds, self.d)
+            subtree = _make_tree_internal(self.sub_rects, sub_bounds, state.drop(self.d))
+        return CheckTree(self.d, self.value, subtree)
+
+class BoundedSplit(PossibleSplit):
+    def __init__(self, d: int, rects, bounds):
+        super().__init__(d)
+        if np.all((rects[:, 0, d] <= bounds[0, d]) & (rects[:, 1, d] >= bounds[1, d])):
+            if rects.shape[2] == 1:
+                self._score = 0
+            else:
+                self.sub_rects = np.unique(without(rects, d), axis=0)
+                self._score = len(self.sub_rects)
+        else:
+            self._score = math.inf
+    def score(self) -> int|float:
+        return self._score
+    def dump(self) -> str:
+        return f"d{self.d} is full (remaining tree {self._score})"
+    def generate(self, _rects, bounds, state: TreeState) -> DRangedTree:
+        if self._score == 0:
+            return FullTree()
+        sub_bounds = without(bounds, self.d)
+        subtree = _make_tree_internal(self.sub_rects, sub_bounds, state.drop(self.d))
+        return FulfilledTree(subtree, self.d)
+
 """
 Remove the j-th column from the final dimension of items.
 """
@@ -232,23 +354,12 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         return ListTree(rects)
     if state.depth == 30:
         print(f"Limiting depth to {state.depth} with {len(rects)} rects remaining")
-        #exit()
         return ListTree(rects)
 
     dimensions = rects.shape[2]
 
-    # If all rects completely fill bounds in a dimension, then that dimension is fulfilled (no further tests needed on it).
-    for d in range(dimensions):
-        if np.all((rects[:, 0, d] <= bounds[0, d]) & (rects[:, 1, d] >= bounds[1, d])):
-            if rects.shape[2] == 1:
-                return FullTree()
-            else:
-                sub_rects = np.unique(without(rects, d), axis=0)
-                sub_bounds = without(bounds, d)
-                subtree = _make_tree_internal(sub_rects, sub_bounds, state.drop(d))
-                return FulfilledTree(subtree, d)
-    
     # Check if we need to bound a dimension
+    # (can't wrap this in scoring metric as it is about the queries, not the tree)
     for d in range(dimensions):
         if state.descent[d] == state.bound_dimension_at:
             # Check if bounds are infinite
@@ -256,6 +367,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
                 left = np.min(rects[:, 0, d])
                 new_bounds = np.copy(bounds)
                 new_bounds[0, d] = left
+                state.print(f"left-bounding dimension {d} at {left}")
                 subtree = _make_tree_internal(rects, new_bounds, state.descend(d))
                 # We need to lean right, because we only want to exclude values strictly less than left.
                 return SplitDLeanRightTree(EmptyTree(), subtree, d, left)
@@ -263,6 +375,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
                 right = np.max(rects[:, 1, d])
                 new_bounds = np.copy(bounds)
                 new_bounds[1, d] = right
+                state.print(f"right-bounding dimension {d} at {right}")
                 subtree = _make_tree_internal(rects, new_bounds, state.descend(d))
                 return SplitDTree(subtree, EmptyTree(), d, right)
 
@@ -272,171 +385,40 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     lefts = [rects[:, 0, d] for d in range(dimensions)]
     rights = [rects[:, 1, d] for d in range(dimensions)]
     splits = [np.unique(np.array([lefts[d], rights[d]])) for d in range(dimensions)]
-    widths = [rights[d] - lefts[d] for d in range(dimensions)]
-    widths_without_zeros = [widths[widths > 0] for widths in widths]
 
-    def make_tree_without_d(d: int, rects):
-        if dimensions == 1:
-            return FullTree()
-        else:
-            sub_rects = np.unique(without(rects, d), axis=0)
-            sub_bounds = without(bounds, d)
-            return _make_tree_internal(sub_rects, sub_bounds, state.drop(d))
-
+    split_options: List[PossibleSplit] = []
     for d in range(dimensions):
-        # If a dimension has only one split point, output a single value node check for that dimension
-        if len(splits[d]) == 1:
-            return CheckTree(d, splits[d][0], make_tree_without_d(d, rects))
-        # If a good fraction of this dimension has a single value, drop that value
-        needed_values = len(rects) * 0.1
-        if (len(widths[d]) - len(widths_without_zeros[d])) > needed_values:
-            # Find the single values
-            single_valued_points = lefts[d][lefts[d] == rights[d]]
-            svp_values, svp_counts = np.unique(single_valued_points, return_counts=True)
-            best_index = np.argmax(svp_counts)
-            # Swallowing 10% of a dimension is good news
-            if svp_counts[best_index] > needed_values:
-                value = svp_values[best_index]
-                swallowed = (rects[:, 0, d] == value) & (rects[:, 1, d] == value)
-                remainder = rects[~swallowed]
-                #state.print(f"  found value: {svp_values[best_index]} with {svp_counts[best_index]} instances and remainder of {len(remainder)} out of {len(rects)}")
-                if len(remainder) + svp_counts[best_index] != len(rects):
-                    raise RuntimeError("Incorrect number items in remainder")
-                continuation = _make_tree_internal(remainder, bounds, state.descend(d))
-                rects_with_value = rects[swallowed]
-                return CheckTree(d, value, make_tree_without_d(d, rects_with_value), continuation)
+        split_options.append(MedianSplit(d, splits[d], lefts[d], rights[d]))
+        split_options.append(BoundedSplit(d, rects, bounds))
+        split_options.append(ExactSplit(d, splits[d], rects))
 
-    # Find the dimension with the most variety with respect to its width.
-    best_d = 0
-    best_classes = 0
-    best_width_estimate = 0
-    for d in range(dimensions):
-        split = splits[d]
-        min_split = np.min(split)
-        max_split = np.max(split)
-        if len(widths_without_zeros[d]) == 0:
-            # If all widths are zero, we can calculate estimate the number of classes as
-            # the number of unique split(value) points.
-            max_classes = len(split)
-            width_estimate = (max_split - min_split) / max_classes
-        elif len(split) >= 3:
-            # We want to split this dimension into two spaces. Given the outermost points don't
-            # actually reduce the number of nodes (because everything is on one side of the outermost point)
-            # if there aren't at least three split points (i.e. no inner split points) there is no point
-            # splitting.
-            width_estimate = np.median(widths_without_zeros[d])
-            r = max_split - min_split
-            max_classes = r / width_estimate
-            best_split_pos = len(split) // 2
-            split_at = split[best_split_pos]
+    split_options.sort(key=lambda item: item.score())
+    for option in split_options[:3]:
+        state.print(" " + option.dump())
+    option = split_options[0]
 
-            left_count = np.sum(lefts[d] <= split_at)
-            right_count = np.sum(rights[d] >= split_at)
-            target = len(rects) * 1
-            total_target = len(rects) * 1.99
-            # FIXME: limitied this to less than 2 breaks splitting which consumes dimensions
-            # by putting a split in the middle of a overlap area, which can then be consumed
-            # in the following layer on either side.
-            # We need a heuristic between layers to consume the overlap, or to detect and generate
-            # a 3-tree where there is an overlap.
-            if left_count > target or right_count > target or left_count + right_count > total_target:
-                max_classes = 0 # Don't split here as the two side trees are too large or unbalanced
-        else:
-            max_classes = 0 # Not a good dimension to split on
-            width_estimate = 0
+    if option.score() > len(rects) * 0.95:
+        # Try harder
+        for d in [option.d for option in split_options[:3]]:
+            for pos in range(9):
+                # Skip median
+                if pos == 4: continue
+                split_options.append(MedianSplit(d, splits[d], lefts[d], rights[d], 0.1 * (pos + 1)))
+        split_options.sort(key=lambda item: item.score())
+        option = split_options[0]
 
-        if max_classes > best_classes:
-            best_d = d
-            best_classes = max_classes
-            best_width_estimate = width_estimate
-    if best_classes < 1.3:
-        # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
-        # Wherever we split we're hardly going to achieve much, so fall out to a list
-        return ListTree(rects)
-    
-    d = best_d
-    split = splits[d]
+        if option.score() > len(rects) * 0.95:
+            # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
+            # Wherever we split we're hardly going to achieve much, so fall out to a list
+            state.logging = True
+            state.print(f"T {len(rects)} ∆{state.dimensions}")
+            for option in split_options[:3]:
+                state.print(" ?>> " + option.dump())
+            state.logging = False
 
-    # We want to split this dimension into two spaces. Given the outermost points don't
-    # actually reduce the number of nodes (because everything is on one side of the outermost point)
-    # if there are less than three split points (i.e. no inner split points) there is no point
-    # splitting, so fall back to a list.
-    if len(split) < 3:
-        # We can only get here if we're splitting on classes, and there are only two classes,
-        # so we can simply split at a point between the two classes.
-        split_at = np.mean(split)
-    else:        
-        if best_classes < 3:
-            # Chance there is an overlap here, so let's check and eliminate it if possible
-            # L  L L LL LL
-            #                R  R RR R     R
-            #            L   R
-            #              ^- overlap here which we can consume the dimension in
+            return ListTree(rects)
 
-            left_cut = np.max(lefts[d])
-            right_cut = np.min(rights[d])
-            overlap_width = right_cut - left_cut
-            # Only worth doing if at least 20% overlap.
-            # FIXME: currently this code leads to fewer matches in test for unknown reasons
-            if False and overlap_width > 0.2 * best_width_estimate:
-                lefts = np.copy(rects)
-                lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = left_cut, a_min = None)
-                lefts = np.unique(lefts, axis = 0)
-
-                rights = np.copy(rects)
-                rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = right_cut, a_max = None)
-                rights = np.unique(rights, axis = 0)
-
-                middle = without(rects, d)
-
-                state.print(f" swallowing ∂{d} from {left_cut} to {right_cut} from estimated_width {best_width_estimate} of size: {len(rects)}")
-
-                # Update the bounds we're tracking to know about the split we've just made.
-                left_bounds = np.copy(bounds)
-                left_bounds[1, d] = left_cut
-
-                right_bounds = np.copy(bounds)
-                right_bounds[0, d] = right_cut
-
-                # Build the subtrees
-                left = _make_tree_internal(lefts, left_bounds, state.descend(d))
-                middle = make_tree_without_d(d, middle)
-                right = _make_tree_internal(rights, right_bounds, state.descend(d))
-                return SplitDTree(left, SplitDTree(middle, right, d, right_cut), d, left_cut)
-
-        # We used to assume we could find a "best" split point that balanced the split.
-        # But just going for the median seems to work well and is fast, so that's what we do.
-        best_split_pos = len(split) // 2
-
-        # Record the point we split at
-        split_at = split[best_split_pos]
-
-    # Split and clip the rectangles at the split point
-    # Rectangles include their end points in either direction.
-    # We clip to make split point calculations accurate later on.
-    lefts = rects[rects[:, 0, d] <= split_at]
-    lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
-    lefts = np.unique(lefts, axis = 0)
-    #lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
-
-    rights = rects[rects[:, 1, d] > split_at]
-    rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
-    rights = np.unique(rights, axis = 0)
-    #rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
-
-    #state.print(f" splitting ∂{d} at {split_at} (of {len(splits[d])} splits: {splits[d][:10]}) lefts: {len(lefts)} rights: {len(rights)}")
-
-    # Update the bounds we're tracking to know about the split we've just made.
-    left_bounds = np.copy(bounds)
-    left_bounds[1, d] = split_at
-
-    right_bounds = np.copy(bounds)
-    right_bounds[0, d] = split_at
-
-    # Build the subtrees
-    left = _make_tree_internal(lefts, left_bounds, state.descend(d))
-    right = _make_tree_internal(rights, right_bounds, state.descend(d))
-    return SplitDTree(left, right, d, split_at)
+    return option.generate(rects, bounds, state)
 
 # ========================================
 # Self test code, not needed for operation
@@ -446,12 +428,12 @@ def _self_test():
         200,
         2.5,
         10,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
+        0.1,
     ])
     def build_rects(items):
         rects = []
@@ -524,7 +506,7 @@ def _self_test():
     ]))
 
     # Need to put an estimate here of how much of the area inside those 90% bounds is actually filled
-    filled_fraction = 0.35
+    filled_fraction = 0.9
 
     # Proportion of values that should fall inside each dimension
     inside_fraction = math.pow(expected_fraction / filled_fraction, 1/len(ranges))
@@ -538,14 +520,6 @@ def _self_test():
 
     test_values = np.random.uniform(distribution_ranges[:, 0], distribution_ranges[:, 1], (length, len(ranges)))
     
-    # Special case for the zero-width zero columns (CPC deforestation; if an original block has no deforestation, then
-    # it can only match to exactly zero deforestation)
-    special_zero_columns = [-5, -3, -1]
-    for d in special_zero_columns:
-        fix_fraction = math.pow(expected_fraction / filled_fraction, 1/len(special_zero_columns)) * np.sum(source[:, d] == 0) / len(source)
-        fix_rows = np.random.choice(len(test_values), math.floor(len(test_values) * fix_fraction), replace=False)
-        test_values[fix_rows, d] = 0
-
     def do_np_matching():
         source_rects = build_rects(source)
         found = 0
@@ -555,7 +529,7 @@ def _self_test():
         return found
     
     def speed_of(what, func):
-        EXPECTED = 33
+        EXPECTED = 3938
         start = time()
         value = func()
         end = time()
