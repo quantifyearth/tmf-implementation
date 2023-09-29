@@ -19,3 +19,67 @@ def test_batch_mahalanovis():
     batch_dists = np.sqrt(find_pairs.batch_mahalanobis_squared(rows, vector, invcov))
     # check that the results are the same
     assert np.allclose(scipy_dists, batch_dists)
+
+TEST_SUBSET_ROWS = 3
+# test for make_s_subset_mask
+def test_make_s_subset_mask():
+    # set numpy random seed to 35
+    np.random.seed(35)
+    # create a random set of TEST_ROWS rows of 5 columns
+    s_dist_thresholded = np.random.rand(TEST_SUBSET_ROWS, 5)
+    # create a random set of TEST_ROWS rows of 5 columns
+    k_dist_thresholded = np.random.rand(TEST_SUBSET_ROWS, 5)
+    # create a random set of integers in TEST_ROWS rows of 5 columns
+    s_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
+    # create a random set of integers in TEST_ROWS rows of 5 columns
+    k_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
+    # calculate using make_s_subset_mask
+    s_subset_mask = find_pairs.make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard)
+
+    s_subset_hard = s_dist_hard[s_subset_mask]
+    k_subset_hard = k_dist_hard
+
+    print(f"s_subset_hard: {s_subset_hard}")
+    print(f"k_subset_hard: {k_subset_hard}")
+
+    s_subset_dist = s_dist_thresholded[s_subset_mask]
+    k_subset_dist = k_dist_thresholded
+
+    # check that for each row in s_subset_dist there is a row in k_subset_dist that is less than the threshold for every column
+    for i in range(s_subset_dist.shape[0]):
+        one_below_threshold = False
+        one_hard_match = False
+
+        for k in range(k_subset_dist.shape[0]):
+            if np.all(abs(k_subset_dist[k] - s_subset_dist[i]) < 1.0):
+                one_below_threshold = True
+            if np.allclose(k_subset_hard[k], s_subset_hard[i]):
+                one_hard_match = True
+
+        assert one_below_threshold, f"no corresponding row in k_subset_dist for {s_subset_dist[i]}"
+        assert one_hard_match, f"no hard match for {s_subset_hard[i]}"
+
+"""# Function which returns a boolean array indicating whether all values in a row are true
+def rows_all_true(rows: np.ndarray):
+    # Don't use np.all because not supported by numba
+
+    # Create an array of booleans for rows in s still available
+    all_true = np.ones((rows.shape[0],), dtype=np.bool_)
+    for row_idx in range(rows.shape[0]):
+        for col_idx in range(rows.shape[1]):
+            if not rows[row_idx, col_idx]:
+                all_true[row_idx] = False
+                break
+
+    return all_true"""
+TEST_ROWS_ALL_TRUE = 35
+# test for rows_all_true
+def test_rows_all_true():
+    # set numpy random seed to 35
+    np.random.seed(35)
+    # create a matrix with TEST_ROWS_ALL_TRUE rows and 1 column with a random boolean in it
+    rows = np.random.randint(0, 2, size=(TEST_ROWS_ALL_TRUE, 1), dtype=np.bool_)
+    # calculate using rows_all_true
+    all_true = find_pairs.rows_all_true(rows)
+    # check this matches numpy.all with axis=1
+    assert np.all(all_true == np.all(rows, axis=1))

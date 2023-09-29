@@ -15,6 +15,13 @@ REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
 
+DISTANCE_COLUMNS = [
+    "elevation", "slope", "access",
+    "cpc0_u", "cpc0_d",
+    "cpc5_u", "cpc5_d",
+    "cpc10_u", "cpc10_d"
+]
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 def find_match_iteration(
@@ -40,14 +47,7 @@ def find_match_iteration(
     # Methodology 6.5.5: S should be 10 times the size of K
     s_set = pd.read_parquet(s_parquet_filename)
 
-    distance_columns = [
-        "elevation", "slope", "access",
-        "cpc0_u", "cpc0_d",
-        "cpc5_u", "cpc5_d",
-        "cpc10_u", "cpc10_d"
-    ]
-
-    # get the column ids for distance_columns
+    # get the column ids for DISTANCE_COLUMNS
     thresholds_for_columns = np.array([
             200.0, # Elev
             2.5, # Slope
@@ -60,30 +60,14 @@ def find_match_iteration(
             0.1, # CPCs
     ])
 
-    s_dist_thresholded = s_set[distance_columns] / thresholds_for_columns
-    k_dist_thresholded = k_subset[distance_columns] / thresholds_for_columns
+    logging.info("Preparing s_subset...")
 
+    s_dist_thresholded = s_set[DISTANCE_COLUMNS] / thresholds_for_columns
+    k_dist_thresholded = k_subset[DISTANCE_COLUMNS] / thresholds_for_columns
+
+    # convert to float32 numpy arrays and make them contiguous for numba to vectorise
     s_dist_thresholded = np.ascontiguousarray(s_dist_thresholded.to_numpy(), dtype=np.float32)
     k_dist_thresholded = np.ascontiguousarray(k_dist_thresholded.to_numpy(), dtype=np.float32)
-
-    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded)
-    s_subset = s_set[s_subset_mask].reset_index()
-
-    # if s_subset is > (k_subset.shape[0] * 10) rows then reduce s_subset to (k_subset.shape[0] * 10) rows
-    if s_subset.shape[0] > (k_subset.shape[0] * 10):
-        s_subset = s_subset.sample(
-            n=k_subset.shape[0] * 10,
-            random_state=random.randint(0, 1000000),
-        ).reset_index()
-
-    logging.info(f"s_subset shape: {s_subset.shape}")
-
-    # Notes:
-    # 1. in the current methodology version (1.1), it's possible for
-    # multiple pixels in k to map to the same pixel in S
-    # 2. Not all pixels may have matches
-    results = []
-    matchless = []
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
@@ -93,7 +77,29 @@ def find_match_iteration(
 
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
 
-    s_subset_for_cov = s_subset[distance_columns]
+    # similar to the above, make the hard match columns contiguous float32 numpy arrays
+    s_dist_hard = np.ascontiguousarray(s_set[hard_match_columns].to_numpy()).astype(np.float32)
+    k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.float32)
+
+    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard)
+    s_subset = s_set[s_subset_mask].reset_index()
+
+    if s_subset.shape[0] > (k_set.shape[0] * 10):
+        s_subset = s_subset.sample(
+            n=k_set.shape[0] * 10,
+            random_state=random.randint(0, 1000000),
+        ).reset_index()
+
+    logging.info(f"Finished preparing s_subset. shape: {s_subset.shape}")
+
+    # Notes:
+    # 1. in the current methodology version (1.1), it's possible for
+    # multiple pixels in k to map to the same pixel in S
+    # 2. Not all pixels may have matches
+    results = []
+    matchless = []
+
+    s_subset_for_cov = s_subset[DISTANCE_COLUMNS]
     logging.info("Calculating covariance...")
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     logging.info("Calculating inverse covariance...")
@@ -102,12 +108,12 @@ def find_match_iteration(
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_subset_match = s_subset[hard_match_columns + distance_columns].to_numpy().astype(np.float32)
+    s_subset_match = s_subset[DISTANCE_COLUMNS].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     s_subset_match = np.ascontiguousarray(s_subset_match)
 
     # Now we do the same thing for k_subset
-    k_subset_match = k_subset[hard_match_columns + distance_columns].to_numpy().astype(np.float32)
+    k_subset_match = k_subset[DISTANCE_COLUMNS].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     k_subset_match = np.ascontiguousarray(k_subset_match)
 
@@ -136,8 +142,8 @@ def find_match_iteration(
                     raise ValueError("Hard match inconsistency")
 
         results.append(
-            [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + distance_columns] + \
-            [match.lat, match.lng] + [match[x] for x in luc_columns + distance_columns]
+            [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + DISTANCE_COLUMNS] + \
+            [match.lat, match.lng] + [match[x] for x in luc_columns + DISTANCE_COLUMNS]
         )
 
     logging.info("Finished storing matches...")
@@ -147,9 +153,9 @@ def find_match_iteration(
         matchless.append(k_row)
 
     columns = ['k_lat', 'k_lng'] + \
-        [f'k_{x}' for x in luc_columns + distance_columns] + \
+        [f'k_{x}' for x in luc_columns + DISTANCE_COLUMNS] + \
         ['s_lat', 's_lng'] + \
-        [f's_{x}' for x in luc_columns + distance_columns]
+        [f's_{x}' for x in luc_columns + DISTANCE_COLUMNS]
 
     results_df = pd.DataFrame(results, columns=columns)
     results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
@@ -160,22 +166,28 @@ def find_match_iteration(
     logging.info("Finished find match iteration")
 
 @jit(nopython=True, fastmath=True, error_model="numpy", cache=True)
-def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray):
+def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, s_dist_hard: np.ndarray, k_dist_hard: np.ndarray):
     s_include = np.zeros((s_dist_thresholded.shape[0],), dtype=np.bool_)
 
     for i in range(s_dist_thresholded.shape[0]):
         s_row = s_dist_thresholded[i, :]
+        s_hard = s_dist_hard[i]
 
         for k in range(k_dist_thresholded.shape[0]):
             k_row = k_dist_thresholded[k, :]
+            k_hard = k_dist_hard[k]
 
             should_include = True
 
-            for j in range(s_row.shape[0]):
-                if abs(s_row[j] - k_row[j]) > 1.0:
-                    should_include = False
+            # check that every element of s_hard matches k_hard
+            if not np.allclose(s_hard, k_hard):
+                should_include = False
+            else:
+                for j in range(s_row.shape[0]):
+                    if abs(s_row[j] - k_row[j]) > 1.0:
+                        should_include = False
 
-            s_include[i] = should_include
+            s_include[i] |= should_include
 
     return s_include
 
@@ -212,19 +224,15 @@ def greedy_match(
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
 
-        # Find all rows in s_subset that match on the first 5 columns
-        hard_matches = rows_all_true(s_subset[:, :5] == k_row[:5]) & s_available
-        hard_matches = hard_matches.reshape(-1,)
-
         # Now calculate the distance between the k_row and all the hard matches we haven't already matched
-        s_tmp[hard_matches] = batch_mahalanobis_squared(s_subset[hard_matches, 5:], k_row[5:], invcov)
+        s_tmp[s_available] = batch_mahalanobis_squared(s_subset[s_available, 5:], k_row[5:], invcov)
 
         # Find the minimum distance if there are any hard matches
-        if np.any(hard_matches):
-            min_dist = np.min(s_tmp[hard_matches])
+        if np.any(s_available):
+            min_dist = np.min(s_tmp[s_available])
             # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_subset
-            min_dist_idx = np.argmin(s_tmp[hard_matches])
-            min_dist_idx = np.arange(s_tmp.shape[0])[hard_matches][min_dist_idx]
+            min_dist_idx = np.argmin(s_tmp[s_available])
+            min_dist_idx = np.arange(s_tmp.shape[0])[s_available][min_dist_idx]
 
             results.append((k_idx, min_dist_idx))
             s_available[min_dist_idx] = False
