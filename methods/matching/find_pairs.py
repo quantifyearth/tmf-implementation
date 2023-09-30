@@ -109,12 +109,12 @@ def find_match_iteration(
     m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_subset_match = s_subset[DISTANCE_COLUMNS].to_numpy().astype(np.float32)
+    s_subset_match = s_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     s_subset_match = np.ascontiguousarray(s_subset_match)
 
     # Now we do the same thing for k_subset
-    k_subset_match = k_subset[DISTANCE_COLUMNS].to_numpy().astype(np.float32)
+    k_subset_match = k_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     k_subset_match = np.ascontiguousarray(k_subset_match)
 
@@ -190,7 +190,6 @@ def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.nd
             for j in range(s_hard.shape[0]):
                 if s_hard[j] != k_hard[j]:
                     hard_equals = False
-                    break
 
             if not hard_equals:
                 should_include = False
@@ -198,7 +197,6 @@ def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.nd
                 for j in range(s_row.shape[0]):
                     if abs(s_row[j] - k_row[j]) > 1.0:
                         should_include = False
-                        break
 
             if should_include:
                 s_include[i] = True
@@ -245,18 +243,24 @@ def greedy_match(
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
 
+        hard_matches = rows_all_true(s_subset[:, :5] == k_row[:5]) & s_available
+        hard_matches = hard_matches.reshape(
+            -1,
+        )
+
         if total_available > 0:
             # Now calculate the distance between the k_row and all the hard matches we haven't already matched
-            s_tmp[s_available] = batch_mahalanobis_squared(s_subset[s_available], k_row, invcov)
-
-            min_dist = np.min(s_tmp[s_available])
+            s_tmp[hard_matches] = batch_mahalanobis_squared(
+                s_subset[hard_matches, 5:], k_row[5:], invcov
+            )
             # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_subset
-            min_dist_idx = np.argmin(s_tmp[s_available])
-            min_dist_idx = np.arange(s_tmp.shape[0])[s_available][min_dist_idx]
+            if np.any(hard_matches):
+                min_dist_idx = np.argmin(s_tmp[hard_matches])
+                min_dist_idx = np.arange(s_tmp.shape[0])[hard_matches][min_dist_idx]
 
-            results.append((k_idx, min_dist_idx))
-            s_available[min_dist_idx] = False
-            total_available -= 1
+                results.append((k_idx, min_dist_idx))
+                s_available[min_dist_idx] = False
+                total_available -= 1
         else:
             matchless.append(k_idx)
 
