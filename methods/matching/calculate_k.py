@@ -52,14 +52,11 @@ def build_layer_collection(
                 glob.glob(f"*{year}*.tif", root_dir=jrc_directory_path)
         ], name=f"luc_{year}") for year in luc_years
     ]
-
     cpcs = [
-        GroupLayer([
-            RasterLayer.layer_from_file(
-                os.path.join(cpc_directory_path, filename)
-            ) for filename in
-                glob.glob(f"*{year_class[0]}_{year_class[1].value}.tif", root_dir=cpc_directory_path)
-        ], name=f"cpc_{year_class}") for year_class in product(cpc_years,
+        RasterLayer.layer_from_file(
+            os.path.join(cpc_directory_path, f"coarsened_{year_class[0]}_{year_class[1].value}.tif"),
+             name=f"cpc_{year_class}"
+        ) for year_class in product(cpc_years,
             [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
 
