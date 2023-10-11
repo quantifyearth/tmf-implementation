@@ -92,13 +92,14 @@ def generate_coarsened_proportional_coverage(
     os.makedirs(result_directory, exist_ok=True)
 
     jrc_filenames = glob.glob("*.tif", root_dir=jrc_directory)
-    jrc_file_paths = [os.path.join(jrc_directory, x) for x in jrc_filenames]
     years = list(set([x.split('_')[4] for x in jrc_filenames]))
     years.sort()
 
     filesets = []
     for year in years:
-        filesets.append((year, [x for x in jrc_file_paths if year in x]))
+        year_files = [x for x in jrc_filenames if year in x]
+        filesets.append((year, [os.path.join(jrc_directory, x) for x in year_files]))
+
 
     with tempfile.TemporaryDirectory() as tempdir:
          with Pool(processes=concurrent_processes) as pool:
