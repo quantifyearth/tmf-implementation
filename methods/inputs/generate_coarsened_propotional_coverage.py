@@ -22,7 +22,6 @@ JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 def coarsened_jrc_tile(jrc_layer: TiledGroupLayer, result_filename: str, luc: int) -> None:
 
     result_pixel_scale = PixelScale(jrc_layer.pixel_scale.xstep * 40, jrc_layer.pixel_scale.ystep * 40)
-    print(jrc_layer.window)
     result_width = math.floor(jrc_layer.window.xsize / 40.0)
     result_height = math.floor(jrc_layer.window.ysize / 40.0)
     result_area = Area(
@@ -68,14 +67,7 @@ def process_jrc_tiles_by_year(
     fileinfo: Tuple[str,List[str]]
 ) -> None:
     year, tilepaths = fileinfo
-    print(year)
-    for p in tilepaths:
-        print(p)
     jrc_layer = GroupLayer([RasterLayer.layer_from_file(x) for x in tilepaths])
-    print(jrc_layer)
-    print(jrc_layer.area)
-    print(jrc_layer.window)
-
     for luc in [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]:
         target_filename = f"coarse_{year}_{luc.value}.tif"
         target_path = os.path.join(output_directory_path, target_filename)
