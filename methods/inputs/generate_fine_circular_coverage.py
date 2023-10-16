@@ -24,9 +24,9 @@ JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 GEOMETRY_SCALE_ADJUSTMENT = False
 
 def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
-    DIAMETER = 32 # 960m cicles; TODO: should we actually calculate this in case e.g. JRC changes resolution
-    RADIUS = DIAMETER // 2
-    RADIUS2 = RADIUS * RADIUS
+    diameter = 32 # 960m cicles; TODO: should we actually calculate this in case e.g. JRC changes resolution
+    radius = diameter // 2
+    radius2 = radius * radius
 
     layers = [all_jrc, jrc_tile]
     jrc_tile_area = RasterLayer.find_intersection(layers)
@@ -54,43 +54,43 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         else:
             x_factor = 1
         x_factor2 = x_factor * x_factor
-        x_radius = math.ceil(RADIUS * x_factor)
+        x_radius = math.ceil(radius * x_factor)
         x_diameter = 2 * x_radius
-        circle_mask = np.zeros((DIAMETER + 1, x_diameter + 1))
-        change_at = np.array([0] * (DIAMETER + 1))
-        for y in range(-RADIUS, RADIUS + 1):
+        circle_mask = np.zeros((diameter + 1, x_diameter + 1))
+        change_at = np.array([0] * (diameter + 1))
+        for y in range(-radius, radius + 1):
             on = False
             for x in range(-x_radius, x_radius + 1):
                 r2 = y*y + x*x / x_factor2
-                if r2 <= RADIUS2:
-                    circle_mask[y + RADIUS, x + x_radius] = 1
+                if r2 <= radius2:
+                    circle_mask[y + radius, x + x_radius] = 1
                     if not on:
                         on = True
-                        change_at[y + RADIUS] = x
+                        change_at[y + radius] = x
 
         mask_sum = np.sum(circle_mask, dtype=np.float32)
 
         if src is None or last_x_radius != x_radius:
             # Read in initial full width stripe of height DIAMETER + 1 (or new initial stripe if x_radius has changed)
-            src = all_jrc.read_array(-x_radius, yoffset - RADIUS, result_width + x_diameter + 1, DIAMETER + 1)
+            src = all_jrc.read_array(-x_radius, yoffset - radius, result_width + x_diameter + 1, diameter + 1)
             src = np.asarray(src == luc, dtype=np.float32)
         else:
             # Shift src up and add on next stripe of height 1
-            next_row = all_jrc.read_array(-x_radius, yoffset + RADIUS, result_width + x_diameter + 1, 1)
+            next_row = all_jrc.read_array(-x_radius, yoffset + radius, result_width + x_diameter + 1, 1)
             src_without_first_row = src[1:]
             src = np.concatenate([src_without_first_row, next_row == luc], axis=0, dtype=np.float32)
         last_x_radius = x_radius
 
         # Form the initial circle
-        initial = src[0:DIAMETER + 1, 0:x_diameter + 1]
+        initial = src[0:diameter + 1, 0:x_diameter + 1]
         initial_circle = initial * circle_mask
 
         running_sum = np.sum(initial_circle, dtype=np.float32)
 
         buffer = np.zeros(result_width, dtype=np.float32)
-        buffer[0] = (running_sum / mask_sum)
+        buffer[0] = running_sum / mask_sum
 
-        do_running_sum(RADIUS, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer)
+        do_running_sum(radius, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer)
 
         result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
     print(f"{os.path.basename(result_filename)} complete")
@@ -99,12 +99,12 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
 # and add the right-most point of the new circle. Because circles don't have holes, this is sufficient
 # to shift the circle over, and saves us many adds.
 @jit(void(int64, int64, int64, float32[:, :], int64[:], float32, float32, float32[:]), nopython=True, fastmath=True)
-def do_running_sum(RADIUS, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer):
+def do_running_sum(radius, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer):
     for xoffset in range(1, result_width):
-        for y in range(0, RADIUS * 2 + 1):
+        for y in range(0, radius * 2 + 1):
             running_sum -= src[y, xoffset + x_radius + change_at[y] - 1]
             running_sum += src[y, xoffset + x_radius - change_at[y]]
-        buffer[xoffset] = (running_sum / mask_sum)
+        buffer[xoffset] = running_sum / mask_sum
 
 
 def process_jrc_tiles_by_year(
