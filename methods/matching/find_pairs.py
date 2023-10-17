@@ -11,7 +11,7 @@ from scipy.spatial.distance import mahalanobis  # type: ignore
 
 from methods.common.luc import luc_matching_columns
 
-REPEAT_MATCH_FINDING = 100
+REPEAT_MATCH_FINDING = 1
 DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
 
@@ -87,10 +87,31 @@ def find_match_iteration(
 
     s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard, required)
 
+    s_subset_mask_true = np.zeros(s_set.shape[0], dtype=np.bool_)
+
+    # Randomly select 10 potential pixels per K
+    no_potentials = np.zeros(k_subset.shape[0], dtype=np.bool_)
+    for k in range(s_subset_mask.shape[0]):
+        masks = s_subset_mask[k]
+        np.random.shuffle(np.argwhere(masks))
+        idx = np.argwhere(masks)[:100]
+        if len(idx) == 0:
+            no_potentials[k] = True
+        else:
+            for i in idx:
+                s_subset_mask_true[i[0]] = True
+
     logging.info(f"Done make_s_subset_mask. s_subset_mask.shape: {s_subset_mask.shape}")
+    logging.info(f"Actual indexes {np.cumsum(s_subset_mask_true)}")
 
-    s_subset = s_set[s_subset_mask].reset_index()
+    s_subset = s_set[s_subset_mask_true]
 
+    s_subset.to_parquet("/maps/pf341/tom-new-candidates/controls.parquet")
+    potentials = np.invert(no_potentials)
+    k_subset[potentials].to_parquet("/maps/pf341/tom-new-candidates/treatment.parquet")
+    k_subset[no_potentials].to_parquet("/maps/pf341/tom-new-candidates/treatment-no-potentials.parquet")
+
+    k_subset = k_subset[potentials]
     logging.info(f"Finished preparing s_subset. shape: {s_subset.shape}")
 
     # Notes:
@@ -105,8 +126,6 @@ def find_match_iteration(
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     logging.info("Calculating inverse covariance...")
     invconv = np.linalg.inv(covarience).astype(np.float32)
-
-    m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
     s_subset_match = s_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
@@ -168,14 +187,13 @@ def find_match_iteration(
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, s_dist_hard: np.ndarray, k_dist_hard: np.ndarray, n: int):
-    s_include = np.zeros((s_dist_thresholded.shape[0],), dtype=np.bool_)
+    s_include = np.zeros((k_dist_thresholded.shape[0], s_dist_thresholded.shape[0]), dtype=np.bool_)
     # create an array that is the indexes of the rows in s_dist_thresholded and shuffle it
-    s_indexes = np.arange(s_dist_thresholded.shape[0])
-    np.random.shuffle(s_indexes)
-    found = 0
+    # s_indexes = np.arange(s_dist_thresholded.shape[0])
+    # np.random.shuffle(s_indexes)
+    # found = 0
 
-    for p in range(s_dist_thresholded.shape[0]):
-        i = s_indexes[p]
+    for i in range(s_dist_thresholded.shape[0]):
         s_row = s_dist_thresholded[i, :]
         s_hard = s_dist_hard[i]
 
@@ -199,13 +217,7 @@ def make_s_subset_mask(s_dist_thresholded: np.ndarray, k_dist_thresholded: np.nd
                         should_include = False
 
             if should_include:
-                s_include[i] = True
-                break
-
-        if s_include[i]:
-            found += 1
-            if found >= n:
-                break
+                s_include[k][i] = True
 
     return s_include
 
