@@ -93,8 +93,9 @@ def find_match_iteration(
     no_potentials = np.zeros(k_subset.shape[0], dtype=np.bool_)
     for k in range(s_subset_mask.shape[0]):
         masks = s_subset_mask[k]
-        np.random.shuffle(np.argwhere(masks))
-        idx = np.argwhere(masks)[:100]
+        indices = np.argwhere(masks)
+        np.random.shuffle(indices)
+        idx = indices[:100]
         if len(idx) == 0:
             no_potentials[k] = True
         else:
