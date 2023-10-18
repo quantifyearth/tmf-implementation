@@ -46,11 +46,11 @@ def area_for_geometry(source: gpd.GeoDataFrame) -> float:
     projected_boundaries = source.to_crs(f"EPSG:{utm_code}")
     return projected_boundaries.area.sum()
 
+ECCENTRICITY = 0.081819191
+ECCENTRICITY_2 = ECCENTRICITY * ECCENTRICITY
 def wgs_aspect_ratio_at(latitude: float) -> float:
     """returns the number of x pixels that represent the same distance as one y pixel"""
-    offset = 0.0000089932
-    map_square = gpd.GeoSeries([shapely.Point(-offset, latitude - offset), shapely.Point(offset, latitude + offset)], crs="EPSG:4326")
-    utm_code = utm_for_geometry(latitude, 0)
-    metres_square = map_square.to_crs(f"EPSG:{utm_code}")
-    differences = shapely.Point(metres_square[1].x - metres_square[0].x, metres_square[1].y - metres_square[0].y)
-    return differences.y / differences.x
+    phi = latitude / 180 * math.pi
+    M = (1 - ECCENTRICITY_2) / np.float_power((1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2)), 1.5)
+    R = np.cos(phi) / np.sqrt(1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2))
+    return M / R

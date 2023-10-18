@@ -21,7 +21,7 @@ from methods.common.geometry import wgs_aspect_ratio_at
 # Example filename: JRC_TMF_AnnualChange_v1_2011_AFR_ID37_N0_E40.tif
 JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 
-GEOMETRY_SCALE_ADJUSTMENT = False
+GEOMETRY_SCALE_ADJUSTMENT = True
 
 def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
     diameter = 32 # 960m cicles; TODO: should we actually calculate this in case e.g. JRC changes resolution
@@ -98,7 +98,7 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
 # As we move along the row, for each column we remove the left-most point of the last circle,
 # and add the right-most point of the new circle. Because circles don't have holes, this is sufficient
 # to shift the circle over, and saves us many adds.
-@jit(void(int64, int64, int64, float32[:, :], int64[:], float32, float32, float32[:]), nopython=True, fastmath=True)
+@jit(void(int64, float32[:, :], int64[:], float32, float32, float32[:]), nopython=True, fastmath=True)
 def do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer):
     stride = src.shape[1]
     src = src.flatten()
@@ -144,10 +144,11 @@ def generate_fine_circular_coverage(
     jrc_file_paths = [os.path.join(jrc_directory, x) for x in jrc_filenames]
     years = list(set([x.split('_')[4] for x in jrc_filenames]))
     years.sort()
+    years = ["2022"]
 
     filesets = []
     for year in years:
-        filesets.append((year, [x for x in jrc_file_paths if year in x]))
+        filesets.append((year, [x for x in jrc_file_paths if f"/JRC_TMF_AnnualChange_v1_{year}" in x]))
 
     with tempfile.TemporaryDirectory() as tempdir:
         with Pool(processes=concurrent_processes) as pool:
