@@ -1,10 +1,10 @@
-import pytest
-from methods.matching import find_pairs
 import numpy as np
 from scipy.spatial.distance import mahalanobis
 
+from methods.matching import find_pairs
+
 # test that tests batch_mahalanobis matches the scipy implementation
-def test_batch_mahalanovis():
+def test_batch_mahalanobis():
     # set numpy random seed to 35
     np.random.seed(35)
     # create a random set of 3 rows of 5 columns
@@ -34,7 +34,13 @@ def test_make_s_subset_mask():
     # create a random set of integers in TEST_ROWS rows of 5 columns
     k_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
     # calculate using make_s_subset_mask
-    s_subset_mask = find_pairs.make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard)
+    s_subset_mask = find_pairs.make_s_subset_mask(
+        s_dist_thresholded,
+        k_dist_thresholded,
+        s_dist_hard,
+        k_dist_hard,
+        TEST_SUBSET_ROWS,
+    )
 
     s_subset_hard = s_dist_hard[s_subset_mask]
     k_subset_hard = k_dist_hard
@@ -45,7 +51,8 @@ def test_make_s_subset_mask():
     s_subset_dist = s_dist_thresholded[s_subset_mask]
     k_subset_dist = k_dist_thresholded
 
-    # check that for each row in s_subset_dist there is a row in k_subset_dist that is less than the threshold for every column
+    # check that for each row in s_subset_dist there is a row in k_subset_dist
+    # that is less than the threshold for every column
     for i in range(s_subset_dist.shape[0]):
         one_below_threshold = False
         one_hard_match = False
@@ -59,19 +66,6 @@ def test_make_s_subset_mask():
         assert one_below_threshold, f"no corresponding row in k_subset_dist for {s_subset_dist[i]}"
         assert one_hard_match, f"no hard match for {s_subset_hard[i]}"
 
-"""# Function which returns a boolean array indicating whether all values in a row are true
-def rows_all_true(rows: np.ndarray):
-    # Don't use np.all because not supported by numba
-
-    # Create an array of booleans for rows in s still available
-    all_true = np.ones((rows.shape[0],), dtype=np.bool_)
-    for row_idx in range(rows.shape[0]):
-        for col_idx in range(rows.shape[1]):
-            if not rows[row_idx, col_idx]:
-                all_true[row_idx] = False
-                break
-
-    return all_true"""
 TEST_ROWS_ALL_TRUE = 35
 # test for rows_all_true
 def test_rows_all_true():
