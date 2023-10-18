@@ -90,7 +90,7 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         buffer = np.zeros(result_width, dtype=np.float32)
         buffer[0] = running_sum / mask_sum
 
-        do_running_sum(radius, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer)
+        do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer)
 
         result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
     print(f"{os.path.basename(result_filename)} complete")
@@ -99,13 +99,18 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
 # and add the right-most point of the new circle. Because circles don't have holes, this is sufficient
 # to shift the circle over, and saves us many adds.
 @jit(void(int64, int64, int64, float32[:, :], int64[:], float32, float32, float32[:]), nopython=True, fastmath=True)
-def do_running_sum(radius, x_radius, result_width, src, change_at, mask_sum, running_sum, buffer):
-    for xoffset in range(1, result_width):
-        for y in range(0, radius * 2 + 1):
-            running_sum -= src[y, xoffset + x_radius + change_at[y] - 1]
-            running_sum += src[y, xoffset + x_radius - change_at[y]]
-        buffer[xoffset] = running_sum / mask_sum
-
+def do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer):
+    stride = src.shape[1]
+    src = src.flatten()
+    ys = np.arange(len(change_at))
+    xoffs = x_radius + change_at - 1 + ys * stride
+    xons = x_radius - change_at + ys * stride
+    for xoffset in range(1, len(buffer)):
+        for y in range(0, len(xoffs)):
+            running_sum -= src[xoffset + xoffs[y]]
+        for y in range(0, len(xons)):
+            running_sum += src[xoffset + xons[y]]
+        buffer[xoffset] = (running_sum / mask_sum)
 
 def process_jrc_tiles_by_year(
     output_directory_path: str,
