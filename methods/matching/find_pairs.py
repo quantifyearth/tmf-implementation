@@ -21,6 +21,7 @@ DISTANCE_COLUMNS = [
     "cpc5_u", "cpc5_d",
     "cpc10_u", "cpc10_d"
 ]
+HARD_COLUMN_COUNT = 5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -44,7 +45,6 @@ def find_match_iteration(
     ).reset_index()
 
     logging.info(f"Loading S from {s_parquet_filename}")
-    # Methodology 6.5.5: S should be 10 times the size of K
     s_set = pd.read_parquet(s_parquet_filename)
 
     # get the column ids for DISTANCE_COLUMNS
@@ -76,11 +76,13 @@ def find_match_iteration(
     luc_columns = [x for x in s_set.columns if x.startswith('luc')]
 
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
+    assert(len(hard_match_columns) == HARD_COLUMN_COUNT)
 
     # similar to the above, make the hard match columns contiguous float32 numpy arrays
     s_dist_hard = np.ascontiguousarray(s_set[hard_match_columns].to_numpy()).astype(np.int32)
     k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
 
+    # Methodology 6.5.5: S should be 10 times the size of K
     required = k_set.shape[0] * 10
 
     logging.info(f"Running make_s_subset_mask... required: {required}")
@@ -94,9 +96,7 @@ def find_match_iteration(
     logging.info(f"Finished preparing s_subset. shape: {s_subset.shape}")
 
     # Notes:
-    # 1. in the current methodology version (1.1), it's possible for
-    # multiple pixels in k to map to the same pixel in S
-    # 2. Not all pixels may have matches
+    # 1. Not all pixels may have matches
     results = []
     matchless = []
 
@@ -105,8 +105,6 @@ def find_match_iteration(
     covarience = np.cov(s_subset_for_cov, rowvar=False)
     logging.info("Calculating inverse covariance...")
     invconv = np.linalg.inv(covarience).astype(np.float32)
-
-    m_distances = np.full((len(k_subset), len(s_subset)), DEFAULT_DISTANCE)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
     s_subset_match = s_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
@@ -243,7 +241,7 @@ def greedy_match(
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
 
-        hard_matches = rows_all_true(s_subset[:, :5] == k_row[:5]) & s_available
+        hard_matches = rows_all_true(s_subset[:, :HARD_COLUMN_COUNT] == k_row[:HARD_COLUMN_COUNT]) & s_available
         hard_matches = hard_matches.reshape(
             -1,
         )
@@ -251,7 +249,7 @@ def greedy_match(
         if total_available > 0:
             # Now calculate the distance between the k_row and all the hard matches we haven't already matched
             s_tmp[hard_matches] = batch_mahalanobis_squared(
-                s_subset[hard_matches, 5:], k_row[5:], invcov
+                s_subset[hard_matches, HARD_COLUMN_COUNT:], k_row[HARD_COLUMN_COUNT:], invcov
             )
             # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_subset
             if np.any(hard_matches):
