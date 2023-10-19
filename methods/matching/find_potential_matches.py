@@ -58,7 +58,7 @@ def worker(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
         [start_year, start_year - 5, start_year - 10],
-        [], # CPC not needed at this stage
+        [start_year, start_year - 5, start_year - 10],
         matching_zone_filename,
         jrc_directory_path,
         cpc_directory_path,
@@ -107,10 +107,49 @@ def worker(
         filtered_luc5 = matching_collection.lucs[1].numpy_apply(lambda chunk: chunk == matching[luc5])
         filtered_luc10 = matching_collection.lucs[2].numpy_apply(lambda chunk: chunk == matching[luc10])
 
+        # +/- 10% of CPC_U and CPC_D for t0, t-5 and t-10
+        filtered_cpc_u0 = matching_collection.cpcs[0].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc0_u"] - matching["cpc0_u"] * 0.1),
+                chunk <= (matching["cpc0_u"] + matching["cpc0_u"] * 0.1)
+            )
+        )
+        filtered_cpc_d0 = matching_collection.cpcs[1].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc0_d"] - matching["cpc0_d"] * 0.1),
+                chunk <= (matching["cpc0_d"] + matching["cpc0_d"] * 0.1)
+            )
+        )
+        filtered_cpc_u5 = matching_collection.cpcs[2].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc5_u"] - matching["cpc5_u"] * 0.1),
+                chunk <= (matching["cpc5_u"] + matching["cpc5_u"] * 0.1)
+            )
+        )
+        filtered_cpc_d5 = matching_collection.cpcs[3].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc5_d"] - matching["cpc5_d"] * 0.1),
+                chunk <= (matching["cpc5_d"] + matching["cpc5_d"] * 0.1)
+            )
+        )
+        filtered_cpc_u10 = matching_collection.cpcs[4].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc10_u"] - matching["cpc10_u"] * 0.1),
+                chunk <= (matching["cpc10_u"] + matching["cpc10_u"] * 0.1)
+            )
+        )
+        filtered_cpc_d10 = matching_collection.cpcs[5].numpy_apply(
+            lambda chunk: np.logical_and(
+                chunk >= (matching["cpc10_d"] - matching["cpc10_d"] * 0.1),
+                chunk <= (matching["cpc10_d"] + matching["cpc10_d"] * 0.1)
+            )
+        )
+
         filtered_countries = matching_collection.countries.numpy_apply(lambda chunk: chunk == matching.country)
 
         calc = matching_collection.boundary * filtered_ecoregions * filtered_elevation * filtered_countries * \
-            filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access
+            filtered_luc0 * filtered_luc5 * filtered_luc10 * filtered_slopes * filtered_access * filtered_cpc_u0 * \
+            filtered_cpc_u5 * filtered_cpc_u10 * filtered_cpc_d0 * filtered_cpc_d5 * filtered_cpc_d10
         calc.save(matching_pixels)
 
 

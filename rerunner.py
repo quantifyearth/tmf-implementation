@@ -15,8 +15,11 @@ def main():
     parser.add_argument("--name", dest="name", type=str,
                         help="Name for the directory to keep this in")
 
-    parser.add_argument("--force-copy", dest="force_copy", type=bool,
+    parser.add_argument("--force-copy", dest="force_copy", action="store_true",
                         help="Do the copy even if it looks like it has already run")
+
+    parser.add_argument("--no-ark", dest="use_ark", action="store_false",
+                        help="Do not run under ark")
 
     args = parser.parse_args()
 
@@ -40,12 +43,22 @@ def main():
             rom_pattern = r'\(Build\(([a-z0-9]{64})' 
             matches = re.findall(rom_pattern, rom)
             include_jrc = False
+            include_gola_cpcs = False
             for match in matches:
                 content = subprocess.check_output(f"sudo ls /obuilder-zfs/result/{match}/rootfs/home/tmf/app/data", shell=True, text=True)
                 content = content.splitlines()
+                # Check if files already copied
+                if all(os.path.exists(f"{directory}/inputs/{item}") for item in content):
+                    print(f"Skipping {' '.join(content)} ({match}) as already exists")
+                    continue
+
                 ## Filter out JRC, as it's massive
                 if content == ["jrc"]:
                     include_jrc = True
+                    continue
+                if content == ["rescaled-cpcs"]:
+                    print("Warning: only including CPCs for Gola (1201)")
+                    include_gola_cpcs = True
                     continue
                 # Copy files
                 print(f"Copying {' '.join(content)} ({match})...")
@@ -56,13 +69,21 @@ def main():
             if include_jrc:
                 print("Linking JRC...")
                 subprocess.check_output(f"mkdir -p {directory}/inputs/jrc/tif/products/tmf_v1 && ln -s /maps/pf341/jrc/AnnualChange {directory}/inputs/jrc/tif/products/tmf_v1/", shell=True, text=True)
+
+            ## Link Gola if needed
+            if include_gola_cpcs:
+                print("Linking Gola CPCs...")
+                subprocess.check_output(f"ln -s /maps/pf341/rescaled-tifs {directory}/inputs/rescaled-cpcs", shell=True, text=True)
+
         else:
             print(f"Skipping copy (use --force-copy if you want to copy again, or change --name or blow away {directory}/inputs).")
 
     # Find the command
     ## Rewrite ./input/ and ./data/
     command = args.command
-    command = command.replace("./inputs/", f"{directory}/inputs/").replace("./data/", f"{directory}/data/").replace("python", "arkpython3")
+    command = command.replace("./inputs/", f"{directory}/inputs/").replace("./data/", f"{directory}/data/").replace("python ", "python3 ")
+    if args.use_ark:
+        command = command.replace("python", "arkpython")
 
     # Run with arkpython3
     print("Running...")
@@ -71,7 +92,8 @@ def main():
         print(subprocess.check_output(command, shell=True, text=True, stderr=subprocess.PIPE))
     except subprocess.CalledProcessError as e:
         print("Error running command")
-        print(e.stderr or e.stdout)
+        print(e.stdout)
+        print(e.stderr or "")
 
 
 # Parse the sexp
