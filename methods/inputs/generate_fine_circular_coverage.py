@@ -8,7 +8,7 @@ import tempfile
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
 from typing import List, Tuple
-from numba import jit, void, int64, float32, boolean
+from numba import jit, void, int64, int32
 
 import numpy as np
 from osgeo import gdal  # type: ignore
@@ -24,7 +24,8 @@ JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 GEOMETRY_SCALE_ADJUSTMENT = True
 
 def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
-    diameter = 32 # 960m cicles; TODO: should we actually calculate this in case e.g. JRC changes resolution
+    # TODO: should we actually calculate this in case e.g. JRC changes resolution
+    diameter = 66 # 2010m cicles when you include center pixel
     radius = diameter // 2
     radius2 = radius * radius
 
@@ -73,33 +74,33 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         if src is None or last_x_radius != x_radius:
             # Read in initial full width stripe of height DIAMETER + 1 (or new initial stripe if x_radius has changed)
             src = all_jrc.read_array(-x_radius, yoffset - radius, result_width + x_diameter + 1, diameter + 1)
-            src = np.asarray(src == luc, dtype=np.float32)
+            src = np.asarray(src == luc, dtype=np.int32)
         else:
             # Shift src up and add on next stripe of height 1
             next_row = all_jrc.read_array(-x_radius, yoffset + radius, result_width + x_diameter + 1, 1)
             src_without_first_row = src[1:]
-            src = np.concatenate([src_without_first_row, next_row == luc], axis=0, dtype=np.float32)
+            src = np.concatenate([src_without_first_row, next_row == luc], axis=0, dtype=np.int32)
         last_x_radius = x_radius
 
         # Form the initial circle
         initial = src[0:diameter + 1, 0:x_diameter + 1]
         initial_circle = initial * circle_mask
 
-        running_sum = np.sum(initial_circle, dtype=np.float32)
+        running_sum = np.sum(initial_circle, dtype=np.int32)
 
-        buffer = np.zeros(result_width, dtype=np.float32)
-        buffer[0] = running_sum / mask_sum
+        buffer = np.zeros(result_width, dtype=np.int32)
+        buffer[0] = running_sum
 
-        do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer)
+        do_running_sum(x_radius, src, change_at, running_sum, buffer)
 
-        result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer]), 0, yoffset) # pylint: disable=W0212
+        result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer / mask_sum]), 0, yoffset) # pylint: disable=W0212
     print(f"{os.path.basename(result_filename)} complete")
 
-# As we move along the row, for each column we remove the left-most point of the last circle,
+# As we move along the columns, for each row we remove the left-most point of the last circle,
 # and add the right-most point of the new circle. Because circles don't have holes, this is sufficient
 # to shift the circle over, and saves us many adds.
-@jit(void(int64, float32[:, :], int64[:], float32, float32, float32[:]), nopython=True, fastmath=True)
-def do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer):
+@jit(void(int64, int32[:, :], int64[:], int32, int32[:]), nopython=True, fastmath=True)
+def do_running_sum(x_radius, src, change_at, running_sum, buffer):
     stride = src.shape[1]
     src = src.flatten()
     ys = np.arange(len(change_at))
@@ -110,7 +111,7 @@ def do_running_sum(x_radius, src, change_at, mask_sum, running_sum, buffer):
             running_sum -= src[xoffset + xoffs[y]]
         for y in range(0, len(xons)):
             running_sum += src[xoffset + xons[y]]
-        buffer[xoffset] = (running_sum / mask_sum)
+        buffer[xoffset] = running_sum
 
 def process_jrc_tiles_by_year(
     output_directory_path: str,
@@ -144,7 +145,6 @@ def generate_fine_circular_coverage(
     jrc_file_paths = [os.path.join(jrc_directory, x) for x in jrc_filenames]
     years = list(set([x.split('_')[4] for x in jrc_filenames]))
     years.sort()
-    years = ["2022"]
 
     filesets = []
     for year in years:
