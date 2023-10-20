@@ -23,6 +23,10 @@ JRC_FILENAME_RE = re.compile(r".*_v1_(\d+)_.*_([NS]\d+)_([EW]\d+)\.tif")
 
 GEOMETRY_SCALE_ADJUSTMENT = True
 
+# Usual cache reduction
+# Although we run over each tile twice and tiles are big, so give it a bit more than usual
+gdal.SetCacheMax(1024 * 1024 * 1024)
+
 def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
     # TODO: should we actually calculate this in case e.g. JRC changes resolution
     diameter = 66 # 2010m cicles when you include center pixel
@@ -113,20 +117,18 @@ def do_running_sum(x_radius, src, change_at, running_sum, buffer):
             running_sum += src[xoffset + xons[y]]
         buffer[xoffset] = running_sum
 
-def process_jrc_tiles_by_year(
+def process_jrc_tiles_by_year_and_region(
     output_directory_path: str,
     temporary_directory: str,
-    fileinfo: Tuple[str,List[str]]
+    tilepaths: List[str]
 ) -> None:
-    year, tilepaths = fileinfo
-    print(year)
     jrc_tiles = []
     for p in tilepaths:
         jrc_tiles.append(RasterLayer.layer_from_file(p))
     jrc_layer = GroupLayer(jrc_tiles)
 
-    for luc in [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]:
-        for p in tilepaths:
+    for p in tilepaths:
+        for luc in [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]:
             target_filename = f"fine_{os.path.splitext(os.path.basename(p))[0]}_{luc.value}.tif"
             target_path = os.path.join(output_directory_path, target_filename)
             if not os.path.exists(target_path):
@@ -146,15 +148,23 @@ def generate_fine_circular_coverage(
     years = list(set([x.split('_')[4] for x in jrc_filenames]))
     years.sort()
 
+    # Split JRC into its three separate areas (separated by the Atlantic, Indian, and Pacific oceans)
+    areas = ["SAM", "AFR", "ASI"]
+
     filesets = []
     for year in years:
-        filesets.append((year, [x for x in jrc_file_paths if f"/JRC_TMF_AnnualChange_v1_{year}" in x]))
+        for area in areas:
+            filesets.append([x for x in jrc_file_paths if f"/JRC_TMF_AnnualChange_v1_{year}" in x and f"_{area}_" in x])
+
+    total_files = sum(len(files) for files in filesets)
+
+    assert total_files == len(jrc_file_paths)
 
     with tempfile.TemporaryDirectory() as tempdir:
         with Pool(processes=concurrent_processes) as pool:
             pool.map(
                 partial(
-                    process_jrc_tiles_by_year,
+                    process_jrc_tiles_by_year_and_region,
                     result_directory,
                     tempdir,
                 ),
