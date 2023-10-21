@@ -52,11 +52,13 @@ def build_layer_collection(
                 glob.glob(f"*{year}*.tif", root_dir=jrc_directory_path)
         ], name=f"luc_{year}") for year in luc_years
     ]
+
     cpcs = [
-        RasterLayer.layer_from_file(
-            os.path.join(cpc_directory_path, f"coarsened_{year_class[0]}_{year_class[1].value}.tif"),
-             name=f"cpc_{year_class}"
-        ) for year_class in product(cpc_years,
+        GroupLayer([
+            RasterLayer.layer_from_file(os.path.join(cpc_directory_path, filename)) for filename in
+                glob.glob(f"*{year_class[0]}*_{year_class[1].value}.tif", root_dir=cpc_directory_path)
+        ], name=f"cpc_{year_class[0]}_{year_class[1]}") 
+        for year_class in product(cpc_years,
             [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
 
@@ -154,12 +156,8 @@ def calculate_k(
         row_luc = [
             luc.read_array(0, yoffset, project_width, 1) for luc in project_collection.lucs
         ]
-        # For CPC, which is at a different pixel_scale, we need to do a little math
-        coord = project_collection.boundary.latlng_for_pixel(0, yoffset)
-        _, cpc_yoffset = project_collection.cpcs[0].pixel_for_latlng(*coord)
         row_cpc = [
-            cpc.read_array(0, cpc_yoffset, project_collection.cpcs[0].window.xsize, 1)
-            for cpc in project_collection.cpcs
+            cpc.read_array(0, yoffset, project_width, 1) for cpc in project_collection.cpcs
         ]
 
         for xoffset in range(0, project_width, pixel_skip):
@@ -168,8 +166,8 @@ def calculate_k(
             lucs = [x[0][xoffset] for x in row_luc]
 
             coord = project_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-            cpc_xoffset, _ = project_collection.cpcs[0].pixel_for_latlng(*coord)
-            cpcs = [x[0][cpc_xoffset] for x in row_cpc]
+            # cpc_xoffset, _ = project_collection.cpcs[0].pixel_for_latlng(*coord)
+            cpcs = [x[0][xoffset] for x in row_cpc]
 
             results.append([
                 xoffset,
