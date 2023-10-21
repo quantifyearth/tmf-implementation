@@ -7,6 +7,7 @@ import shutil
 import tempfile
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
+from time import perf_counter_ns
 from typing import List, Tuple
 from numba import jit, void, int64, int32
 
@@ -26,6 +27,9 @@ GEOMETRY_SCALE_ADJUSTMENT = True
 # Usual cache reduction
 # Although we run over each tile twice and tiles are big, so give it a bit more than usual
 gdal.SetCacheMax(1024 * 1024 * 1024)
+
+def accumulate(cumrow, width, x_radius, result_width):
+    return cumrow[x_radius - width:x_radius - width + result_width] - cumrow[x_radius + width:x_radius + width + result_width]    
 
 def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
     # TODO: should we actually calculate this in case e.g. JRC changes resolution
@@ -49,11 +53,17 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         jrc_tile.projection,
     )
 
-    src = None
+    ys = np.arange(0, diameter + 1)
+
+    rows = None
     last_x_radius = 0
+    start_time = perf_counter_ns()
     for yoffset in range(result_height):
         if yoffset % 100 == 0:
             print(f"{os.path.basename(result_filename)}: {yoffset} of {result_height}")
+            if yoffset == 100:
+                print("Time per pixel (nanosecond):", (perf_counter_ns() - start_time) / yoffset / result_width)
+                exit()
         if GEOMETRY_SCALE_ADJUSTMENT:
             x_factor = wgs_aspect_ratio_at(jrc_tile.latlng_for_pixel(0, yoffset)[0])
         else:
@@ -72,30 +82,23 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
                     if not on:
                         on = True
                         change_at[y + radius] = x
-
+        row_list = np.unique(change_at)
         mask_sum = np.sum(circle_mask, dtype=np.float32)
 
-        if src is None or last_x_radius != x_radius:
+        if rows is None or last_x_radius != x_radius:
             # Read in initial full width stripe of height DIAMETER + 1 (or new initial stripe if x_radius has changed)
             src = all_jrc.read_array(-x_radius, yoffset - radius, result_width + x_diameter + 1, diameter + 1)
-            src = np.asarray(src == luc, dtype=np.int32)
+            sums = np.cumsum(src == luc, axis = 1, dtype = np.int16)
+            rows = [{width: accumulate(cumrow, width, x_radius, result_width) for width in row_list} for cumrow in sums]
         else:
             # Shift src up and add on next stripe of height 1
             next_row = all_jrc.read_array(-x_radius, yoffset + radius, result_width + x_diameter + 1, 1)
-            src_without_first_row = src[1:]
-            src = np.concatenate([src_without_first_row, next_row == luc], axis=0, dtype=np.int32)
+            cumrow = np.cumsum(next_row == luc, dtype = np.int16)
+            next_rows = {width: accumulate(cumrow, width, x_radius, result_width) for width in row_list}
+            rows = rows[1:] + [next_rows]
         last_x_radius = x_radius
 
-        # Form the initial circle
-        initial = src[0:diameter + 1, 0:x_diameter + 1]
-        initial_circle = initial * circle_mask
-
-        running_sum = np.sum(initial_circle, dtype=np.int32)
-
-        buffer = np.zeros(result_width, dtype=np.int32)
-        buffer[0] = running_sum
-
-        do_running_sum(x_radius, src, change_at, running_sum, buffer)
+        buffer = np.sum([rows[y][change_at[y]] for y in ys], axis=0, dtype=np.int16)
 
         result_layer._dataset.GetRasterBand(1).WriteArray(np.array([buffer / mask_sum]), 0, yoffset) # pylint: disable=W0212
     print(f"{os.path.basename(result_filename)} complete")
