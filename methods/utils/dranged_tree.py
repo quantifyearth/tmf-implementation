@@ -60,7 +60,7 @@ class DRangedTree:
 
         # Build the tree
         state = TreeState(dimensions)
-        state.logging = True
+        state.logging = False
         state.bound_dimension_at = math.ceil(math.log2(1/(1-math.pow(expected_fraction, 1 / len(widths))))) - 1
         return _make_tree_internal(rects, bounds, state)
 
@@ -205,9 +205,6 @@ class TreeState:
         if self.logging:
             print(self.depth * "  ", s)
 
-class SplitFailed(Exception):
-    pass
-
 class PossibleSplit:
     def __init__(self, d:int):
         self.d = d
@@ -232,12 +229,12 @@ class MedianSplit(PossibleSplit):
 
             self.left_count: int = np.sum(lefts < self.split_at)
             self.right_count: int = np.sum(rights > self.split_at)
-            self.total = len(lefts)
         else:
-            raise SplitFailed()
-    def score(self) -> int|float:
-        # Last bit is tie-breaker
-        return max(self.left_count, self.right_count) + (self.left_count + self.right_count - self.total) / self.total
+            self.left_count = len(lefts)
+            self.right_count = len(rights)
+            self.split_at = math.nan
+    def score(self) -> int:
+        return max(self.left_count, self.right_count)
     def dump(self) -> str:
         return f"split d{self.d} at {self.split_at}, lefts: {self.left_count} rights: {self.right_count}"
     def generate(self, rects, bounds, state: TreeState) -> DRangedTree:
@@ -289,13 +286,13 @@ class ExactSplit(PossibleSplit):
             self.value = splits[0]
             if rects.shape[2] > 1:
                 self.sub_rects = np.unique(without(rects, d), axis=0)
-                self._score = len(self.sub_rects) * (1 - (1 / rects.shape[2]))
+                self._score = len(self.sub_rects)
             else:
-                # No further check so perfect
+                # No further checks
                 self._score = 0
         else:
-            raise SplitFailed()
-    def score(self) -> int:
+            self._score = math.inf
+    def score(self) -> int|float:
         return self._score
     def dump(self) -> str:
         return f"d{self.d} has single value {self.value}, remaining tree {self._score}"
@@ -315,12 +312,10 @@ class BoundedSplit(PossibleSplit):
                 self._score = 0
             else:
                 self.sub_rects = np.unique(without(rects, d), axis=0)
-                # The formula here represents the idea that eliminating a dimension corresponds
-                # to reducing the search area by that fraction.
-                self._score = len(self.sub_rects) * (1 - (1 / rects.shape[2]))
+                self._score = len(self.sub_rects)
         else:
-            raise SplitFailed()
-    def score(self) -> int:
+            self._score = math.inf
+    def score(self) -> int|float:
         return self._score
     def dump(self) -> str:
         return f"d{self.d} is full (remaining tree {self._score})"
@@ -330,53 +325,6 @@ class BoundedSplit(PossibleSplit):
         sub_bounds = without(bounds, self.d)
         subtree = _make_tree_internal(self.sub_rects, sub_bounds, state.drop(self.d))
         return FulfilledTree(subtree, self.d)
-    
-class MiddleSplit(PossibleSplit):
-    def __init__(self, d: int, lefts, rights, rects):
-        super().__init__(d)
-        self.dimensions = rects.shape[2]
-
-        # Choose split points
-        self.left = np.max(lefts)
-        self.right = np.min(rights)
-        if self.left >= self.right:
-            raise SplitFailed()
-
-        self.lefts = rects[:, 0, d] < self.left
-        self.rights = rects[:, 1, d] > self.right
-        self.sub_rects = np.unique(without(rects, d), axis=0)
-    def score(self) -> int|float:
-        # The formula here represents the idea that eliminating a dimension corresponds
-        # to reducing the search area by that fraction.
-        return max(np.sum(self.lefts), len(self.rights)) / 2 #, np.sum(self.sub_rects) * (1 - (1/self.dimensions)))
-    def dump(self) -> str:
-        return f"d{self.d} is fulfilled from {self.left} to {self.right} (remaining trees {np.sum(self.lefts)} / {len(self.sub_rects)} / {np.sum(self.rights)})"
-    def generate(self, rects, bounds, state: TreeState) -> DRangedTree:
-        if state.dimensions == 1:
-            subtree = FullTree()
-        else:
-            sub_bounds = without(bounds, self.d)
-            subtree = _make_tree_internal(self.sub_rects, sub_bounds, state.drop(self.d))
-            subtree = FulfilledTree(subtree, self.d)
-
-        lefts = rects[self.lefts]
-        lefts[:, 1, self.d] = np.clip(lefts[:, 1, self.d], a_max = self.left, a_min = None)
-        lefts = np.unique(lefts, axis = 0)
-
-        rights = rects[self.rights]
-        rights[:, 0, self.d] = np.clip(rights[:, 0, self.d], a_max = self.right, a_min = None)
-        rights = np.unique(rights, axis = 0)
-
-        left_bounds = np.copy(bounds)
-        left_bounds[1, self.d] = self.left
-
-        right_bounds = np.copy(bounds)
-        right_bounds[0, self.d] = self.right
-
-        # Build the subtrees
-        left = _make_tree_internal(lefts, left_bounds, state.descend(self.d))
-        right = _make_tree_internal(rights, right_bounds, state.descend(self.d))
-        return SplitDLeanRightTree(left, SplitDTree(subtree, right, self.d, self.right), self.d, self.left)
 
 """
 Remove the j-th column from the final dimension of items.
@@ -395,14 +343,14 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         bounds: the current edges of the search area as a hyper-rectangle as a numpy array of 2*d.
         state: an internal object for tracking state, used for debugging and developing.
     """
-    state.print(f"T {len(rects)} ∆{state.dimensions} v{''.join([str(math.floor(d)) for d in state.descent])}")
+    state.print(f"T {len(rects)} ∆{state.dimensions}")
 
     if len(rects) == 0:
         return EmptyTree()
     if len(rects) == 1:
         return SingletonTree(rects[0])
     # If there are less than 30 rectangles, just run through them as a numpy list.
-    if len(rects) < 10:
+    if len(rects) < 50:
         return ListTree(rects)
     if state.depth == 30:
         print(f"Limiting depth to {state.depth} with {len(rects)} rects remaining")
@@ -439,65 +387,36 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     splits = [np.unique(np.array([lefts[d], rights[d]])) for d in range(dimensions)]
 
     split_options: List[PossibleSplit] = []
-    def add_split_option(f):
-        try:
-            split_options.append(f())
-        except SplitFailed:
-            pass
     for d in range(dimensions):
-        add_split_option(lambda: MedianSplit(d, splits[d], lefts[d], rights[d]))
-        add_split_option(lambda: BoundedSplit(d, rects, bounds))
-        add_split_option(lambda: ExactSplit(d, splits[d], rects))
+        split_options.append(MedianSplit(d, splits[d], lefts[d], rights[d]))
+        split_options.append(BoundedSplit(d, rects, bounds))
+        split_options.append(ExactSplit(d, splits[d], rects))
 
     split_options.sort(key=lambda item: item.score())
+    for option in split_options[:3]:
+        state.print(" " + option.dump())
     option = split_options[0]
 
-    if option.score() > len(rects) * 0.75 or len(rects) > 1000:
-        # Try harder with best candidate splits
-        best_candidate_ds = [option.d for option in split_options[:3]]
-        for d in best_candidate_ds:
+    if option.score() > len(rects) * 0.95:
+        # Try harder
+        for d in [option.d for option in split_options[:3]]:
             for pos in range(9):
                 # Skip median
                 if pos == 4: continue
-                add_split_option(lambda: MedianSplit(d, splits[d], lefts[d], rights[d], 0.1 * (pos + 1)))
+                split_options.append(MedianSplit(d, splits[d], lefts[d], rights[d], 0.1 * (pos + 1)))
         split_options.sort(key=lambda item: item.score())
         option = split_options[0]
 
-        if option.score() > len(rects) * 0.75 or len(rects) > 5000:
-            # Try harder with best candidate splits
-            for d in best_candidate_ds:
-                for pos in range(39):
-                    # Skip median
-                    if pos == 20 or (pos % 4) == 3: continue
-                    add_split_option(lambda: MedianSplit(d, splits[d], lefts[d], rights[d], 0.025 * (pos + 1)))
-            for d in range(dimensions):
-                if d in best_candidate_ds:
-                    continue
-                for pos in range(9):
-                    # Skip median
-                    if pos == 4: continue
-                    add_split_option(lambda: MedianSplit(d, splits[d], lefts[d], rights[d], 0.1 * (pos + 1)))
-            split_options.sort(key=lambda item: item.score())
-            option = split_options[0]
+        if option.score() > len(rects) * 0.95:
+            # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
+            # Wherever we split we're hardly going to achieve much, so fall out to a list
+            state.logging = True
+            state.print(f"T {len(rects)} ∆{state.dimensions}")
+            for option in split_options[:3]:
+                state.print(" ?>> " + option.dump())
+            state.logging = False
 
-        if option.score() > len(rects) * 0.75:
-            # Try removing middles
-            # split_options: List[PossibleSplit] = []
-            for d in range(dimensions):
-                add_split_option(lambda: MiddleSplit(d, lefts[d], rights[d], rects))
-            split_options.sort(key=lambda item: item.score())
-            option = split_options[0]
-
-    if option.score() > len(rects) * 0.95:
-        best_ds_printed = {}
-        for o in split_options:
-            if o.d in best_ds_printed: continue
-            best_ds_printed[o.d] = True
-            state.print("  X " + o.dump() + " : " + str(o.score()))
-        state.print(" No good splits found")
-        for d in range(dimensions):
-            state.print(f"  dimension {d} left:{np.min(lefts[d])} right:{np.max(rights[d])} average width:{np.mean(rights[d] - lefts[d])}")
-        return ListTree(rects)
+            return ListTree(rects)
 
     return option.generate(rects, bounds, state)
 
