@@ -74,8 +74,8 @@ def build_m_table(
                 continue
 
             coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-            cpc_xoffset, _ = matching_collection.cpcs[0].pixel_for_latlng(*coord)
-            cpcs = [x[0][cpc_xoffset] for x in row_cpc]
+            # cpc_xoffset, _ = matching_collection.cpcs[0].pixel_for_latlng(*coord)
+            cpcs = [x[0][xoffset] for x in row_cpc]
 
             results.append([
                 coord[0],
