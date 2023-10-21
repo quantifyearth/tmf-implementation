@@ -88,11 +88,31 @@ def find_match_iteration(
 
     s_subset_mask = make_s_subset_mask(m_dist_thresholded, k_dist_thresholded, m_dist_hard, k_dist_hard, required)
 
-    logging.info("Done make_s_subset_mask. s_subset_mask.shape: %s", s_subset_mask.shape)
+    s_subset_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
 
-    s_subset = m_set[s_subset_mask].reset_index()
+    # Randomly select 100 potential pixels per K, these pixels are similar
+    # to the particular k and so we should end up with similar distributions
+    # for the matching variables.
+    no_potentials = np.zeros(k_subset.shape[0], dtype=np.bool_)
+    for k in range(s_subset_mask.shape[0]):
+        masks = s_subset_mask[k]
+        indices = np.argwhere(masks)
+        np.random.shuffle(indices)
+        idx = indices[:100]
+        if len(idx) == 0:
+            no_potentials[k] = True
+        else:
+            for i in idx:
+                s_subset_mask_true[i[0]] = True
 
-    logging.info("Finished preparing s_subset. shape: %s", s_subset.shape)
+    logging.info(f"Done make_s_subset_mask. s_subset_mask.shape: {s_subset_mask.shape}")
+    logging.info(f"Actual indexes {np.cumsum(s_subset_mask_true)}")
+
+    s_subset = m_set[s_subset_mask_true]
+    potentials = np.invert(no_potentials)
+
+    k_subset = k_subset[potentials]
+    logging.info(f"Finished preparing s_subset. shape: {s_subset.shape}")
 
     # Notes:
     # 1. Not all pixels may have matches
@@ -165,21 +185,10 @@ def find_match_iteration(
     logging.info("Finished find match iteration")
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def make_s_subset_mask(
-    m_dist_thresholded: np.ndarray,
-    k_dist_thresholded: np.ndarray,
-    m_dist_hard: np.ndarray,
-    k_dist_hard: np.ndarray,
-    number_required: int,
-):
-    s_include = np.zeros((m_dist_thresholded.shape[0],), dtype=np.bool_)
-    # create an array that is the indexes of the rows in s_dist_thresholded and shuffle it
-    m_indexes = np.arange(m_dist_thresholded.shape[0])
-    np.random.shuffle(m_indexes)
-    found = 0
+def make_s_subset_mask(m_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, m_dist_hard: np.ndarray, k_dist_hard: np.ndarray, n: int):
+    s_include = np.zeros((k_dist_thresholded.shape[0], m_dist_thresholded.shape[0]), dtype=np.bool_)
 
-    for position in range(m_dist_thresholded.shape[0]):
-        i = m_indexes[position]
+    for i in range(m_dist_thresholded.shape[0]):
         m_row = m_dist_thresholded[i, :]
         m_hard = m_dist_hard[i]
 
@@ -203,13 +212,7 @@ def make_s_subset_mask(
                         should_include = False
 
             if should_include:
-                s_include[i] = True
-                break
-
-        if s_include[i]:
-            found += 1
-            if found >= number_required:
-                break
+                s_include[k][i] = True
 
     return s_include
 
