@@ -65,8 +65,8 @@ def find_match_iteration(
     k_dist_thresholded_df = k_subset[DISTANCE_COLUMNS] / thresholds_for_columns
 
     # convert to float32 numpy arrays and make them contiguous for numba to vectorise
-    s_dist_thresholded = np.ascontiguousarray(s_dist_thresholded_df.to_numpy(), dtype=np.float32)
-    k_dist_thresholded = np.ascontiguousarray(k_dist_thresholded_df.to_numpy(), dtype=np.float32)
+    s_dist_thresholded = np.ascontiguousarray(s_dist_thresholded_df, dtype=np.float32)
+    k_dist_thresholded = np.ascontiguousarray(k_dist_thresholded_df, dtype=np.float32)
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
