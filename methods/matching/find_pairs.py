@@ -26,7 +26,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 def find_match_iteration(
     k_parquet_filename: str,
-    s_parquet_filename: str,
+    m_parquet_filename: str,
     start_year: int,
     output_folder: str,
     idx_and_seed: tuple[int, int]
@@ -43,8 +43,8 @@ def find_match_iteration(
         random_state=random.randint(0, 1000000),
     ).reset_index()
 
-    logging.info("Loading S from %s", s_parquet_filename)
-    s_set = pd.read_parquet(s_parquet_filename)
+    logging.info("Loading M from %s", m_parquet_filename)
+    m_set = pd.read_parquet(m_parquet_filename)
 
     # get the column ids for DISTANCE_COLUMNS
     thresholds_for_columns = np.array([
@@ -61,24 +61,24 @@ def find_match_iteration(
 
     logging.info("Preparing s_subset...")
 
-    s_dist_thresholded_df = s_set[DISTANCE_COLUMNS] / thresholds_for_columns
+    m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
     k_dist_thresholded_df = k_subset[DISTANCE_COLUMNS] / thresholds_for_columns
 
     # convert to float32 numpy arrays and make them contiguous for numba to vectorise
-    s_dist_thresholded = np.ascontiguousarray(s_dist_thresholded_df, dtype=np.float32)
+    m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
     k_dist_thresholded = np.ascontiguousarray(k_dist_thresholded_df, dtype=np.float32)
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
     luc0, luc5, luc10 = luc_matching_columns(start_year)
     # As well as all the LUC columns for later use
-    luc_columns = [x for x in s_set.columns if x.startswith('luc')]
+    luc_columns = [x for x in m_set.columns if x.startswith('luc')]
 
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
     assert len(hard_match_columns) == HARD_COLUMN_COUNT
 
     # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    s_dist_hard = np.ascontiguousarray(s_set[hard_match_columns].to_numpy()).astype(np.int32)
+    m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
     k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
 
     # Methodology 6.5.5: S should be 10 times the size of K
@@ -86,11 +86,11 @@ def find_match_iteration(
 
     logging.info("Running make_s_subset_mask... required: %d", required)
 
-    s_subset_mask = make_s_subset_mask(s_dist_thresholded, k_dist_thresholded, s_dist_hard, k_dist_hard, required)
+    s_subset_mask = make_s_subset_mask(m_dist_thresholded, k_dist_thresholded, m_dist_hard, k_dist_hard, required)
 
     logging.info("Done make_s_subset_mask. s_subset_mask.shape: %s", s_subset_mask.shape)
 
-    s_subset = s_set[s_subset_mask].reset_index()
+    s_subset = m_set[s_subset_mask].reset_index()
 
     logging.info("Finished preparing s_subset. shape: %s", s_subset.shape)
 
@@ -166,22 +166,22 @@ def find_match_iteration(
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def make_s_subset_mask(
-    s_dist_thresholded: np.ndarray,
+    m_dist_thresholded: np.ndarray,
     k_dist_thresholded: np.ndarray,
-    s_dist_hard: np.ndarray,
+    m_dist_hard: np.ndarray,
     k_dist_hard: np.ndarray,
     number_required: int,
 ):
-    s_include = np.zeros((s_dist_thresholded.shape[0],), dtype=np.bool_)
+    s_include = np.zeros((m_dist_thresholded.shape[0],), dtype=np.bool_)
     # create an array that is the indexes of the rows in s_dist_thresholded and shuffle it
-    s_indexes = np.arange(s_dist_thresholded.shape[0])
-    np.random.shuffle(s_indexes)
+    m_indexes = np.arange(m_dist_thresholded.shape[0])
+    np.random.shuffle(m_indexes)
     found = 0
 
-    for position in range(s_dist_thresholded.shape[0]):
-        i = s_indexes[position]
-        s_row = s_dist_thresholded[i, :]
-        s_hard = s_dist_hard[i]
+    for position in range(m_dist_thresholded.shape[0]):
+        i = m_indexes[position]
+        m_row = m_dist_thresholded[i, :]
+        m_hard = m_dist_hard[i]
 
         for k in range(k_dist_thresholded.shape[0]):
             k_row = k_dist_thresholded[k, :]
@@ -191,15 +191,15 @@ def make_s_subset_mask(
 
             # check that every element of s_hard matches k_hard
             hard_equals = True
-            for j in range(s_hard.shape[0]):
-                if s_hard[j] != k_hard[j]:
+            for j in range(m_hard.shape[0]):
+                if m_hard[j] != k_hard[j]:
                     hard_equals = False
 
             if not hard_equals:
                 should_include = False
             else:
-                for j in range(s_row.shape[0]):
-                    if abs(s_row[j] - k_row[j]) > 1.0:
+                for j in range(m_row.shape[0]):
+                    if abs(m_row[j] - k_row[j]) > 1.0:
                         should_include = False
 
             if should_include:
@@ -282,7 +282,7 @@ def batch_mahalanobis_squared(rows, vector, invcov):
 
 def find_pairs(
     k_parquet_filename: str,
-    s_parquet_filename: str,
+    m_parquet_filename: str,
     start_year: int,
     seed: int,
     output_folder: str,
@@ -299,7 +299,7 @@ def find_pairs(
             partial(
                 find_match_iteration,
                 k_parquet_filename,
-                s_parquet_filename,
+                m_parquet_filename,
                 start_year,
                 output_folder
             ),
@@ -320,10 +320,10 @@ def main():
         help="Parquet file containing pixels from K as generated by calculate_k.py"
     )
     parser.add_argument(
-        "--s",
+        "--m",
         type=str,
         required=True,
-        dest="s_filename",
+        dest="m_filename",
         help="Parquet file containing pixels from M as generated by build_m_table.py"
     )
     parser.add_argument(
@@ -359,7 +359,7 @@ def main():
 
     find_pairs(
         args.k_filename,
-        args.s_filename,
+        args.m_filename,
         args.start_year,
         args.seed,
         args.output_directory_path,
