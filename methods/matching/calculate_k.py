@@ -8,7 +8,7 @@ from typing import List, Optional
 
 import pandas as pd
 from geopandas import gpd  # type: ignore
-from yirgacheffe.layers import TiledGroupLayer, RasterLayer, VectorLayer  # type: ignore
+from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer  # type: ignore
 from yirgacheffe.window import PixelScale  # type: ignore
 
 from methods.common import LandUseClass
@@ -48,14 +48,14 @@ def build_layer_collection(
     outline_layer = VectorLayer.layer_from_file(boundary_filename, None, pixel_scale, projection)
 
     lucs = [
-        TiledGroupLayer([
+        GroupLayer([
             RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename)) for filename in
                 glob.glob(f"*{year}*.tif", root_dir=jrc_directory_path)
         ], name=f"luc_{year}") for year in luc_years
     ]
 
     cpcs = [
-        TiledGroupLayer([
+        GroupLayer([
             RasterLayer.layer_from_file(
                 os.path.join(cpc_directory_path, filename)
             ) for filename in
@@ -66,21 +66,21 @@ def build_layer_collection(
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
     # as part of import of the ecoregions data
-    ecoregions = TiledGroupLayer([
+    ecoregions = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
             glob.glob("*.tif", root_dir=ecoregions_directory_path)
     ], name="ecoregions")
 
-    elevation = TiledGroupLayer([
+    elevation = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)) for filename in
             glob.glob("srtm*.tif", root_dir=elevation_directory_path)
     ], name="elevation")
-    slopes = TiledGroupLayer([
+    slopes = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(slope_directory_path, filename)) for filename in
             glob.glob("slope*.tif", root_dir=slope_directory_path)
     ], name="slopes")
 
-    access = TiledGroupLayer([
+    access = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(access_directory_path, filename)) for filename in
             glob.glob("*.tif", root_dir=access_directory_path)
     ], name="access")
