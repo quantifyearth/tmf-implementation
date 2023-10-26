@@ -293,7 +293,7 @@ def find_potential_matches(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generates a set of rasters per entry in K with potential matches.")
+    parser = argparse.ArgumentParser(description="Generates a set of rasters per process with potential matches.")
     parser.add_argument(
         "--k",
         type=str,
@@ -369,7 +369,7 @@ def main():
         type=str,
         required=True,
         dest="output_directory",
-        help="Destination directory for storing per-K rasters."
+        help="Destination directory for storing per-process rasters (horizontally striped)."
     )
     parser.add_argument(
         "--countries-raster",
