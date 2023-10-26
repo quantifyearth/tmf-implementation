@@ -6,7 +6,7 @@ polars
 geopandas
 scipy
 numba
-git+https://github.com/carboncredits/yirgacheffe@272e420b1579d40fad1a6090956f2e569b5353a3
+git+https://github.com/carboncredits/yirgacheffe@743d26520c6438bd6e1f08e7822a54f965723405
 git+https://github.com/carboncredits/biomass-recovery@170630d50e42083c545643928747d67aa7245291
 
 # developement

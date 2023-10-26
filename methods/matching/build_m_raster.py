@@ -1,40 +1,50 @@
 import argparse
 import glob
 import os
+import shutil
 import sys
 import tempfile
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
 
+from osgeo import gdal  # type: ignore
+
 from yirgacheffe.layers import RasterLayer  # type: ignore
+
+
+# We do not re-use data in this, so set a small block cache size for GDAL, otherwise
+# it pointlessly hogs memory, and then spends a long time tidying it up after.
+gdal.SetCacheMax(1024 * 1024 * 16)
+
 
 def worker(
     filename: str,
     result_dir: str,
+    compress: bool,
     input_queue: Queue,
 ) -> None:
     output_tif = os.path.join(result_dir, filename)
 
-    merged_result = None
+    calc = None
+    final = None
 
     while True:
         path = input_queue.get()
         if path is None:
             break
-
         partial_raster = RasterLayer.layer_from_file(path)
-        if merged_result is None:
-            merged_result = partial_raster
-        else:
-            calc = merged_result + partial_raster
-            temp = RasterLayer.empty_raster_layer_like(merged_result)
-            calc.save(temp)
-            merged_result = temp
 
-    final = RasterLayer.empty_raster_layer_like(merged_result, filename=output_tif)
-    assert merged_result is not None
-    merged_result.save(final)
-    del merged_result
+        if final is None:
+            final = RasterLayer.empty_raster_layer_like(partial_raster, filename=output_tif, compress=compress)
+
+        if calc is None:
+            calc = partial_raster
+        else:
+            calc = calc + partial_raster
+
+    assert calc is not None
+    calc.save(final)
+    del final
 
 def build_k(
     images_dir: str,
@@ -51,6 +61,7 @@ def build_k(
             workers = [Process(target=worker, args=(
                 f"{index}.tif",
                 tempdir,
+                False,
                 source_queue
             )) for index in range(processes_count)]
             for worker_process in workers:
@@ -77,7 +88,8 @@ def build_k(
             result_dir, filename = os.path.split(output_filename)
             single_worker = Process(target=worker, args=(
                 filename,
-                result_dir,
+                tempdir,
+                True,
                 source_queue
             ))
             single_worker.start()
@@ -98,6 +110,7 @@ def build_k(
                     processes.remove(candidate)
                 time.sleep(1)
 
+            shutil.move(os.path.join(tempdir, filename), os.path.join(result_dir, filename))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generates a single raster of M from all the per K rasters.")
