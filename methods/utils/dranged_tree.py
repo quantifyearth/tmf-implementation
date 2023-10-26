@@ -50,7 +50,6 @@ class DRangedTree:
                 lefts.append(value - width)
                 rights.append(value + width)
             rects.append([lefts, rights])
-        rects = np.array(rects)
         # Calculate initial bounds
         dimensions = items.shape[items.ndim - 1]
         bounds = np.transpose(np.array([[-math.inf, math.inf] for _ in range(dimensions)]))
@@ -59,7 +58,7 @@ class DRangedTree:
         state = TreeState(dimensions)
         state.logging = False
         state.bound_dimension_at = math.ceil(math.log2(1/(1-math.pow(expected_fraction, 1 / len(widths))))) - 1
-        return _make_tree_internal(rects, bounds, state)
+        return _make_tree_internal(np.array(rects), bounds, state)
 
 class SingletonTree(DRangedTree):
     def __init__(self, rects):
@@ -171,7 +170,12 @@ class SplitDLeanRightTree(DRangedTree):
         return 1 + self.left.size() + self.right.size()
 
 class TreeState:
-    def __init__(self, dimensions_or_tree, j: int = -1, drop: bool = False):
+    depth: int
+    dimensions: int
+    descent: np.ndarray
+    logging: bool
+    bound_dimension_at: int
+    def __init__(self, dimensions_or_tree: int|TreeState, j: int = -1, drop: bool = False):
         if isinstance(dimensions_or_tree, TreeState):
             existing = dimensions_or_tree
             assert(j < existing.dimensions)
@@ -375,13 +379,13 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
             # Only worth doing if at least 20% overlap.
             # FIXME: currently this code leads to fewer matches in test for unknown reasons
             if overlap_width > 0.2 * best_width_estimate:
-                lefts = np.copy(rects)
-                lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = left_cut, a_min = None)
-                lefts = np.unique(lefts, axis = 0)
+                left_rects = np.copy(rects)
+                left_rects[:, 1, d] = np.clip(left_rects[:, 1, d], a_max = left_cut, a_min = None)
+                left_rects = np.unique(left_rects, axis = 0)
 
-                rights = np.copy(rects)
-                rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = right_cut, a_max = None)
-                rights = np.unique(rights, axis = 0)
+                right_rects = np.copy(rects)
+                right_rects[:, 0, d] = np.clip(right_rects[:, 0, d], a_min = right_cut, a_max = None)
+                right_rects = np.unique(right_rects, axis = 0)
 
                 middle = without(rects, d)
 
@@ -395,9 +399,9 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
                 right_bounds[0, d] = right_cut
 
                 # Build the subtrees
-                left = _make_tree_internal(lefts, left_bounds, state.descend(d))
+                left = _make_tree_internal(left_rects, left_bounds, state.descend(d))
                 middle = make_tree_without_d(d, middle)
-                right = _make_tree_internal(rights, right_bounds, state.descend(d))
+                right = _make_tree_internal(right_rects, right_bounds, state.descend(d))
                 return SplitDTree(left, SplitDTree(middle, right, d, right_cut), d, left_cut)
 
         # We used to assume we could find a "best" split point that balanced the split.
@@ -410,14 +414,14 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
     # Split and clip the rectangles at the split point
     # Rectangles include their end points to the left.
     # We clip to make split point calculations accurate later on.
-    lefts = rects[rects[:, 0, d] <= split_at]
-    lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
-    lefts = np.unique(lefts, axis = 0)
+    left_rects = rects[rects[:, 0, d] <= split_at]
+    left_rects[:, 1, d] = np.clip(left_rects[:, 1, d], a_max = split_at, a_min = None)
+    left_rects = np.unique(left_rects, axis = 0)
     #lefts = lefts[lefts[:, 0, d] < lefts[:, 1, d]] # Filter out empty rectangles
 
-    rights = rects[rects[:, 1, d] > split_at]
-    rights[:, 0, d] = np.clip(rights[:, 0, d], a_min = split_at, a_max = None)
-    rights = np.unique(rights, axis = 0)
+    right_rects = rects[rects[:, 1, d] > split_at]
+    right_rects[:, 0, d] = np.clip(right_rects[:, 0, d], a_min = split_at, a_max = None)
+    right_rects = np.unique(right_rects, axis = 0)
     #rights = rights[rights[:, 0, d] < rights[:, 1, d]] # Filter out empty rectangles
 
     #state.print(f" splitting ∂{d} at {split_at} (of {len(splits[d])} splits: {splits[d][:10]}) lefts: {len(lefts)} rights: {len(rights)}")
@@ -430,6 +434,6 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
     right_bounds[0, d] = split_at
 
     # Build the subtrees
-    left = _make_tree_internal(lefts, left_bounds, state.descend(d))
-    right = _make_tree_internal(rights, right_bounds, state.descend(d))
+    left = _make_tree_internal(left_rects, left_bounds, state.descend(d))
+    right = _make_tree_internal(right_rects, right_bounds, state.descend(d))
     return SplitDTree(left, right, d, split_at) # type: ignore
