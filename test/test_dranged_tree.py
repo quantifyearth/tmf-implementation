@@ -137,6 +137,7 @@ def test_dranged_tree_matches_as_expected():
             found += 1 if tree.contains(test_values[i]) else 0
         return found
 
-    if False:
+    test_np_matching = False # This is slow but a useful check so I don't want to delete it
+    if test_np_matching:
         speed_of("NP matching", do_np_matching)
     speed_of("Tree matching", do_drange_tree_matching)
