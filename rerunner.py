@@ -68,12 +68,12 @@ def main():
             ## Link JRC if needed
             if include_jrc:
                 print("Linking JRC...")
-                subprocess.check_output(f"mkdir -p {directory}/inputs/jrc/tif/products/tmf_v1 && ln -s /maps/pf341/jrc/AnnualChange {directory}/inputs/jrc/tif/products/tmf_v1/", shell=True, text=True)
+                subprocess.check_output(f"mkdir -p {directory}/inputs/jrc/tif/products/tmf_v1 && ln -s /maps/4C/jrc/AnnualChange {directory}/inputs/jrc/tif/products/tmf_v1/", shell=True, text=True)
 
             ## Link Gola if needed
             if include_gola_cpcs:
                 print("Linking Gola CPCs...")
-                subprocess.check_output(f"ln -s /maps/pf341/rescaled-tifs {directory}/inputs/rescaled-cpcs", shell=True, text=True)
+                subprocess.check_output(f"ln -s /maps/4C/testing_gola_rescaled_cpcs {directory}/inputs/rescaled-cpcs", shell=True, text=True)
 
         else:
             print(f"Skipping copy (use --force-copy if you want to copy again, or change --name or blow away {directory}/inputs).")

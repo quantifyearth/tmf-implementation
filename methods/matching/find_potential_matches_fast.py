@@ -7,16 +7,17 @@ import os
 import sys
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
-from typing import Tuple
-
+from typing import Mapping, Tuple
 from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
-from methods.utils.dranged_tree import DRangedTree
 from yirgacheffe.layers import RasterLayer  # type: ignore
 
-from methods.matching.calculate_k import build_layer_collection
 from methods.common.luc import luc_matching_columns
+from methods.matching.calculate_k import build_layer_collection
+from methods.utils.dranged_tree import DRangedTree
+
+DIVISIONS = 1000
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
@@ -25,6 +26,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 gdal.SetCacheMax(1024 * 1024 * 16)
 
 def build_key(ecoregion, country, luc0, luc5, luc10):
+    """Create a 64-bit key for fields that must match exactly"""
+    if ecoregion < 0 or ecoregion > 0x7fffffff:
+        raise ValueError("Ecoregion doesn't fit in 31 bits")
+    if country < 0 or country > 0xffff:
+        raise ValueError("Country doesn't fit in 16 bits")
+    if luc0 < 0 or luc0 > 0x1f:
+        raise ValueError("luc0 doesn't fit in 5 bits")
+    if luc5 < 0 or luc5 > 0x1f:
+        raise ValueError("luc5 doesn't fit in 5 bits")
+    if luc10 < 0 or luc10 > 0x1f:
+        raise ValueError("luc10 doesn't fit in 5 bits")
     return  (int(ecoregion) << 32) | (int(country) << 16) | (int(luc0) << 10) | (int(luc5) << 5) | (int(luc10))
 
 def key_builder(start_year: int):
@@ -36,52 +48,53 @@ def key_builder(start_year: int):
 def load_k(
     k_filename: str,
     start_year: int,
-    worker_count: int,
-    ktree_queue: Queue,
-) -> None:
+) -> Mapping[int, DRangedTree]:
 
     print("Reading k...")
     source_pixels = pd.read_parquet(k_filename)
-    
+
     # Split source_pixels into classes
     source_classes = defaultdict(list)
-    build_key = key_builder(start_year)
+    build_key_for_row = key_builder(start_year)
 
     for _, row in source_pixels.iterrows():
-        key = build_key(row)
+        key = build_key_for_row(row)
         source_classes[key].append(row)
 
     print("Building k trees...")
 
-    source_trees = dict()
+    source_trees = {}
     for key, values in source_classes.items():
-        source_trees[key] = DRangedTree.build(np.array([(
-            row.elevation,
-            row.slope,
-            row.access,
-            row["cpc0_u"],
-            row["cpc0_d"],
-            row["cpc5_u"],
-            row["cpc5_d"],
-            row["cpc10_u"],
-            row["cpc10_d"],
-            ) for row in values
-        ]), np.array([
-            200,
-            2.5,
-            10,
-            -0.1,
-            -0.1,
-            -0.1,
-            -0.1,
-            -0.1,
-            -0.1,
-        ]), 1 / 300)
+        source_trees[key] = DRangedTree.build(
+            np.array([(
+                row.elevation,
+                row.slope,
+                row.access,
+                row["cpc0_u"],
+                row["cpc0_d"],
+                row["cpc5_u"],
+                row["cpc5_d"],
+                row["cpc10_u"],
+                row["cpc10_d"],
+                ) for row in values
+            ]),
+            np.array([
+                200,
+                2.5,
+                10,
+                0.1,
+                0.1,
+                0.1,
+                0.1,
+                0.1,
+                0.1,
+            ]),
+            1 / 100, # This is the fraction of R that is in M, used to optimize search speed.
+        )
 
-    print("Sending k trees to workers...")
+    print("k trees built.")
 
-    for _ in range(worker_count):
-        ktree_queue.put(source_trees)
+    return source_trees
 
 def exact_pixel_for_lat_lng(layer, lat: float, lng: float) -> Tuple[int,int]:
     """Get pixel for geo coords. This is relative to the set view window.
@@ -96,8 +109,6 @@ def exact_pixel_for_lat_lng(layer, lat: float, lng: float) -> Tuple[int,int]:
         (lat - layer.area.top) / pixel_scale.ystep,
     )
 
-DIVISIONS = 40
-
 def worker(
     worker_index: int,
     matching_zone_filename: str,
@@ -111,14 +122,12 @@ def worker(
     start_year: int,
     _evaluation_year: int,
     result_folder: str,
-    ktree_queue: Queue,
+    ktrees: Mapping[int, DRangedTree],
     coordinate_queue: Queue,
 ) -> None:
     # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
     example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
     example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
-
-    ktrees = ktree_queue.get()
 
     matching_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
@@ -140,22 +149,25 @@ def worker(
     matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
     xsize = matching_collection.boundary.window.xsize
     ysize = matching_collection.boundary.window.ysize
-    xstride = math.ceil(xsize / DIVISIONS)
+    xstride = math.ceil(xsize)
     ystride = math.ceil(ysize / DIVISIONS)
 
     # Iterate our assigned pixels
     while True:
         coords = coordinate_queue.get()
-        if coords == None:
+        if coords is None:
             break
         print(f"Worker {worker_index} starting coords {coords}...")
-        y, x = coords
-        ymin = y * ystride
-        xmin = x * xstride
+        ypos, xpos = coords
+        ymin = ypos * ystride
+        xmin = xpos * xstride
         ymax = min(ymin + ystride, ysize)
         xmax = min(xmin + xstride, xsize)
         xwidth = xmax - xmin
         ywidth = ymax - ymin
+        if xwidth <= 0 or ywidth <= 0:
+            print(f"Worker {worker_index} coords {coords} are outside boundary")
+            continue
         boundary = matching_collection.boundary.read_array(xmin, ymin, xwidth, ywidth)
         elevations = matching_collection.elevation.read_array(xmin, ymin, xwidth, ywidth)
         ecoregions = matching_collection.ecoregions.read_array(xmin, ymin, xwidth, ywidth)
@@ -164,10 +176,10 @@ def worker(
         lucs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.lucs]
 
         # FIXME: This still doesn't match perfectly with Patrick's scaled CPCs.
-        tl = matching_collection.boundary.latlng_for_pixel(xmin, ymin)
-        cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*tl)
-        br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
-        cpc_br = matching_collection.cpcs[0].pixel_for_latlng(*br)
+        boundary_tl = matching_collection.boundary.latlng_for_pixel(xmin, ymin)
+        cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*boundary_tl)
+        boundary_br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
+        cpc_br = matching_collection.cpcs[0].pixel_for_latlng(*boundary_br)
         cpc_width = cpc_br[0] - cpc_tl[0] + 2 # Get a few spare pixels
         cpc_height = cpc_br[1] - cpc_tl[1] + 2
         cpcs = [
@@ -175,8 +187,8 @@ def worker(
             for cpc in matching_collection.cpcs
         ]
 
-        exact_cpc_tl = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *tl)
-        exact_cpc_br = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *br)
+        exact_cpc_tl = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *boundary_tl)
+        exact_cpc_br = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *boundary_br)
         cpc_width = exact_cpc_br[0] - exact_cpc_tl[0]
         cpc_height = exact_cpc_br[1] - exact_cpc_tl[1]
 
@@ -185,23 +197,23 @@ def worker(
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
-        for y in range(ywidth):
-            for x in range(xwidth):
-                if boundary[y, x] == 0:
+        for ypos in range(ywidth):
+            for xpos in range(xwidth):
+                if boundary[ypos, xpos] == 0:
                     continue
-                ecoregion = ecoregions[y, x]
-                country = countries[y, x]
-                luc0 = lucs[0][y, x]
-                luc5 = lucs[1][y, x]
-                luc10 = lucs[2][y, x]
+                ecoregion = ecoregions[ypos, xpos]
+                country = countries[ypos, xpos]
+                luc0 = lucs[0][ypos, xpos]
+                luc5 = lucs[1][ypos, xpos]
+                luc10 = lucs[2][ypos, xpos]
                 key = build_key(ecoregion, country, luc0, luc5, luc10)
                 if key in ktrees:
-                    cpcx = math.floor((x + 4) * cpc_scale[0] + cpc_offset[0]) # Alignment WHY?
-                    cpcy = math.floor((y - 6) * cpc_scale[1] + cpc_offset[1]) # WHY WHY WHY
-                    points[y, x] = 1 if ktrees[key].contains(np.array([
-                        elevations[y, x],
-                        slopes[y, x],
-                        accesses[y, x],
+                    cpcx = math.floor((xpos + 4) * cpc_scale[0] + cpc_offset[0]) # Alignment WHY?
+                    cpcy = math.floor((ypos - 6) * cpc_scale[1] + cpc_offset[1]) # WHY WHY WHY
+                    points[ypos, xpos] = 1 if ktrees[key].contains(np.array([
+                        elevations[ypos, xpos],
+                        slopes[ypos, xpos],
+                        accesses[ypos, xpos],
                         cpcs[0][cpcy, cpcx],
                         cpcs[1][cpcy, cpcx],
                         cpcs[2][cpcy, cpcx],
@@ -210,6 +222,7 @@ def worker(
                         cpcs[5][cpcy, cpcx],
                     ])) else 0
         # Write points to output
+        # pylint: disable-next=protected-access
         matching_pixels._dataset.GetRasterBand(1).WriteArray(points, xmin, ymin)
         print(f"Worker {worker_index} completed coords {coords}.")
     print(f"Worker {worker_index} finished.")
@@ -236,22 +249,17 @@ def find_potential_matches(
     os.makedirs(result_folder, exist_ok=True)
 
     with Manager() as manager:
-        ktree_queue = manager.Queue()
         coordinate_queue = manager.Queue()
 
         worker_count = processes_count
 
         # Fill the co-ordinate queue
-        for y in range(DIVISIONS):
-            for x in range(DIVISIONS):
-                coordinate_queue.put([y, x])
+        for ypos in range(DIVISIONS):
+            coordinate_queue.put([ypos, 0])
         for _ in range(worker_count):
             coordinate_queue.put(None)
 
-        # We allocate an extra process for this since whilst it is running, the workers are idle
-        # and once it sends anything to the works, then it stops.
-        ktree_builder_process = Process(target=load_k, args=(k_filename, start_year, worker_count, ktree_queue))
-        ktree_builder_process.start()
+        ktree = load_k(k_filename, start_year)
 
         workers = [Process(target=worker, args=(
             index,
@@ -266,22 +274,21 @@ def find_potential_matches(
             start_year,
             evaluation_year,
             result_folder,
-            ktree_queue,
+            ktree,
             coordinate_queue,
         )) for index in range(worker_count)]
         for worker_process in workers:
             worker_process.start()
 
-        processes = workers + [ktree_builder_process]
-        while processes:
-            candidates = [x for x in processes if not x.is_alive()]
+        while workers:
+            candidates = [x for x in workers if not x.is_alive()]
             for candidate in candidates:
                 candidate.join()
                 if candidate.exitcode:
-                    for victim in processes:
+                    for victim in workers:
                         victim.kill()
                     sys.exit(candidate.exitcode)
-                processes.remove(candidate)
+                workers.remove(candidate)
             time.sleep(1)
 
 

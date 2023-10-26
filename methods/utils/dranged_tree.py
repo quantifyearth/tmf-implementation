@@ -15,10 +15,8 @@ from __future__ import annotations
 import numpy as np
 import math
 
-# TODO: Try an implementation with a BSP so we can actually merge ranges together.
-
 class DRangedTree:
-    def contains(self, point):
+    def contains(self, point: np.ndarray):
         raise NotImplemented
 
     def depth(self) -> int:
@@ -31,7 +29,7 @@ class DRangedTree:
         return 1
     
     @staticmethod
-    def build(items, widths, expected_fraction) -> DRangedTree:
+    def build(items: np.ndarray, widths: np.ndarray, expected_fraction: float) -> DRangedTree:
         """
         Build a DRangedTree for the items in list. Each item has the corresponding width for each dimension +/- to it.
         If the width for a dimension is negative, it is treated as a relative fractional width.
@@ -212,14 +210,14 @@ def without(items, j):
     indices = [k for k in range(items.shape[axis]) if k != j]
     return np.take(items, indices, axis=axis)
 
-def _make_tree_internal(rects, bounds, state: TreeState):
+def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState):
     """
     Internal function to make a DRangeTree for the hyper-rectangles specified.
 
     Args:
-        rects: hyper-rectangles as a numpy array with dimensions N*2*d, where d is the number of dimensions.
-        bounds: the current edges of the search area as a hyper-rectangle as a numpy array of 2*d.
-        state: an internal object for tracking state, used for debugging and developing.
+        rects: hyper-rectangles as a numpy array with dimensions N×2×d, where d is the number of dimensions.
+        bounds: the current edges of the search area as a hyper-rectangle as a numpy array of 2×d.
+        state: an internal object for tracking state of tree build, used for optimisation, debugging and developing.
     """
     state.print(f"T {len(rects)} ∆{state.dimensions}")
 
@@ -227,12 +225,10 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         return EmptyTree()
     if len(rects) == 1:
         return SingletonTree(rects[0])
-    # If there are less than 30 rectangles, just run through them as a numpy list.
     if len(rects) < 50:
         return ListTree(rects)
     if state.depth == 30:
         print(f"Limiting depth to {state.depth} with {len(rects)} rects remaining")
-        #exit()
         return ListTree(rects)
 
     dimensions = rects.shape[2]
@@ -366,7 +362,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         # so we can simply split at a point between the two classes.
         split_at = np.mean(split)
     else:        
-        if best_classes < 3:
+        if False and best_classes < 3:
             # Chance there is an overlap here, so let's check and eliminate it if possible
             # L  L L LL LL
             #                R  R RR R     R
@@ -378,7 +374,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
             overlap_width = right_cut - left_cut
             # Only worth doing if at least 20% overlap.
             # FIXME: currently this code leads to fewer matches in test for unknown reasons
-            if False and overlap_width > 0.2 * best_width_estimate:
+            if overlap_width > 0.2 * best_width_estimate:
                 lefts = np.copy(rects)
                 lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = left_cut, a_min = None)
                 lefts = np.unique(lefts, axis = 0)
@@ -412,7 +408,7 @@ def _make_tree_internal(rects, bounds, state: TreeState):
         split_at = split[best_split_pos]
 
     # Split and clip the rectangles at the split point
-    # Rectangles include their end points in either direction.
+    # Rectangles include their end points to the left.
     # We clip to make split point calculations accurate later on.
     lefts = rects[rects[:, 0, d] <= split_at]
     lefts[:, 1, d] = np.clip(lefts[:, 1, d], a_max = split_at, a_min = None)
@@ -436,149 +432,4 @@ def _make_tree_internal(rects, bounds, state: TreeState):
     # Build the subtrees
     left = _make_tree_internal(lefts, left_bounds, state.descend(d))
     right = _make_tree_internal(rights, right_bounds, state.descend(d))
-    return SplitDTree(left, right, d, split_at)
-
-# ========================================
-# Self test code, not needed for operation
-# ========================================
-def _self_test():
-    ALLOWED_VARIATION = np.array([
-        200,
-        2.5,
-        10,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
-        -0.1,
-    ])
-    def build_rects(items):
-        rects = []
-        for item in items:
-            lefts = []
-            rights = []
-            for d, value in enumerate(item):
-                width = ALLOWED_VARIATION[d]
-                if width < 0:
-                    fraction = -width
-                    width = value * fraction
-                lefts.append(value - width)
-                rights.append(value + width)
-            rects.append([lefts, rights])
-        return np.array(rects)
-
-    import pandas as pd
-    from methods.common.luc import luc_matching_columns
-    from time import time
-
-    expected_fraction = 1 / 300 # This proportion of pixels we end up matching
-
-    def build_dranged_tree_for_k(k_rows) -> DRangedTree:
-        return DRangedTree.build(np.array([(
-                row.elevation,
-                row.slope,
-                row.access,
-                row["cpc0_u"],
-                row["cpc0_d"],
-                row["cpc5_u"],
-                row["cpc5_d"],
-                row["cpc10_u"],
-                row["cpc10_d"],
-                ) for row in k_rows
-            ]), ALLOWED_VARIATION, expected_fraction)
-
-
-    luc0, luc5, luc10 = luc_matching_columns(2012)
-    source_pixels = pd.read_parquet("./test/data/1201-k.parquet")
-
-    # Split source_pixels into classes
-    source_rows = []
-    for _, row in source_pixels.iterrows():
-        key = (int(row.ecoregion) << 16) | (int(row[luc0]) << 10) | (int(row[luc5]) << 5) | (int(row[luc10]))
-        if key != 1967137: continue
-        source_rows.append(row)
-    
-    source = np.array([
-        [
-            row.elevation,
-            row.slope,
-            row.access,
-            row["cpc0_u"],
-            row["cpc0_d"],
-            row["cpc5_u"],
-            row["cpc5_d"],
-            row["cpc10_u"],
-            row["cpc10_d"],
-        ] for row in source_rows
-    ])
-
-    # Invent an array of values that matches the expected_fraction
-    length = 10000
-    np.random.seed(42)
-
-    # Safe ranges (exclude 10% of outliers)
-    ranges = np.transpose(np.array([
-        np.quantile(source, 0.05, axis=0),
-        np.quantile(source, 0.95, axis=0)
-    ]))
-
-    # Need to put an estimate here of how much of the area inside those 90% bounds is actually filled
-    filled_fraction = 0.35
-
-    # Proportion of values that should fall inside each dimension
-    inside_fraction = math.pow(expected_fraction / filled_fraction, 1/len(ranges))
-    widths = ranges[:, 1] - ranges[:, 0]
-    outside_fraction = 1 - inside_fraction
-    # Proportion to go outside uniform range
-    range_extension = 0.5 * widths * (outside_fraction / inside_fraction)
-    #range_extension = 0
-
-    distribution_ranges = np.transpose([ranges[:, 0] - range_extension, ranges[:, 1] + range_extension])
-
-    test_values = np.random.uniform(distribution_ranges[:, 0], distribution_ranges[:, 1], (length, len(ranges)))
-    
-    # Special case for the zero-width zero columns (CPC deforestation; if an original block has no deforestation, then
-    # it can only match to exactly zero deforestation)
-    special_zero_columns = [-5, -3, -1]
-    for d in special_zero_columns:
-        fix_fraction = math.pow(expected_fraction / filled_fraction, 1/len(special_zero_columns)) * np.sum(source[:, d] == 0) / len(source)
-        fix_rows = np.random.choice(len(test_values), math.floor(len(test_values) * fix_fraction), replace=False)
-        test_values[fix_rows, d] = 0
-
-    def do_np_matching():
-        source_rects = build_rects(source)
-        found = 0
-        for i in range(length):
-            pos = np.all((test_values[i] >= source_rects[:, 0]) & (test_values[i] <= source_rects[:, 1]), axis=1)
-            found += 1 if np.any(pos) else 0
-        return found
-    
-    def speed_of(what, func):
-        EXPECTED = 33
-        start = time()
-        value = func()
-        end = time()
-        if value != EXPECTED:
-            print(f"Got wrong value {value} for method {what}, expected {EXPECTED}")
-            exit(1)
-        print(what, ": ", (end - start) / length, "per call")
-
-    print("making tree... (this will take a few seconds)")
-    start = time()
-    tree = build_dranged_tree_for_k(source_rows)
-    print("build time", time() - start)
-    print("tree depth", tree.depth())
-    print("tree size", tree.size())
-
-    def do_drange_tree_matching():
-        found = 0
-        for i in range(length):
-            found += 1 if tree.contains(test_values[i]) else 0
-        return found
-
-    #speed_of("NP matching", do_np_matching)
-    speed_of("Tree matching", do_drange_tree_matching)
-
-if __name__ == "__main__":
-    _self_test()
+    return SplitDTree(left, right, d, split_at) # type: ignore
