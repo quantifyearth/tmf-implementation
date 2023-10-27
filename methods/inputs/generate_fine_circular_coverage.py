@@ -7,13 +7,12 @@ import shutil
 import tempfile
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-from typing import List, Tuple
-from numba import jit, void, int64, int32
+from typing import List
 
 import numpy as np
+from numba import jit, void, int64, int32  # type: ignore
 from osgeo import gdal  # type: ignore
-from yirgacheffe.layers import Layer, RasterLayer, GroupLayer, TiledGroupLayer  # type: ignore
-from yirgacheffe.window import Area, PixelScale  # type: ignore
+from yirgacheffe.layers import Layer, RasterLayer, GroupLayer  # type: ignore
 
 from methods.common import LandUseClass
 from methods.common.geometry import wgs_aspect_ratio_at
@@ -27,10 +26,11 @@ GEOMETRY_SCALE_ADJUSTMENT = True
 # Although we run over each tile twice and tiles are big, so give it a bit more than usual
 gdal.SetCacheMax(1024 * 1024 * 1024)
 
-def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int) -> None:
-    # TODO: should we actually calculate this in case e.g. JRC changes resolution
-    diameter = 66 # 2010m cicles when you include center pixel
-    radius = diameter // 2
+# TODO: should we actually calculate this in case e.g. JRC changes resolution
+RADIUS = 33 # 2010m cicles when you include center pixel: (33*2 + 1) * 30 = 2010
+
+def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename: str, luc: int, radius: int) -> None:
+    diameter = radius * 2
     radius2 = radius * radius
 
     layers = [all_jrc, jrc_tile]
@@ -38,16 +38,10 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
     for layer in layers:
         layer.set_window_for_intersection(jrc_tile_area)
 
-    result_width = math.floor(jrc_tile.window.xsize)
-    result_height = math.floor(jrc_tile.window.ysize)
+    result_width = jrc_tile.window.xsize
+    result_height = jrc_tile.window.ysize
 
-    result_layer = RasterLayer.empty_raster_layer(
-        jrc_tile_area,
-        jrc_tile.pixel_scale, # type: ignore
-        gdal.GDT_Float32,
-        result_filename,
-        jrc_tile.projection,
-    )
+    result_layer = RasterLayer.empty_raster_layer_like(jrc_tile, result_filename, datatype=gdal.GDT_Float32)
 
     src = None
     last_x_radius = 0
@@ -63,15 +57,15 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         x_diameter = 2 * x_radius
         circle_mask = np.zeros((diameter + 1, x_diameter + 1))
         change_at = np.array([0] * (diameter + 1))
-        for y in range(-radius, radius + 1):
-            on = False
-            for x in range(-x_radius, x_radius + 1):
-                r2 = y*y + x*x / x_factor2
-                if r2 <= radius2:
-                    circle_mask[y + radius, x + x_radius] = 1
-                    if not on:
-                        on = True
-                        change_at[y + radius] = x
+        for ypos in range(-radius, radius + 1):
+            inside_circle = False
+            for xpos in range(-x_radius, x_radius + 1):
+                adjusted_distance2 = ypos*ypos + xpos*xpos / x_factor2
+                if adjusted_distance2 <= radius2:
+                    circle_mask[ypos + radius, xpos + x_radius] = 1
+                    if not inside_circle:
+                        inside_circle = True
+                        change_at[ypos + radius] = xpos
 
         mask_sum = np.sum(circle_mask, dtype=np.float32)
 
@@ -82,7 +76,9 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
         else:
             # Shift src up and add on next stripe of height 1
             next_row = all_jrc.read_array(-x_radius, yoffset + radius, result_width + x_diameter + 1, 1)
+            # pylint: disable-next=unsubscriptable-object
             src_without_first_row = src[1:]
+            # pylint: disable-next=unexpected-keyword-arg
             src = np.concatenate([src_without_first_row, next_row == luc], axis=0, dtype=np.int32)
         last_x_radius = x_radius
 
@@ -107,14 +103,14 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
 def do_running_sum(x_radius, src, change_at, running_sum, buffer):
     stride = src.shape[1]
     src = src.flatten()
-    ys = np.arange(len(change_at))
-    xoffs = x_radius + change_at - 1 + ys * stride
-    xons = x_radius - change_at + ys * stride
+    y_values = np.arange(len(change_at))
+    xoffs = x_radius + change_at - 1 + y_values * stride
+    xons = x_radius - change_at + y_values * stride
     for xoffset in range(1, len(buffer)):
-        for y in range(0, len(xoffs)):
-            running_sum -= src[xoffset + xoffs[y]]
-        for y in range(0, len(xons)):
-            running_sum += src[xoffset + xons[y]]
+        for offset in xoffs:
+            running_sum -= src[xoffset + offset]
+        for offset in xons:
+            running_sum += src[xoffset + offset]
         buffer[xoffset] = running_sum
 
 def process_jrc_tiles_by_year_and_region(
@@ -123,17 +119,17 @@ def process_jrc_tiles_by_year_and_region(
     tilepaths: List[str]
 ) -> None:
     jrc_tiles = []
-    for p in tilepaths:
-        jrc_tiles.append(RasterLayer.layer_from_file(p))
+    for path in tilepaths:
+        jrc_tiles.append(RasterLayer.layer_from_file(path))
     jrc_layer = GroupLayer(jrc_tiles)
 
-    for p in tilepaths:
+    for path in tilepaths:
         for luc in [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]:
-            target_filename = f"fine_{os.path.splitext(os.path.basename(p))[0]}_{luc.value}.tif"
+            target_filename = f"fine_{os.path.splitext(os.path.basename(path))[0]}_{luc.value}.tif"
             target_path = os.path.join(output_directory_path, target_filename)
             if not os.path.exists(target_path):
                 tempdest = os.path.join(temporary_directory, target_filename)
-                fine_circular_jrc_tile(RasterLayer.layer_from_file(p), jrc_layer, tempdest, luc.value)
+                fine_circular_jrc_tile(RasterLayer.layer_from_file(path), jrc_layer, tempdest, luc.value, RADIUS)
                 shutil.move(tempdest, target_path)
 
 def generate_fine_circular_coverage(
@@ -144,8 +140,7 @@ def generate_fine_circular_coverage(
     os.makedirs(result_directory, exist_ok=True)
 
     jrc_filenames = glob.glob("*.tif", root_dir=jrc_directory)
-    jrc_file_paths = [os.path.join(jrc_directory, x) for x in jrc_filenames]
-    years = list(set([x.split('_')[4] for x in jrc_filenames]))
+    years = list({x.split('_')[4] for x in jrc_filenames})
     years.sort()
 
     # Split JRC into its three separate areas (separated by the Atlantic, Indian, and Pacific oceans)
@@ -154,11 +149,11 @@ def generate_fine_circular_coverage(
     filesets = []
     for year in years:
         for area in areas:
-            filesets.append([x for x in jrc_file_paths if f"/JRC_TMF_AnnualChange_v1_{year}" in x and f"_{area}_" in x])
+            filesets.append([os.path.join(jrc_directory, x) for x in jrc_filenames if year in x and area in x])
 
     total_files = sum(len(files) for files in filesets)
 
-    assert total_files == len(jrc_file_paths)
+    assert total_files == len(jrc_filenames)
 
     with tempfile.TemporaryDirectory() as tempdir:
         with Pool(processes=concurrent_processes) as pool:

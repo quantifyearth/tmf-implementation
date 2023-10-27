@@ -51,6 +51,6 @@ ECCENTRICITY_2 = ECCENTRICITY * ECCENTRICITY
 def wgs_aspect_ratio_at(latitude: float) -> float:
     """returns the number of x pixels that represent the same distance as one y pixel"""
     phi = latitude / 180 * math.pi
-    M = (1 - ECCENTRICITY_2) / np.float_power((1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2)), 1.5)
-    R = np.cos(phi) / np.sqrt(1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2))
-    return M / R
+    longitude_ratio = (1 - ECCENTRICITY_2) / np.float_power((1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2)), 1.5)
+    latitude_ratio = np.cos(phi) / np.sqrt(1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2))
+    return longitude_ratio / latitude_ratio
