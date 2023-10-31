@@ -45,3 +45,12 @@ def area_for_geometry(source: gpd.GeoDataFrame) -> float:
     utm_code = scipy.stats.mode(utm_codes, keepdims=False).mode
     projected_boundaries = source.to_crs(f"EPSG:{utm_code}")
     return projected_boundaries.area.sum()
+
+ECCENTRICITY = 0.081819191
+ECCENTRICITY_2 = ECCENTRICITY * ECCENTRICITY
+def wgs_aspect_ratio_at(latitude: float) -> float:
+    """returns the number of x pixels that represent the same distance as one y pixel"""
+    phi = latitude / 180 * math.pi
+    longitude_ratio = (1 - ECCENTRICITY_2) / np.float_power((1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2)), 1.5)
+    latitude_ratio = np.cos(phi) / np.sqrt(1 - ECCENTRICITY_2 * np.power(np.sin(phi), 2))
+    return longitude_ratio / latitude_ratio
