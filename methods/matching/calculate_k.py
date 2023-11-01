@@ -59,7 +59,7 @@ def build_layer_collection(
             RasterLayer.layer_from_file(
                 os.path.join(cpc_directory_path, filename)
             ) for filename in
-                glob.glob(f"*{year_class[0]}_{year_class[1].value}.tif", root_dir=cpc_directory_path)
+                glob.glob(f"*{year_class[0]}*_{year_class[1].value}.tif", root_dir=cpc_directory_path)
         ], name=f"cpc_{year_class}") for year_class in product(cpc_years,
             [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
     ]
