@@ -144,7 +144,7 @@ def worker(
         countries_raster_filename,
     )
 
-    result_path = os.path.join(result_folder, f"fast_{worker_index}.tif")
+    result_path = os.path.join(result_folder, f"{worker_index}.tif")
 
     matching_pixels = RasterLayer.empty_raster_layer_like(matching_collection.boundary, filename=result_path)
     xsize = matching_collection.boundary.window.xsize
@@ -175,25 +175,11 @@ def worker(
         accesses = matching_collection.access.read_array(xmin, ymin, xwidth, ywidth)
         lucs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.lucs]
 
-        # FIXME: This still doesn't match perfectly with Patrick's scaled CPCs.
-        boundary_tl = matching_collection.boundary.latlng_for_pixel(xmin, ymin)
-        cpc_tl = matching_collection.cpcs[0].pixel_for_latlng(*boundary_tl)
-        boundary_br = matching_collection.boundary.latlng_for_pixel(xmax, ymax)
-        cpc_br = matching_collection.cpcs[0].pixel_for_latlng(*boundary_br)
-        cpc_width = cpc_br[0] - cpc_tl[0] + 2 # Get a few spare pixels
-        cpc_height = cpc_br[1] - cpc_tl[1] + 2
+        # CPC must be in JRC resolution
         cpcs = [
-            cpc.read_array(cpc_tl[0], cpc_tl[1], cpc_width, cpc_height)
+            cpc.read_array(xmin, ymin, xwidth, ywidth)
             for cpc in matching_collection.cpcs
         ]
-
-        exact_cpc_tl = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *boundary_tl)
-        exact_cpc_br = exact_pixel_for_lat_lng(matching_collection.cpcs[0], *boundary_br)
-        cpc_width = exact_cpc_br[0] - exact_cpc_tl[0]
-        cpc_height = exact_cpc_br[1] - exact_cpc_tl[1]
-
-        cpc_scale = (cpc_width / xwidth, cpc_height / ywidth)
-        cpc_offset = (exact_cpc_tl[0] - cpc_tl[0] + 0.5, exact_cpc_tl[1] - cpc_tl[1] + 0.5)
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
         points = np.zeros((ywidth, xwidth))
@@ -208,18 +194,16 @@ def worker(
                 luc10 = lucs[2][ypos, xpos]
                 key = build_key(ecoregion, country, luc0, luc5, luc10)
                 if key in ktrees:
-                    cpcx = math.floor((xpos + 4) * cpc_scale[0] + cpc_offset[0]) # Alignment WHY?
-                    cpcy = math.floor((ypos - 6) * cpc_scale[1] + cpc_offset[1]) # WHY WHY WHY
                     points[ypos, xpos] = 1 if ktrees[key].contains(np.array([
                         elevations[ypos, xpos],
                         slopes[ypos, xpos],
                         accesses[ypos, xpos],
-                        cpcs[0][cpcy, cpcx],
-                        cpcs[1][cpcy, cpcx],
-                        cpcs[2][cpcy, cpcx],
-                        cpcs[3][cpcy, cpcx],
-                        cpcs[4][cpcy, cpcx],
-                        cpcs[5][cpcy, cpcx],
+                        cpcs[0][ypos, xpos],
+                        cpcs[1][ypos, xpos],
+                        cpcs[2][ypos, xpos],
+                        cpcs[3][ypos, xpos],
+                        cpcs[4][ypos, xpos],
+                        cpcs[5][ypos, xpos],
                     ])) else 0
         # Write points to output
         # pylint: disable-next=protected-access
