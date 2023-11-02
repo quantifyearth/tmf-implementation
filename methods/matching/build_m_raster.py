@@ -42,9 +42,10 @@ def worker(
         else:
             calc = calc + partial_raster
 
-    assert calc is not None
-    calc.save(final)
-    del final
+    if final is not None:
+        assert calc is not None
+        calc.save(final)
+        del final
 
 def build_k(
     images_dir: str,
