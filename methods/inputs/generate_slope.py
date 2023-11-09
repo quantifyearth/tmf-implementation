@@ -184,13 +184,16 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                         )
                         output_final = f"final-slope-{actual_utm_code}-{utm_letter}-{elevation_path}"
                         final_path = os.path.join(tmpdir, output_final)
-                        logging.info("Slope underlying %s", slope_tif._underlying_area)
-                        logging.info("Grid underling %s", grid._underlying_area)
+                        logging.info("Slope area %s", slope_tif.area)
+                        logging.info("Grid area %s", grid.area)
                         try:
                             intersection = RasterLayer.find_intersection([slope_tif, grid])
-                        except:
-                            logging.debug("UTM (%s, %s) didn't intersect actual area %s", actual_utm_code, utm_letter, grid._underlying_area)
-                            continue
+                        except ValueError as e:
+                            if e.args[0] == "No intersection possible":
+                                logging.debug("UTM (%s, %s) didn't intersect actual area %s",
+                                              actual_utm_code, utm_letter, grid.area)
+                                continue
+                            raise e
                         slope_tif.set_window_for_intersection(intersection)
                         final = RasterLayer.empty_raster_layer(
                             intersection,
@@ -199,7 +202,7 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                             final_path,
                             slope_tif.projection,
                         )
-                        logging.info("Final underling %s", final._underlying_area)
+                        logging.info("Final area %s", final.area)
                         final.set_window_for_intersection(intersection)
                         slope_tif.save(final)
 
