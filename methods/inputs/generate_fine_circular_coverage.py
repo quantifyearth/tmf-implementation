@@ -45,9 +45,11 @@ def fine_circular_jrc_tile(jrc_tile: Layer, all_jrc: GroupLayer, result_filename
 
     src = None
     last_x_radius = 0
+    step = result_height // 10
     for yoffset in range(result_height):
-        if yoffset % 100 == 0:
+        if yoffset % step == step - 1:
             print(f"{os.path.basename(result_filename)}: {yoffset} of {result_height}")
+
         if GEOMETRY_SCALE_ADJUSTMENT:
             x_factor = wgs_aspect_ratio_at(jrc_tile.latlng_for_pixel(0, yoffset)[0])
         else:
