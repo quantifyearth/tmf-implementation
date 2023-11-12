@@ -81,12 +81,13 @@ def find_match_iteration(
     m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
     k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
 
-    # Methodology 6.5.5: S should be 10 times the size of K
-    required = k_set.shape[0] * 10
+    # Methodology 6.5.5: S should be 10 times the size of K, in order to achieve this for every
+    # pixel in the subsample (which is 10% the size of K) we select 100 pixels.
+    required = 100
 
     logging.info("Running make_s_subset_mask... required: %d", required)
-
-    s_subset_mask = make_s_subset_mask(m_dist_thresholded, k_dist_thresholded, m_dist_hard, k_dist_hard, required)
+    starting_positions = np.random.random_integers(0, m_dist_thresholded.shape[0], k_dist_thresholded.shape[0])
+    s_subset_mask = make_s_subset_mask(m_dist_thresholded, k_dist_thresholded, m_dist_hard, k_dist_hard, starting_positions, required)
 
     s_subset_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
 
@@ -185,17 +186,21 @@ def find_match_iteration(
     logging.info("Finished find match iteration")
 
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def make_s_subset_mask(m_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, m_dist_hard: np.ndarray, k_dist_hard: np.ndarray, n: int):
+def make_s_subset_mask(m_dist_thresholded: np.ndarray, k_dist_thresholded: np.ndarray, m_dist_hard: np.ndarray, k_dist_hard: np.ndarray, starting_positions: np.ndarray, required: int):
     s_include = np.zeros((k_dist_thresholded.shape[0], m_dist_thresholded.shape[0]), dtype=np.bool_)
+    found = 0
+    for k in range(k_dist_thresholded.shape[0]):
+        k_row = k_dist_thresholded[k, :]
+        k_hard = k_dist_hard[k]
 
-    for i in range(m_dist_thresholded.shape[0]):
-        m_row = m_dist_thresholded[i, :]
-        m_hard = m_dist_hard[i]
+        # Random starting index and the end M index
+        i = starting_positions[k]
+        end = (i - 1) % m_dist_thresholded.shape[0]
 
-        for k in range(k_dist_thresholded.shape[0]):
-            k_row = k_dist_thresholded[k, :]
-            k_hard = k_dist_hard[k]
-
+        while i != end:
+            m_row = m_dist_thresholded[i, :]
+            m_hard = m_dist_hard[i]
+        
             should_include = True
 
             # check that every element of s_hard matches k_hard
@@ -213,6 +218,14 @@ def make_s_subset_mask(m_dist_thresholded: np.ndarray, k_dist_thresholded: np.nd
 
             if should_include:
                 s_include[k][i] = True
+                found = found + 1
+            
+            # Don't find any more M's
+            if found > required:
+                found = 0
+                break
+
+            i = (i + 1) % m_dist_thresholded.shape[0]
 
     return s_include
 
