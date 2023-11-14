@@ -81,18 +81,49 @@ def find_match_iteration(
     m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
     k_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
 
-    # Methodology 6.5.5: S should be 10 times the size of K
-    required = k_set.shape[0] * 10
+    # Methodology 6.5.5: S should be 10 times the size of K, in order to achieve this for every
+    # pixel in the subsample (which is 10% the size of K) we select 100 pixels.
+    required = 100
 
     logging.info("Running make_s_subset_mask... required: %d", required)
+    starting_positions = np.random.random_integers(0, m_dist_thresholded.shape[0], k_dist_thresholded.shape[0])
+    s_subset_mask = make_s_subset_mask(
+        m_dist_thresholded,
+        k_dist_thresholded,
+        m_dist_hard,
+        k_dist_hard,
+        starting_positions,
+        required
+    )
 
-    s_subset_mask = make_s_subset_mask(m_dist_thresholded, k_dist_thresholded, m_dist_hard, k_dist_hard, required)
+    s_subset_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
 
-    logging.info("Done make_s_subset_mask. s_subset_mask.shape: %s", s_subset_mask.shape)
+    # Randomly select 100 potential pixels per K, these pixels are similar
+    # to the particular k and so we should end up with similar distributions
+    # for the matching variables.
 
-    s_subset = m_set[s_subset_mask].reset_index()
+    # Make_s_subset actually does this already and we do a little extra work here.
+    # But if we ever change make_s_subet to find more than 100 this allows us to reconstrain
+    # the potentials back to that amount and also find pixels with no matches.
+    no_potentials = np.zeros(k_subset.shape[0], dtype=np.bool_)
+    for k in range(s_subset_mask.shape[0]):
+        masks = s_subset_mask[k]
+        indices = np.nonzero(masks)
+        np.random.shuffle(indices)
+        idx = indices[:100]
+        if len(idx) == 0:
+            no_potentials[k] = True
+        else:
+            for i in idx:
+                s_subset_mask_true[i] = True
 
-    logging.info("Finished preparing s_subset. shape: %s", s_subset.shape)
+    logging.info("Done make_s_subset_mask. s_subset_mask.shape: %a", {s_subset_mask.shape})
+
+    s_subset = m_set[s_subset_mask_true]
+    potentials = np.invert(no_potentials)
+
+    k_subset = k_subset[potentials]
+    logging.info("Finished preparing s_subset. shape: %a", {s_subset.shape})
 
     # Notes:
     # 1. Not all pixels may have matches
@@ -106,12 +137,12 @@ def find_match_iteration(
     invconv = np.linalg.inv(covarience).astype(np.float32)
 
     # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_subset_match = s_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
+    s_subset_match = s_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     s_subset_match = np.ascontiguousarray(s_subset_match)
 
     # Now we do the same thing for k_subset
-    k_subset_match = k_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy().astype(np.float32)
+    k_subset_match = k_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
     # this is required so numba can vectorise the loop in greedy_match
     k_subset_match = np.ascontiguousarray(k_subset_match)
 
@@ -170,22 +201,22 @@ def make_s_subset_mask(
     k_dist_thresholded: np.ndarray,
     m_dist_hard: np.ndarray,
     k_dist_hard: np.ndarray,
-    number_required: int,
+    starting_positions: np.ndarray,
+    required: int
 ):
-    s_include = np.zeros((m_dist_thresholded.shape[0],), dtype=np.bool_)
-    # create an array that is the indexes of the rows in s_dist_thresholded and shuffle it
-    m_indexes = np.arange(m_dist_thresholded.shape[0])
-    np.random.shuffle(m_indexes)
+    s_include = np.zeros((k_dist_thresholded.shape[0], m_dist_thresholded.shape[0]), dtype=np.bool_)
     found = 0
+    for k in range(k_dist_thresholded.shape[0]):
+        k_row = k_dist_thresholded[k, :]
+        k_hard = k_dist_hard[k]
 
-    for position in range(m_dist_thresholded.shape[0]):
-        i = m_indexes[position]
-        m_row = m_dist_thresholded[i, :]
-        m_hard = m_dist_hard[i]
+        # Random starting index and the end M index
+        i = starting_positions[k]
+        end = (i - 1) % m_dist_thresholded.shape[0]
 
-        for k in range(k_dist_thresholded.shape[0]):
-            k_row = k_dist_thresholded[k, :]
-            k_hard = k_dist_hard[k]
+        while i != end:
+            m_row = m_dist_thresholded[i, :]
+            m_hard = m_dist_hard[i]
 
             should_include = True
 
@@ -203,13 +234,15 @@ def make_s_subset_mask(
                         should_include = False
 
             if should_include:
-                s_include[i] = True
+                s_include[k, i] = True
+                found = found + 1
+
+            # Don't find any more M's
+            if found > required:
+                found = 0
                 break
 
-        if s_include[i]:
-            found += 1
-            if found >= number_required:
-                break
+            i = (i + 1) % m_dist_thresholded.shape[0]
 
     return s_include
 
