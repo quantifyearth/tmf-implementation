@@ -21,8 +21,8 @@ def test_batch_mahalanobis():
     assert np.allclose(scipy_dists, batch_dists)
 
 TEST_SUBSET_ROWS = 5
-# test for make_s_subset_mask
-def test_make_s_subset_mask():
+# test for make_s_set_mask
+def test_make_s_set_mask():
     # set numpy random seed to 35
     np.random.seed(35)
     # create a random set of TEST_ROWS rows of 5 columns
@@ -35,8 +35,8 @@ def test_make_s_subset_mask():
     k_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
     # Starting positions
     starting_positions = np.random.randint(0, 5, 5)
-    # calculate using make_s_subset_mask
-    s_subset_mask = find_pairs.make_s_subset_mask(
+    # calculate using make_s_set_mask
+    s_subset_mask = find_pairs.make_s_set_mask(
         s_dist_thresholded,
         k_dist_thresholded,
         s_dist_hard,
