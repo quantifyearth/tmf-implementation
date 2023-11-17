@@ -90,6 +90,8 @@ def build_layer_collection(
     # constrain everything to project boundaries
     layers = [elevation, slopes, ecoregions, access, countries] + lucs + cpcs
     for layer in layers:
+        if layer.pixel_scale != pixel_scale:
+            raise ValueError(f"Raster {layer.name} is at wrong pixel scale")
         layer.set_window_for_intersection(outline_layer.area)
 
     # profiler.disable()
