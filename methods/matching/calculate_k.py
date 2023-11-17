@@ -170,22 +170,17 @@ def calculate_k(
             row_luc = [
                 luc.read_array(0, yoffset, project_width, 1) for luc in project_collection.lucs
             ]
-            # For CPC, which is at a different pixel_scale, we need to do a little math
-            coord = project_collection.boundary.latlng_for_pixel(0, yoffset)
-            _, cpc_yoffset = project_collection.cpcs[0].pixel_for_latlng(*coord)
-            row_cpc = [
-                cpc.read_array(0, cpc_yoffset, project_collection.cpcs[0].window.xsize, 1)
-                for cpc in project_collection.cpcs
+            row_cpcs = [
+                cpc.read_array(0, yoffset, project_width, 1) for cpc in project_collection.cpcs
             ]
 
             for xoffset in range(0, project_width, pixel_skip):
                 if not row_boundary[0][xoffset]:
                     continue
                 lucs = [x[0][xoffset] for x in row_luc]
+                cpcs = [x[0][xoffset] for x in row_cpcs]
 
                 coord = project_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-                cpc_xoffset, _ = project_collection.cpcs[0].pixel_for_latlng(*coord)
-                cpcs = [x[0][cpc_xoffset] for x in row_cpc]
 
                 results.append([
                     xoffset,
