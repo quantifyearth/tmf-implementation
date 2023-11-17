@@ -61,21 +61,13 @@ def build_m_table(
         row_access = matching_collection.access.read_array(0, yoffset, width, 1)
         row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
         row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
-        # For CPC, which is at a different pixel_scale, we need to do a little math
-        coord = matching_collection.boundary.latlng_for_pixel(0, yoffset)
-        _, cpc_yoffset = matching_collection.cpcs[0].pixel_for_latlng(*coord)
-        row_cpc = [
-            cpc.read_array(0, cpc_yoffset, matching_collection.cpcs[0].window.xsize, 1)
-            for cpc in matching_collection.cpcs
-        ]
+        row_cpcs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.cpcs]
 
         for xoffset in range(width):
             if not row_matches[0][xoffset]:
                 continue
 
             coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-            cpc_xoffset, _ = matching_collection.cpcs[0].pixel_for_latlng(*coord)
-            cpcs = [x[0][cpc_xoffset] for x in row_cpc]
 
             results.append([
                 coord[0],
@@ -85,7 +77,7 @@ def build_m_table(
                 row_slope[0][xoffset],
                 row_access[0][xoffset],
                 row_countries[0][xoffset],
-            ] + [luc[0][xoffset] for luc in row_lucs] + cpcs)
+            ] + [luc[0][xoffset] for luc in row_lucs] + [cpc[0][xoffset] for cpc in row_cpcs])
 
 
     output = pl.DataFrame(results, columns)
