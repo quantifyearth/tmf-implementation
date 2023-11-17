@@ -122,8 +122,9 @@ def generate_additionality(
 
             value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
 
-            for luc in value_count_year.index.tolist():
-                values[int(luc) - 1] = value_count_year[luc]
+            for luc in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]:
+                if value_count_year.get(luc) is not None:
+                    values[int(luc) - 1] = value_count_year[luc]
 
             undisturbed_t = values[LandUseClass.UNDISTURBED - 1]
             degraded_t = values[LandUseClass.DEGRADED - 1]
@@ -175,15 +176,16 @@ def generate_additionality(
         if earliest_year is None:
             raise ValueError("Failed to extract earliest year from LUCs")
 
+        total_pixels_c = len(matches_df)
         for year_index in range(earliest_year, end_year + 1):
-            total_pixels_c = len(matches_df)
 
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
             value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
 
-            for luc in value_count_year.index.tolist():
-                values[int(luc) - 1] = value_count_year[luc]
+            for luc in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]:
+                if value_count_year.get(luc) is not None:
+                    values[int(luc) - 1] = value_count_year[luc]
 
             undisturbed_c = values[LandUseClass.UNDISTURBED - 1]
             degraded_c = values[LandUseClass.DEGRADED - 1]
