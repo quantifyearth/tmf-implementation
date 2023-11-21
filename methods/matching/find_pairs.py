@@ -1,6 +1,5 @@
 import argparse
 import os
-import random
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
@@ -32,8 +31,7 @@ def find_match_iteration(
     idx_and_seed: tuple[int, int]
 ) -> None:
     logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
-    random.seed(idx_and_seed[1])
-    np.random.seed(idx_and_seed[1])
+    rng = np.random.default_rng(idx_and_seed[1])
 
     logging.info("Loading K from %s", k_parquet_filename)
 
@@ -41,7 +39,7 @@ def find_match_iteration(
     k_set = pd.read_parquet(k_parquet_filename)
     k_subset = k_set.sample(
         frac=0.1,
-        random_state=random.randint(0, 1000000),
+        random_state=rng
     ).reset_index()
 
     logging.info("Loading M from %s", m_parquet_filename)
@@ -87,7 +85,7 @@ def find_match_iteration(
     required = 100
 
     logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = np.random.random_integers(0, m_dist_thresholded.shape[0], k_subset_dist_thresholded.shape[0])
+    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_subset_dist_thresholded.shape[0]))
     s_set_mask_true, no_potentials = make_s_set_mask(
         m_dist_thresholded,
         k_subset_dist_thresholded,
@@ -307,8 +305,8 @@ def find_pairs(
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
 
-    random.seed(seed)
-    iteration_seeds = [(x, random.randint(0, 1000000)) for x in range(REPEAT_MATCH_FINDING)]
+    rng = np.random.default_rng(seed)
+    iteration_seeds = zip(range(REPEAT_MATCH_FINDING), rng.integers(0, 1000000, REPEAT_MATCH_FINDING))
 
     with Pool(processes=processes_count) as pool:
         pool.map(
