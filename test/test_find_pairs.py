@@ -23,51 +23,51 @@ def test_batch_mahalanobis():
 TEST_SUBSET_ROWS = 5
 # test for make_s_set_mask
 def test_make_s_set_mask():
-    # set numpy random seed to 35
-    np.random.seed(35)
-    # create a random set of TEST_ROWS rows of 5 columns
-    s_dist_thresholded = np.random.rand(TEST_SUBSET_ROWS, 5)
-    # create a random set of TEST_ROWS rows of 5 columns
-    k_dist_thresholded = np.random.rand(TEST_SUBSET_ROWS, 5)
-    # create a random set of integers in TEST_ROWS rows of 5 columns
-    s_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
-    # create a random set of integers in TEST_ROWS rows of 5 columns
-    k_dist_hard = np.random.randint(0, 2, size=(TEST_SUBSET_ROWS, 5))
-    # Starting positions
-    starting_positions = np.random.randint(0, 5, 5)
+
+    k_dist_hard = np.array([
+        [1, 2],
+        [7, 8],
+        [1, 2],
+        [7, 8],
+    ], dtype=np.float32)
+
+    k_dist_thresholded = np.array([
+        [0.1, 0.2],
+        [0.7, 0.8],
+        [20.0, 21.0],
+        [20.0, 21.0],
+    ], dtype=np.float32)
+
+    m_dist_hard = np.array([
+        [1, 2],
+        [3, 4],
+        [12, 13],
+        [100, 101],
+        [150, 151],
+    ], dtype=np.float32)
+
+    m_dist_thresholded = np.array([
+        [0.1, 0.2],
+        [0.3, 0.4],
+        [0.7, 0.8],
+        [0.9, 0.1],
+        [0.5, 0.6],
+    ], dtype=np.float32)
+
+    starting_positions = np.array([1, 2, 3, 4])
+
     # calculate using make_s_set_mask
-    s_subset_mask = find_pairs.make_s_set_mask(
-        s_dist_thresholded,
+    s_subset_mask, misses = find_pairs.make_s_set_mask(
+        m_dist_thresholded,
         k_dist_thresholded,
-        s_dist_hard,
+        m_dist_hard,
         k_dist_hard,
         starting_positions,
-        TEST_SUBSET_ROWS,
+        2,
     )
 
-    s_subset_hard = s_dist_hard[s_subset_mask]
-    k_subset_hard = k_dist_hard
-
-    print(f"s_subset_hard: {s_subset_hard}")
-    print(f"k_subset_hard: {k_subset_hard}")
-
-    s_subset_dist = s_dist_thresholded[s_subset_mask]
-    k_subset_dist = k_dist_thresholded
-
-    # check that for each row in s_subset_dist there is a row in k_subset_dist
-    # that is less than the threshold for every column
-    for i in range(s_subset_dist.shape[0]):
-        one_below_threshold = False
-        one_hard_match = False
-
-        for k in range(k_subset_dist.shape[0]):
-            if np.all(abs(k_subset_dist[k] - s_subset_dist[i]) < 1.0):
-                one_below_threshold = True
-            if np.allclose(k_subset_hard[k], s_subset_hard[i]):
-                one_hard_match = True
-
-        assert one_below_threshold, f"no corresponding row in k_subset_dist for {s_subset_dist[i]}"
-        assert one_hard_match, f"no hard match for {s_subset_hard[i]}"
+    assert (s_subset_mask == [True, False, False, False, False]).all()
+    assert (misses == [False, True, True, True]).all()
 
 TEST_ROWS_ALL_TRUE = 35
 # test for rows_all_true

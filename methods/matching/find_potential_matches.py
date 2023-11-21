@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
-from typing import Mapping, Tuple
+from typing import Mapping
 from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
@@ -95,19 +95,6 @@ def load_k(
     print("k trees built.")
 
     return source_trees
-
-def exact_pixel_for_lat_lng(layer, lat: float, lng: float) -> Tuple[int,int]:
-    """Get pixel for geo coords. This is relative to the set view window.
-    Result is rounded down to nearest pixel."""
-    if "WGS 84" not in layer.projection:
-        raise NotImplementedError("Not yet supported for other projections")
-    pixel_scale = layer.pixel_scale
-    if pixel_scale is None:
-        raise ValueError("Layer has no pixel scale")
-    return (
-        (lng - layer.area.left) / pixel_scale.xstep,
-        (lat - layer.area.top) / pixel_scale.ystep,
-    )
 
 def worker(
     worker_index: int,
