@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from multiprocessing import Manager, Process, Queue, cpu_count
-from typing import Mapping, Tuple
+from typing import Mapping
 from osgeo import gdal  # type: ignore
 import numpy as np
 import pandas as pd
