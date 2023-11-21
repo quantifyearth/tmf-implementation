@@ -193,13 +193,11 @@ def make_s_set_mask(
         k_row = k_subset_dist_thresholded[k, :]
         k_hard = k_subset_dist_hard[k]
 
-        # Random starting index and the end M index
-        i = starting_positions[k]
-        end = (i - 1) % m_size
+        for index in range(m_size):
+            m_index = (index + starting_positions[k]) % m_size
 
-        while i != end:
-            m_row = m_dist_thresholded[i, :]
-            m_hard = m_dist_hard[i]
+            m_row = m_dist_thresholded[m_index, :]
+            m_hard = m_dist_hard[m_index]
 
             should_include = True
 
@@ -217,14 +215,12 @@ def make_s_set_mask(
                         should_include = False
 
             if should_include:
-                s_include[i] = True
+                s_include[m_index] = True
                 matches += 1
 
             # Don't find any more M's
             if matches == required:
                 break
-
-            i = (i + 1) % m_size
 
         k_miss[k] = matches == 0
 
