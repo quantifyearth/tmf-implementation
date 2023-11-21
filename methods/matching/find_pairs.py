@@ -182,17 +182,20 @@ def make_s_set_mask(
     starting_positions: np.ndarray,
     required: int
 ):
-    s_include = np.zeros(m_dist_thresholded.shape[0], dtype=np.bool_)
-    k_miss = np.zeros(k_subset_dist_thresholded.shape[0], dtype=np.bool_)
+    m_size = m_dist_thresholded.shape[0]
+    k_size = k_subset_dist_thresholded.shape[0]
 
-    for k in range(k_subset_dist_thresholded.shape[0]):
+    s_include = np.zeros(m_size, dtype=np.bool_)
+    k_miss = np.zeros(k_size, dtype=np.bool_)
+
+    for k in range(k_size):
         matches = 0
         k_row = k_subset_dist_thresholded[k, :]
         k_hard = k_subset_dist_hard[k]
 
         # Random starting index and the end M index
         i = starting_positions[k]
-        end = (i - 1) % m_dist_thresholded.shape[0]
+        end = (i - 1) % m_size
 
         while i != end:
             m_row = m_dist_thresholded[i, :]
@@ -221,7 +224,7 @@ def make_s_set_mask(
             if matches == required:
                 break
 
-            i = (i + 1) % m_dist_thresholded.shape[0]
+            i = (i + 1) % m_size
 
         k_miss[k] = matches == 0
 
