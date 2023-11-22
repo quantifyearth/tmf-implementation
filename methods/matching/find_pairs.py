@@ -61,11 +61,11 @@ def find_match_iteration(
     logging.info("Preparing s_set...")
 
     m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
-    k_subset_dist_thresholded_df = k_subset[DISTANCE_COLUMNS] / thresholds_for_columns
+    k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / thresholds_for_columns
 
     # convert to float32 numpy arrays and make them contiguous for numba to vectorise
     m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
-    k_subset_dist_thresholded = np.ascontiguousarray(k_subset_dist_thresholded_df, dtype=np.float32)
+    k_set_dist_thresholded = np.ascontiguousarray(k_set_dist_thresholded_df, dtype=np.float32)
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
@@ -78,19 +78,18 @@ def find_match_iteration(
 
     # similar to the above, make the hard match columns contiguous float32 numpy arrays
     m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
-    k_subset_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
+    k_set_dist_hard = np.ascontiguousarray(k_set[hard_match_columns].to_numpy()).astype(np.int32)
 
-    # Methodology 6.5.5: S should be 10 times the size of K, in order to achieve this for every
-    # pixel in the subsample (which is 10% the size of K) we select 100 pixels.
-    required = 100
+    # Methodology 6.5.5: S should be 10 times the size of K
+    required = 10
 
     logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_subset_dist_thresholded.shape[0]))
+    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_set_dist_thresholded.shape[0]))
     s_set_mask_true, no_potentials = make_s_set_mask(
         m_dist_thresholded,
-        k_subset_dist_thresholded,
+        k_set_dist_thresholded,
         m_dist_hard,
-        k_subset_dist_hard,
+        k_set_dist_hard,
         starting_positions,
         required
     )
@@ -176,22 +175,22 @@ def find_match_iteration(
 @jit(nopython=True, fastmath=True, error_model="numpy")
 def make_s_set_mask(
     m_dist_thresholded: np.ndarray,
-    k_subset_dist_thresholded: np.ndarray,
+    k_set_dist_thresholded: np.ndarray,
     m_dist_hard: np.ndarray,
-    k_subset_dist_hard: np.ndarray,
+    k_set_dist_hard: np.ndarray,
     starting_positions: np.ndarray,
     required: int
 ):
+    k_size = k_set_dist_thresholded.shape[0]
     m_size = m_dist_thresholded.shape[0]
-    k_size = k_subset_dist_thresholded.shape[0]
 
     s_include = np.zeros(m_size, dtype=np.bool_)
     k_miss = np.zeros(k_size, dtype=np.bool_)
 
     for k in range(k_size):
         matches = 0
-        k_row = k_subset_dist_thresholded[k, :]
-        k_hard = k_subset_dist_hard[k]
+        k_row = k_set_dist_thresholded[k, :]
+        k_hard = k_set_dist_hard[k]
 
         for index in range(m_size):
             m_index = (index + starting_positions[k]) % m_size
