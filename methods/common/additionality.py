@@ -5,12 +5,10 @@ from typing import Dict, Any, List
 
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
-import geopandas as gpd # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps  # type: ignore
 
 from methods.common import LandUseClass, dump_dir
-from methods.common.geometry import area_for_geometry
 
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
 
@@ -32,10 +30,10 @@ def plot_carbon_stock(
     x_axis = []
     treatment = []
     control = []
-    for k, v in project_data.items():
-        x_axis.append(k)
-        treatment.append(v)
-        control.append(control_data[k])
+    for year, value in project_data.items():
+        x_axis.append(year)
+        treatment.append(value)
+        control.append(control_data[value])
     axis.plot(x_axis, treatment, label="Treatment")
     axis.plot(x_axis, control, label="Control")
     axis.set_title("Carbon stock (Average Treatment and Average Control)")
@@ -49,14 +47,14 @@ def plot_carbon_trajectories(
     axis: List[plt.Axes],
     title: str,
     idx: int,
-    ts: Dict[int, np.ndarray],
+    timeseries: Dict[int, np.ndarray],
     start_year: str
 ):
     x_axis = []
     y_axis = []
-    for k, v in ts.items():
-        x_axis.append(k)
-        y_axis.append(v)
+    for year, value in timeseries.items():
+        x_axis.append(year)
+        y_axis.append(value)
     axis[idx].plot(x_axis, y_axis)
     axis[idx].set_title(title)
     axis[idx].set_xlabel("Year")
@@ -88,9 +86,9 @@ def generate_additionality(
     project_area_msq: float,
     project_start: str,
     end_year: int,
-    density: List[float],
+    density: np.ndarray,
     matches_directory: str,
-    expected_number_of_iterations: int
+    expected_number_of_iterations: int,
 ) -> Dict[int, float]:
     """Calculate the additionality (or leakage) of a project from the counterfactual pair matchings
     alongside the carbon density values and some project specific metadata."""
@@ -256,37 +254,37 @@ def generate_additionality(
 
             linestrings = []
             for _, row in matches_df.iterrows():
-                ls = Feature(
+                linestring = Feature(
                     geometry=LineString(
                         [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
                     )
                 )
-                linestrings.append(ls)
+                linestrings.append(linestring)
 
-            gc = FeatureCollection(linestrings)
+            geomtry_collection = FeatureCollection(linestrings)
             out_path = os.path.join(
                 dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson"
             )
 
-            with open(out_path, "w") as f:
-                f.write(dumps(gc))
+            with open(out_path, "w", encoding="utf-8") as output_file:
+                output_file.write(dumps(geomtry_collection))
 
             points = []
             for _, row in matches_df.iterrows():
-                ls = Feature(
+                linestring = Feature(
                     geometry=MultiPoint(
                         [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
                     )
                 )
-                points.append(ls)
+                points.append(linestring)
 
             points_gc = FeatureCollection(points)
             out_path = os.path.join(
                 dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson"
             )
 
-            with open(out_path, "w") as f:
-                f.write(dumps(points_gc))
+            with open(out_path, "w", encoding="utf-8") as output_file:
+                output_file.write(dumps(points_gc))
 
             # We now compute statistics for each pairing mainly looking at SMD
             mean_std = matches_df.agg(["mean", "std"])
@@ -308,10 +306,10 @@ def generate_additionality(
                     smds["smd"].append(smd)
         smd_path = os.path.join(
             dump_dir,
-            os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-smd.csv",
+            "smd.csv"
         )
-        df = pd.DataFrame.from_dict(smds)
-        df.to_csv(smd_path)
+        smds_df = pd.DataFrame.from_dict(smds)
+        smds_df.to_csv(smd_path)
 
     result : Dict[int, float] = {}
 
@@ -319,5 +317,4 @@ def generate_additionality(
         result[year] = value - c_tot[year]
 
     return result
-
     

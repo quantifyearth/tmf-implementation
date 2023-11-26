@@ -43,23 +43,23 @@ def data_from_lucs(k_lucs, s_lucs, start_year):
 def test_additionality_all_forest():
     # TODO: Probably produce a schema for this file, at the moment it is
     # explicitly defined anywhere.
-    NUMBER_OF_PIXELS = 100
+    number_of_pixels = 100
 
     # All forest, both in the counterfactual and in the control
-    k_lucs = np.ones(shape=(NUMBER_OF_PIXELS, 22))
-    s_lucs = np.ones(shape=(NUMBER_OF_PIXELS, 22))
+    k_lucs = np.ones(shape=(number_of_pixels, 22))
+    s_lucs = np.ones(shape=(number_of_pixels, 22))
 
     start_year = 2000
     end_year = 2020
 
     data = data_from_lucs(k_lucs, s_lucs, start_year)
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         matches_path = os.path.join(tmpdir, "matches")
         os.mkdir(matches_path)
 
-        df = pd.DataFrame.from_dict(data)
-        df.to_parquet(os.path.join(matches_path, "1234.parquet"))
+        dataframe = pd.DataFrame.from_dict(data)
+        dataframe.to_parquet(os.path.join(matches_path, "1234.parquet"))
 
         density = np.array([100.0, 0.0, 0.0, 0.0, 0.0, 0.0])
         area = 10000
@@ -77,29 +77,29 @@ def test_additionality_all_forest():
         for i in range(end_year - start_year + 1):
             expected[start_year + i] = 0.0
 
-        assert(expected == add)
+        assert expected == add
 
 def test_additionality_all_additional():
     # TODO: Probably produce a schema for this file, at the moment it is
     # explicitly defined anywhere.
-    NUMBER_OF_PIXELS = 1
+    number_of_pixels = 1
 
     # All deforested in the controls and all forest in the treatment. This means
     # there should be good additionality for each year.
-    k_lucs = np.ones(shape=(NUMBER_OF_PIXELS, 22))
-    s_lucs = np.ones(shape=(NUMBER_OF_PIXELS, 22)) + 2
+    k_lucs = np.ones(shape=(number_of_pixels, 22))
+    s_lucs = np.ones(shape=(number_of_pixels, 22)) + 2
 
     start_year = 2000
     end_year = 2020
 
     data = data_from_lucs(k_lucs, s_lucs, start_year)
-    
+
     with tempfile.TemporaryDirectory() as tmpdir:
         matches_path = os.path.join(tmpdir, "matches")
         os.mkdir(matches_path)
 
-        df = pd.DataFrame.from_dict(data)
-        df.to_parquet(os.path.join(matches_path, "1234.parquet"))
+        dataframe = pd.DataFrame.from_dict(data)
+        dataframe.to_parquet(os.path.join(matches_path, "1234.parquet"))
 
         density = np.array([100.0, 50.0, 10.0, 0.0, 0.0, 0.0])
         area = 10000
@@ -115,8 +115,8 @@ def test_additionality_all_additional():
 
         # We make the calculation for expected easier by removing
         # this scaling factor.
-        for k, v in add.items():
-            add[k] = v / MOLECULAR_MASS_CO2_TO_C_RATIO
+        for year, value in add.items():
+            add[year] = value / MOLECULAR_MASS_CO2_TO_C_RATIO
 
         # We expect 90 here as our carbon density for undisturbed is 100
         # and for deforested it is 10.

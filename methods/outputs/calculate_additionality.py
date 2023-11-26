@@ -1,9 +1,9 @@
 import csv
 import argparse
 
-import pandas as pd
-import numpy as np
-import geopandas as gpd
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
+import geopandas as gpd # type: ignore
 
 from methods.common.additionality import generate_additionality
 from methods.common.geometry import area_for_geometry

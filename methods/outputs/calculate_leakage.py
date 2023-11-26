@@ -1,9 +1,9 @@
 import csv
 import argparse
 
-import pandas as pd
-import numpy as np
-import geopandas as gpd
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
+import geopandas as gpd # type: ignore
 
 from methods.common.additionality import generate_additionality
 from methods.common.geometry import area_for_geometry
@@ -75,7 +75,7 @@ if __name__ == "__main__":
     for _, row in density_df.iterrows():
         luc = row["land use class"]
         density[int(luc) - 1] = row["carbon density"]
-    
+
     project_gpd = gpd.read_file(args.project_boundary_file)
     project_area_msq = area_for_geometry(project_gpd)
 
