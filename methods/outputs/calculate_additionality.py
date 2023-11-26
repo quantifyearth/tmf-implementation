@@ -1,7 +1,12 @@
 import csv
 import argparse
 
+import pandas as pd
+import numpy as np
+import geopandas as gpd
+
 from methods.common.additionality import generate_additionality
+from methods.common.geometry import area_for_geometry
 
 EXPECTED_NUMBER_OF_ITERATIONS = 100
 
@@ -54,11 +59,24 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # TODO: may be present in config, in which case use that, but for now we use
+    # the calculate version.
+    density_df = pd.read_csv(args.carbon_density)
+    density = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    # Density may have left some LUCs out like water
+    for _, row in density_df.iterrows():
+        luc = row["land use class"]
+        density[int(luc) - 1] = row["carbon density"]
+
+    project_gpd = gpd.read_file(args.project_boundary_file)
+    project_area_msq = area_for_geometry(project_gpd)
+
     add = generate_additionality(
-        args.project_boundary_file,
+        project_area_msq,
         args.project_start,
         args.evaluation_year,
-        args.carbon_density,
+        density,
         args.matches,
         EXPECTED_NUMBER_OF_ITERATIONS
     )

@@ -85,29 +85,15 @@ def is_not_matchless(path: str) -> bool:
 
 
 def generate_additionality(
-    project_geojson_file: str,
+    project_area_msq: float,
     project_start: str,
     end_year: int,
-    carbon_density: str,
+    density: List[float],
     matches_directory: str,
     expected_number_of_iterations: int
 ) -> Dict[int, float]:
     """Calculate the additionality (or leakage) of a project from the counterfactual pair matchings
     alongside the carbon density values and some project specific metadata."""
-    # TODO: may be present in config, in which case use that, but for now we use
-    # the calculate version.
-    density_df = pd.read_csv(carbon_density)
-    density = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-    # Density may have left some LUCs out like water
-    for _, row in density_df.iterrows():
-        luc = row["land use class"]
-        density[int(luc) - 1] = row["carbon density"]
-
-    # We calculate area using projections and not the inaccurate 30 * 30 approximation
-    project_gpd = gpd.read_file(project_geojson_file)
-    project_area_msq = area_for_geometry(project_gpd)
-
     logging.info("Project area: %.2fmsq", project_area_msq)
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
