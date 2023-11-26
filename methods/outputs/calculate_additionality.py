@@ -3,13 +3,13 @@ import os
 import logging
 import csv
 import argparse
+from typing import Dict, Any, List
 
-import numpy as np
-import pandas as pd
-import geopandas as gpd
-import matplotlib.pyplot as plt
-from typing import Optional
-from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps # type: ignore
+import numpy as np # type: ignore
+import pandas as pd # type: ignore
+import geopandas as gpd # type: ignore
+import matplotlib.pyplot as plt # type: ignore
+from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps  # type: ignore
 
 from methods.common import LandUseClass, dump_dir
 from methods.common.geometry import area_for_geometry
@@ -24,54 +24,67 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-def plot_carbon_stock(axis, arr, cf, start_year):
+
+def plot_carbon_stock(
+    axis: plt.Axes,
+    project_data: Dict[int, float],
+    control_data: Dict[int, float],
+    start_year: int
+):
     x_axis = []
     treatment = []
     control = []
-    for (k, v) in arr.items():
+    for k, v in project_data.items():
         x_axis.append(k)
         treatment.append(v)
-        control.append(cf[k])
-    axis[0].plot(x_axis, treatment, label="Treatment")
-    axis[0].plot(x_axis, control, label="Control")
-    axis[0].set_title('Carbon stock (Average Treatment and Average Control)')
-    axis[0].set_xlabel('Year')
-    axis[0].set_ylabel('Carbon Stock (MgCO2e)')
-    axis[0].axvline(start_year)
-    axis[0].legend(loc="lower left")
+        control.append(control_data[k])
+    axis.plot(x_axis, treatment, label="Treatment")
+    axis.plot(x_axis, control, label="Control")
+    axis.set_title("Carbon stock (Average Treatment and Average Control)")
+    axis.set_xlabel("Year")
+    axis.set_ylabel("Carbon Stock (MgCO2e)")
+    axis.axvline(start_year)
+    axis.legend(loc="lower left")
 
-def plot_carbon_trajectories(axis, title, idx, ts, start_year):
+
+def plot_carbon_trajectories(
+    axis: List[plt.Axes],
+    title: str,
+    idx: int,
+    ts: Dict[int, np.ndarray],
+    start_year: str
+):
     x_axis = []
     y_axis = []
-    for (k, v) in ts.items():
+    for k, v in ts.items():
         x_axis.append(k)
-        y_axis.append(ts[k])
+        y_axis.append(v)
     axis[idx].plot(x_axis, y_axis)
     axis[idx].set_title(title)
-    axis[idx].set_xlabel('Year')
-    axis[idx].set_ylabel('Carbon Stock (MgCO2e)')
+    axis[idx].set_xlabel("Year")
+    axis[idx].set_ylabel("Carbon Stock (MgCO2e)")
     axis[idx].axvline(start_year)
 
-def find_first_luc(columns: list[str]) -> Optional[str]:
+
+def find_first_luc(columns: list[str]) -> int:
     for col in columns:
         split = col.split("_luc_")
         if len(split) < 2:
             continue
         try:
             return int(split[1])
-        except:
+        except ValueError:
             continue
-    return None
+    raise ValueError("Failed to extract earliest year from LUCs")
+
 
 def is_not_matchless(path: str) -> bool:
     name = os.path.basename(path)
     parts = name.split("_")
-    if len(parts) < 2:
-        return True
-    else:
-        if parts[1] == "matchless.parquet":
-            return False
+    if (len(parts) >= 2) and (parts[1] == "matchless.parquet"):
+        return False
     return True
+
 
 def generate_additionality(
     project_geojson_file: str,
@@ -80,7 +93,7 @@ def generate_additionality(
     carbon_density: str,
     matches_directory: str,
     output_csv: str,
-) -> int:
+):
     # TODO: may be present in config, in which case use that, but for now we use
     # the calculate version.
     density_df = pd.read_csv(carbon_density)
@@ -101,7 +114,7 @@ def generate_additionality(
     matches = list(filter(is_not_matchless, matches))
     assert len(matches) == EXPECTED_NUMBER_OF_MATCH_ITERATIONS
 
-    treatment_data = {}
+    treatment_data : Dict[int, np.ndarray] = {}
 
     for pair_idx, pairs in enumerate(matches):
         logging.info("Computing additionality in treatment for %s", pairs)
@@ -111,9 +124,6 @@ def generate_additionality(
         columns.sort()
 
         earliest_year = find_first_luc(columns)
-
-        if earliest_year is None:
-            raise ValueError("Failed to extract earliest year from LUCs")
 
         for year_index in range(earliest_year, end_year + 1):
             total_pixels_t = len(matches_df)
@@ -158,11 +168,11 @@ def generate_additionality(
             if treatment_data.get(year_index) is not None:
                 treatment_data[year_index][pair_idx] = s_t_value
             else:
-                arr = [0 for _ in range(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)]
+                arr = np.zeros(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)
                 arr[pair_idx] = s_t_value
                 treatment_data[year_index] = arr
 
-    scvt = {}
+    scvt : Dict[int, np.ndarray] = {}
 
     for pair_idx, pairs in enumerate(matches):
         logging.info("Computing additionality for control %s", pairs)
@@ -178,7 +188,6 @@ def generate_additionality(
 
         total_pixels_c = len(matches_df)
         for year_index in range(earliest_year, end_year + 1):
-
             values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
             value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
@@ -219,15 +228,15 @@ def generate_additionality(
             if scvt.get(year_index) is not None:
                 scvt[year_index][pair_idx] = s_c_value
             else:
-                arr = [0 for _ in range(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)]
+                arr = np.zeros(EXPECTED_NUMBER_OF_MATCH_ITERATIONS)
                 arr[pair_idx] = s_c_value
                 scvt[year_index] = arr
 
-    c_tot = {}
+    c_tot : Dict[int, float] = {}
     for year, values in scvt.items():
         c_tot[year] = np.average(values)
 
-    p_tot = {}
+    p_tot : Dict[int, float] = {}
     for year, values in treatment_data.items():
         p_tot[year] = np.average(values)
 
@@ -236,43 +245,65 @@ def generate_additionality(
         figure.set_figheight(10)
         figure.set_figwidth(18)
 
-        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Treatment)', 1, treatment_data, project_start)
-        plot_carbon_trajectories(axis, 'Carbon stock (All Matches Control)', 2, scvt, project_start)
-        plot_carbon_stock(axis, p_tot, c_tot, project_start)
+        plot_carbon_trajectories(
+            axis,
+            "Carbon stock (All Matches Treatment)",
+            1,
+            treatment_data,
+            project_start,
+        )
+        plot_carbon_trajectories(
+            axis, "Carbon stock (All Matches Control)", 2, scvt, project_start
+        )
+        plot_carbon_stock(axis[0], p_tot, c_tot, int(project_start))
 
         os.makedirs(dump_dir, exist_ok=True)
-        out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png")
+        out_path = os.path.join(
+            dump_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png"
+        )
         figure.savefig(out_path)
 
         # Now for all the pairs we create a GeoJSON for visualising
-        smds = { "pair_id": [], "feature": [], "smd": [] }
+        smds : Dict[str, Any] = {"pair_id": [], "feature": [], "smd": []}
         for pair_idx, pairs in enumerate(matches):
             matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
 
             linestrings = []
             for _, row in matches_df.iterrows():
-                ls = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                ls = Feature(
+                    geometry=LineString(
+                        [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
+                    )
+                )
                 linestrings.append(ls)
-            
+
             gc = FeatureCollection(linestrings)
-            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson")
+            out_path = os.path.join(
+                dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson"
+            )
 
             with open(out_path, "w") as f:
                 f.write(dumps(gc))
 
             points = []
             for _, row in matches_df.iterrows():
-                ls = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                ls = Feature(
+                    geometry=MultiPoint(
+                        [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
+                    )
+                )
                 points.append(ls)
 
             points_gc = FeatureCollection(points)
-            out_path = os.path.join(dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson")
+            out_path = os.path.join(
+                dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson"
+            )
 
             with open(out_path, "w") as f:
                 f.write(dumps(points_gc))
-            
+
             # We now compute statistics for each pairing mainly looking at SMD
-            mean_std = matches_df.agg(['mean', 'std'])
+            mean_std = matches_df.agg(["mean", "std"])
             for col in matches_df.columns:
                 # only go from K to S so we don't double count
                 if col[0] == "k":
@@ -282,25 +313,30 @@ def generate_additionality(
                     control_mean = mean_std[control_col]["mean"]
                     treat_std = mean_std[col]["std"]
                     control_std = mean_std[control_col]["std"]
-                    smd = (treat_mean - control_mean) / np.sqrt((treat_std ** 2 + control_std ** 2) / 2)
+                    smd = (treat_mean - control_mean) / np.sqrt(
+                        (treat_std**2 + control_std**2) / 2
+                    )
                     smd = round(abs(smd), 8)
                     smds["pair_id"].append(os.path.splitext(pairs)[0])
                     smds["feature"].append(feature)
                     smds["smd"].append(smd)
-        smd_path = os.path.join(dump_dir, os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-smd.csv")
+        smd_path = os.path.join(
+            dump_dir,
+            os.path.splitext(project_geojson_file)[0].split("/")[-1:][0] + "-smd.csv",
+        )
         df = pd.DataFrame.from_dict(smds)
         df.to_csv(smd_path)
 
-    result = {}
+    result : Dict[int, float] = {}
 
     for year, value in p_tot.items():
-        result[year] = (value - c_tot[year])
+        result[year] = value - c_tot[year]
 
     with open(output_csv, "w", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["year", "additionality"])
-        for year, result in result.items():
-            writer.writerow([year, result])
+        for year, value in result.items():
+            writer.writerow([year, value])
 
 
 if __name__ == "__main__":
@@ -312,7 +348,7 @@ if __name__ == "__main__":
         type=str,
         required=True,
         dest="project_boundary_file",
-        help="GeoJSON files containing the polygons for the project's boundary",
+        help="GeoJSON file containing the polygons for the project's boundary",
     )
     parser.add_argument(
         "--project_start",
