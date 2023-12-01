@@ -187,7 +187,6 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-@jitclass
 class RTree:
     def __init__():
         pass
@@ -207,8 +206,7 @@ class RTree:
     def dump(self, space: str):
         raise NotImplemented()
 
-@jitclass([('point', float32[:]), ('index', int64)])
-class RLeaf:#(RTree):
+class RLeaf(RTree):
     def __init__(self, point, index):
         self.point = point
         self.index = index
@@ -221,8 +219,7 @@ class RLeaf:#(RTree):
     def dump(self, space: str):
         print(space, f"point {self.point}")
 
-@jitclass([('points', float32[:, :]), ('indexes', int64[:])])
-class RList:#(RTree):
+class RList(RTree):
     def __init__(self, points, indexes):
         self.points = points
         self.indexes = indexes
@@ -233,9 +230,7 @@ class RList:#(RTree):
     def dump(self, space: str):
         print(space, f"points {self.points}")
 
-node_type = deferred_type()
-@jitclass([('d', int64), ('value', float32), ('left', node_type), ('right', node_type), ('width', int64)])
-class RSplit:#(RTree):
+class RSplit(RTree):
     def __init__(self, d: int, value: float, left: RTree, right: RTree, width: int):
         self.d = d
         self.value = value
@@ -290,9 +285,7 @@ class RSplit:#(RTree):
         print(space + "  >")
         self.right.dump(space + "\t")
 
-node_type.define(RTree.class_type.instance_type)
-
-class RWrapper:#(RTree):
+class RWrapper(RTree):
     def __init__(self, tree, widths):
         self.tree = tree
         self.widths = widths
