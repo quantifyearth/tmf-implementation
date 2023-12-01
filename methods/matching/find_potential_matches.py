@@ -27,7 +27,6 @@ gdal.SetCacheMax(1024 * 1024 * 16)
 
 def build_key(ecoregion, country, luc0, luc5, luc10):
     """Create a 64-bit key for fields that must match exactly"""
-    return  (int(ecoregion) << 32) | (int(country) << 16) | (int(luc0) << 10) | (int(luc5) << 5) | (int(luc10))
     if ecoregion < 0 or ecoregion > 0x7fffffff:
         raise ValueError("Ecoregion doesn't fit in 31 bits")
     if country < 0 or country > 0xffff:
@@ -38,16 +37,12 @@ def build_key(ecoregion, country, luc0, luc5, luc10):
         raise ValueError("luc5 doesn't fit in 5 bits")
     if luc10 < 0 or luc10 > 0x1f:
         raise ValueError("luc10 doesn't fit in 5 bits")
+    return  (int(ecoregion) << 32) | (int(country) << 16) | (int(luc0) << 10) | (int(luc5) << 5) | (int(luc10))
 
 def key_builder(start_year: int):
     luc0, luc5, luc10 = luc_matching_columns(start_year)
-    lookup = {}
     def _build_key(row):
-        value = build_key(row.ecoregion, row.country, row[luc0], row[luc5], row[luc10])
-        if value not in lookup:
-            lookup[value] = (row.ecoregion, row.country, row[luc0], row[luc5], row[luc10])
-        return value
-    _build_key.lookup = lambda key: lookup[key]
+        return  build_key(row.ecoregion, row.country, row[luc0], row[luc5], row[luc10])
     return _build_key
 
 def load_k(
