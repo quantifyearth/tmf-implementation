@@ -1,11 +1,11 @@
 import json
 import argparse
 import logging
+from typing import Literal, NoReturn
 
-from typing import Literal, NoReturn, List
-import pandas as pd
-import numpy as np
-from scipy.interpolate import interp1d
+import pandas as pd # type: ignore
+import numpy as np # type: ignore
+from scipy.interpolate import interp1d # type: ignore
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -146,10 +146,10 @@ DEFAULT_DELTA_PER_YEAR = 0.03  # 3% per year
 
 
 def damage(
-    scc: List[float],
+    scc: pd.DataFrame,
     year: int,
     release_year: int,
-    schedule: List[List[float]],
+    schedule: pd.DataFrame,
     delta: float = DEFAULT_DELTA_PER_YEAR,
 ) -> float:
     """
@@ -267,10 +267,6 @@ def equivalent_permanence(
 
 
 def interpolate_scc(scc: pd.DataFrame, minimum_year: int, max_year: int) -> pd.DataFrame:
-    # No interpolation is necessary
-    if scc.index.min() <= minimum_year and scc.index.max() >= max_year:
-        return scc["central"].copy()
-
     years = scc.index.tolist()
     values = scc["central"].values
     # TODO: interp1d a fair enough extrapolation technique?
@@ -330,7 +326,7 @@ if __name__ == "__main__":
 
     schedule_data = []
     for fut in range(min_year, 4000):
-        estimates = [fut]
+        estimates = [float(fut)]
         for est in range(min_year, args.current_year + 1):
             rel_sched = release_schedule("high", additionality_data, leakage_data, est, fut, 2042)
             estimates.append(rel_sched)

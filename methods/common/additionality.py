@@ -33,7 +33,7 @@ def plot_carbon_stock(
     for year, value in project_data.items():
         x_axis.append(year)
         treatment.append(value)
-        control.append(control_data[value])
+        control.append(control_data[year])
     axis.plot(x_axis, treatment, label="Treatment")
     axis.plot(x_axis, control, label="Control")
     axis.set_title("Carbon stock (Average Treatment and Average Control)")
@@ -116,9 +116,9 @@ def generate_additionality(
 
             value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
 
-            for luc in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]:
+            for luc in [1, 2, 3, 4, 5, 6]:
                 if value_count_year.get(luc) is not None:
-                    values[int(luc) - 1] = value_count_year[luc]
+                    values[luc - 1] = value_count_year[luc]
 
             undisturbed_t = values[LandUseClass.UNDISTURBED - 1]
             degraded_t = values[LandUseClass.DEGRADED - 1]
@@ -176,9 +176,9 @@ def generate_additionality(
 
             value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
 
-            for luc in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]:
+            for luc in [1, 2, 3, 4, 5, 6]:
                 if value_count_year.get(luc) is not None:
-                    values[int(luc) - 1] = value_count_year[luc]
+                    values[luc - 1] = value_count_year[luc]
 
             undisturbed_c = values[LandUseClass.UNDISTURBED - 1]
             degraded_c = values[LandUseClass.DEGRADED - 1]
