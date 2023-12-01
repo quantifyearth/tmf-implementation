@@ -1,4 +1,5 @@
 import argparse
+from collections import defaultdict
 import os
 import logging
 from functools import partial
@@ -8,8 +9,9 @@ import numpy as np
 import pandas as pd
 
 from methods.common.luc import luc_matching_columns
+from methods.matching.find_potential_matches import key_builder
 
-REPEAT_MATCH_FINDING = 100
+REPEAT_MATCH_FINDING = 1
 DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
 
@@ -62,10 +64,12 @@ def find_match_iteration(
 
     m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
     k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / thresholds_for_columns
+    
+    # TODO: Split these into bins which require only looking in a couple to find a match
 
     # convert to float32 numpy arrays and make them contiguous for numba to vectorise
-    m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
-    k_set_dist_thresholded = np.ascontiguousarray(k_set_dist_thresholded_df, dtype=np.float32)
+    #m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
+    #k_set_dist_thresholded = np.ascontiguousarray(k_set_dist_thresholded_df, dtype=np.float32)
 
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
@@ -73,23 +77,62 @@ def find_match_iteration(
     # As well as all the LUC columns for later use
     luc_columns = [x for x in m_set.columns if x.startswith('luc')]
 
-    hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
+    hard_match_columns = ['ecoregion', 'country', luc0, luc5, luc10] # This must match the order given in key_builder
     assert len(hard_match_columns) == HARD_COLUMN_COUNT
+    build_key = key_builder(start_year)
 
     # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
-    k_set_dist_hard = np.ascontiguousarray(k_set[hard_match_columns].to_numpy()).astype(np.int32)
+    #m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
+    #k_set_dist_hard = np.ascontiguousarray(k_set[hard_match_columns].to_numpy()).astype(np.int32)
 
+    def make_bins(rows, normalised_rows):
+        bins = defaultdict(lambda : [])
+        for i, row in rows.iterrows():
+            bins[build_key(row)].append(normalised_rows.iloc[i])
+        return {k: np.array(bin, dtype=np.float32) for k, bin in bins.items()}
+    
+    logging.info("|K| total %d |M| total %d", len(k_set), len(m_set))
+    k_normalised_hard_bins = make_bins(k_set, k_set_dist_thresholded_df)
+
+    def select_bins(rows, normalised_rows, k_bins):
+        m_bins = {}
+        for k in k_bins.keys():
+            column_values = build_key.lookup(k)
+            print(column_values)
+            print(rows.iloc[0:5])
+            print(rows.iloc[0:5][hard_match_columns])
+            matches = np.all(rows[hard_match_columns] == column_values, axis=1)
+            print(matches)
+            print(np.sum(matches))
+            m_bins[k] = normalised_rows[matches]
+            logging.info("Bin %a |K|: %d |M|: %d", column_values, len(k_bins[k]), len(m_bins[k]))
+    
+    m_normalised_hard_bins = select_bins(m_set, m_dist_thresholded_df, k_normalised_hard_bins)
+
+    exit()
+    
+    for k, values in k_normalised_hard_bins:
+        if k not in m_normalised_hard_bins:
+            m_normalised_hard_bins[k] = np.empty((0, len(DISTANCE_COLUMNS)))
+            logging.info("No matches for bin of size %d with params %a", len(values), build_key.lookup(k))
+        else:
+            logging.info("|K| %d |S| %d for bin with params %a", len(values), len(m_normalised_hard_bins[k]), build_key.lookup(k))
+
+    for k, values in m_normalised_hard_bins:
+        if k not in k_normalised_hard_bins:
+            logging.info("Eliminated M bin of size %d with params %a", len(values), build_key.lookup(k))
+
+    exit()
     # Methodology 6.5.5: S should be 10 times the size of K
     required = 10
 
+    # TODO: From here, most of this code can run per-bin in k
+
     logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_set_dist_thresholded.shape[0]))
+    starting_positions = {(k, rng.integers(0, int(m_normalised_hard_bins[k].shape[0], k_normalised_hard_bins[k].shape[0]))) for k, _ in k_normalised_hard_bins}
     s_set_mask_true, no_potentials = make_s_set_mask(
-        m_dist_thresholded,
-        k_set_dist_thresholded,
-        m_dist_hard,
-        k_set_dist_hard,
+        m_normalised_hard_bins,
+        k_normalised_hard_bins,
         starting_positions,
         required
     )
