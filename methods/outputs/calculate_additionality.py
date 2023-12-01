@@ -72,7 +72,7 @@ if __name__ == "__main__":
     project_gpd = gpd.read_file(args.project_boundary_file)
     project_area_msq = area_for_geometry(project_gpd)
 
-    add = generate_additionality(
+    additionality = generate_additionality(
         project_area_msq,
         args.project_start,
         args.evaluation_year,
@@ -84,5 +84,5 @@ if __name__ == "__main__":
     with open(args.output_csv, "w", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["year", "additionality"])
-        for year, value in add.items():
+        for year, value in additionality.items():
             writer.writerow([year, value])

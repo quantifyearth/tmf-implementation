@@ -24,7 +24,7 @@ def plot_carbon_stock(
     project_data: Dict[int, float],
     control_data: Dict[int, float],
     start_year: int
-):
+) -> None:
     """Will plot the carbon stock for a project and the controls. Those dictionaries should
     be the yearly carbon stock."""
     x_axis = []
@@ -75,11 +75,7 @@ def find_first_luc(columns: list[str]) -> int:
 
 
 def is_not_matchless(path: str) -> bool:
-    name = os.path.basename(path)
-    parts = name.split("_")
-    if (len(parts) >= 2) and (parts[1] == "matchless.parquet"):
-        return False
-    return True
+    return not path.endswith("_matchless.parquet")
 
 
 def generate_additionality(
@@ -95,7 +91,7 @@ def generate_additionality(
     logging.info("Project area: %.2fmsq", project_area_msq)
 
     matches = glob.glob("*.parquet", root_dir=matches_directory)
-    matches = list(filter(is_not_matchless, matches))
+    matches = [x for x in matches if is_not_matchless(x)]
     assert len(matches) == expected_number_of_iterations
 
     treatment_data : Dict[int, np.ndarray] = {}
@@ -116,9 +112,9 @@ def generate_additionality(
 
             value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
 
-            for luc in [1, 2, 3, 4, 5, 6]:
-                if value_count_year.get(luc) is not None:
-                    values[luc - 1] = value_count_year[luc]
+            for luc in LandUseClass:
+                if value_count_year.get(luc.value) is not None:
+                    values[luc.value - 1] = value_count_year[luc.value]
 
             undisturbed_t = values[LandUseClass.UNDISTURBED - 1]
             degraded_t = values[LandUseClass.DEGRADED - 1]
@@ -176,9 +172,9 @@ def generate_additionality(
 
             value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
 
-            for luc in [1, 2, 3, 4, 5, 6]:
-                if value_count_year.get(luc) is not None:
-                    values[luc - 1] = value_count_year[luc]
+            for luc in LandUseClass:
+                if value_count_year.get(luc.value) is not None:
+                    values[luc.value - 1] = value_count_year[luc.value]
 
             undisturbed_c = values[LandUseClass.UNDISTURBED - 1]
             degraded_c = values[LandUseClass.DEGRADED - 1]
