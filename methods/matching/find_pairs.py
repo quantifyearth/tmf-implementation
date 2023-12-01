@@ -3,13 +3,15 @@ import os
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-from numba import jit  # type: ignore
+from numba import jit, float32, int64, deferred_type  # type: ignore
+from numba.experimental import jitclass
+
 import numpy as np
 import pandas as pd
 
 from methods.common.luc import luc_matching_columns
 
-REPEAT_MATCH_FINDING = 100
+REPEAT_MATCH_FINDING = 1
 DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
 
@@ -35,8 +37,8 @@ def find_match_iteration(
 
     logging.info("Loading K from %s", k_parquet_filename)
 
-    # Methodology 6.5.7: For a 10% sample of K
     k_set = pd.read_parquet(k_parquet_filename)
+    # Methodology 6.5.7: For a 10% sample of K
     k_subset = k_set.sample(
         frac=0.1,
         random_state=rng
@@ -62,6 +64,17 @@ def find_match_iteration(
 
     m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
     k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / thresholds_for_columns
+    # IDEA: Maybe we can bin these somehow?
+    
+    # Rearrange columns by variance so we throw out the least likely to match first
+    # except the bottom three which are deforestation CPCs and have more cross-variance between K and M
+    variances = np.std(m_dist_thresholded_df, axis=0)
+    cols = DISTANCE_COLUMNS
+    order = np.argsort(-variances.to_numpy())
+    order = np.roll(order, 3)
+    new_cols = [cols[o] for o in order]
+    m_dist_thresholded_df = m_dist_thresholded_df[new_cols]
+    k_set_dist_thresholded_df = k_set_dist_thresholded_df[new_cols]
 
     # convert to float32 numpy arrays and make them contiguous for numba to vectorise
     m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
@@ -91,7 +104,8 @@ def find_match_iteration(
         m_dist_hard,
         k_set_dist_hard,
         starting_positions,
-        required
+        required,
+        rng
     )
 
     logging.info("Done make_s_set_mask. s_set_mask.shape: %a", {s_set_mask_true.shape})
@@ -99,6 +113,7 @@ def find_match_iteration(
     s_set = m_set[s_set_mask_true]
     potentials = np.invert(no_potentials)
 
+    # FIXME: Not sure this line is meaningful any more if potentials drawn from K?
     k_subset = k_subset[potentials]
     logging.info("Finished preparing s_set. shape: %a", {s_set.shape})
 
@@ -172,8 +187,208 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-@jit(nopython=True, fastmath=True, error_model="numpy")
+@jitclass
+class RTree:
+    def __init__():
+        pass
+
+    def contains(self, range) -> bool:
+        raise NotImplemented()
+
+    def depth(self) -> int:
+        return 1
+
+    def size(self) -> int:
+        return 1
+    
+    def members(self, range) -> [np.ndarray]:
+        raise NotImplemented()
+
+    def dump(self, space: str):
+        raise NotImplemented()
+
+@jitclass([('point', float32[:]), ('index', int64)])
+class RLeaf:#(RTree):
+    def __init__(self, point, index):
+        self.point = point
+        self.index = index
+    def contains(self, range) -> bool:
+        return np.all(range[0] <= self.point) & np.all(range[1] >= self.point) # type: ignore
+    def members(self, range):
+        if self.contains(range):
+            return np.array([self.index])
+        return np.empty(0, dtype=np.int_)
+    def dump(self, space: str):
+        print(space, f"point {self.point}")
+
+@jitclass([('points', float32[:, :]), ('indexes', int64[:])])
+class RList:#(RTree):
+    def __init__(self, points, indexes):
+        self.points = points
+        self.indexes = indexes
+    def contains(self, range) -> bool:
+        return np.any(np.all(range[0] <= self.points, axis=1) & np.all(range[1] >= self.points, axis=1)) # type: ignore
+    def members(self, range):
+        return self.indexes[np.all(range[0] <= self.points, axis=1) & np.all(range[1] >= self.points, axis=1)]
+    def dump(self, space: str):
+        print(space, f"points {self.points}")
+
+node_type = deferred_type()
+@jitclass([('d', int64), ('value', float32), ('left', node_type), ('right', node_type), ('width', int64)])
+class RSplit:#(RTree):
+    def __init__(self, d: int, value: float, left: RTree, right: RTree, width: int):
+        self.d = d
+        self.value = value
+        self.left = left
+        self.right = right
+        self.width = width
+    def contains(self, range) -> bool:
+        l = self.value - range[0, self.d] # Amount on left side
+        r = range[1, self.d] - self.value # Amount on right side
+        # Either l or r must be positive, or both
+        # Pick the biggest first
+        if l >= r:
+            if self.left.contains(range):
+                return True
+            # Visit the rest if it is inside
+            if r >= 0:
+                if self.right.contains(range):
+                    return True
+        else:
+            if self.right.contains(range):
+                return True
+            # Visit the rest if it is inside
+            if l >= 0:
+                if self.left.contains(range):
+                    return True
+        return False
+    
+    def members(self, range):
+        l = self.value - range[0, self.d] # Amount on left side
+        r = range[1, self.d] - self.value # Amount on right side
+        result = None
+        if l >= 0:
+            result = self.left.members(range)
+        if r >= 0:
+            rights = self.right.members(range)
+            if result is None:
+                result = rights
+            else:
+                result = np.append(result, rights, axis=0)
+        return result if result is not None else np.empty(0, dtype=np.int_)
+
+    def size(self) -> int:
+        return 1 + self.left.size() + self.right.size()
+
+    def depth(self) -> int:
+        return 1 + max(self.left.depth(), self.right.depth())
+
+    def dump(self, space: str):
+        print(space, f"split d{self.d} at {self.value}")
+        print(space + "  <")
+        self.left.dump(space + "\t")
+        print(space + "  >")
+        self.right.dump(space + "\t")
+
+node_type.define(RTree.class_type.instance_type)
+
+class RWrapper:#(RTree):
+    def __init__(self, tree, widths):
+        self.tree = tree
+        self.widths = widths
+    def contains(self, point) -> bool:
+        return self.tree.contains(np.array([point - self.widths, point + self.widths]))
+    def members(self, point) -> bool:
+        return self.tree.members(np.array([point - self.widths, point + self.widths]))
+    def dump(self, space: str):
+        self.tree.dump(space)
+    def size(self):
+        return self.tree.size()
+    def depth(self):
+        return self.tree.depth()
+
+def make_rtree(points):
+    def make_rtree_internal(points, indexes):
+        if len(points) == 1:
+            return RLeaf(points[0], indexes[0])
+        if len(points) < 30:
+            return RList(points, indexes)
+        # Find split in dimension with most bins
+        dimensions = points.shape[1]
+        bins = None
+        chosen_d_min = 0
+        chosen_d_max = 0
+        chosen_d = 0
+        for d in range(dimensions):
+            d_max = np.max(points[:, d])
+            d_min = np.min(points[:, d])
+            d_range = d_max - d_min
+            d_bins = d_range
+            if bins == None or d_bins > bins:
+                bins = d_bins
+                chosen_d = d
+                chosen_d_max = d_max
+                chosen_d_min = d_min
+        
+        if bins < 1.3:
+            # No split is very worthwhile, so dump points
+            return RList(points, indexes)
+        
+        split_at = np.median(points[:, chosen_d])
+        # Avoid degenerate cases
+        if split_at == chosen_d_max or split_at == chosen_d_min:
+            split_at = (chosen_d_max + chosen_d_min) / 2
+        
+        left_side = points[:, chosen_d] <= split_at
+        right_side = ~left_side
+        lefts = points[left_side]
+        rights = points[right_side]
+        lefts_indexes = indexes[left_side]
+        rights_indexes = indexes[right_side]
+        return RSplit(chosen_d, split_at, make_rtree_internal(lefts, lefts_indexes), make_rtree_internal(rights, rights_indexes), dimensions)
+    indexes = np.arange(len(points))
+    return RWrapper(make_rtree_internal(points, indexes), np.ones(points.shape[1]))
+
 def make_s_set_mask(
+    m_dist_thresholded: np.ndarray,
+    k_set_dist_thresholded: np.ndarray,
+    m_dist_hard: np.ndarray,
+    k_set_dist_hard: np.ndarray,
+    starting_positions: np.ndarray,
+    required: int,
+    rng: np.random.Generator
+):
+    # Make a k-d tree for m_dist_thresholded
+    # Ignore dist_hard for now...
+    m_tree = make_rtree(m_dist_thresholded)
+    logging.info("Size: %d", m_tree.size())
+    logging.info("Depth: %d", m_tree.depth())
+
+    k_size = k_set_dist_thresholded.shape[0]
+    m_size = m_dist_thresholded.shape[0]
+
+    s_include = np.zeros(m_size, dtype=np.bool_)
+    k_miss = np.zeros(k_size, dtype=np.bool_)
+
+    for k in range(k_set_dist_thresholded.shape[0]):
+        k_row =  k_set_dist_thresholded[k]
+        possible_s = m_tree.members(k_row)
+        if len(possible_s) == 0:
+            k_miss[k] = True
+        else:
+            samples = min(len(possible_s), required)
+            chosen_s = rng.choice(possible_s, samples)
+            if chosen_s.dtype != np.int_:
+                print(possible_s)
+                print(chosen_s)
+                print(chosen_s.dtype)
+            s_include[chosen_s] = True
+    
+    return s_include, k_miss
+
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def make_s_set_mask_old(
     m_dist_thresholded: np.ndarray,
     k_set_dist_thresholded: np.ndarray,
     m_dist_hard: np.ndarray,
@@ -199,27 +414,26 @@ def make_s_set_mask(
             m_hard = m_dist_hard[m_index]
 
             should_include = True
-
-            # check that every element of m_hard matches k_hard
-            hard_equals = True
-            for j in range(m_hard.shape[0]):
-                if m_hard[j] != k_hard[j]:
-                    hard_equals = False
-
-            if not hard_equals:
-                should_include = False
-            else:
+            
+            if should_include:
                 for j in range(m_row.shape[0]):
                     if abs(m_row[j] - k_row[j]) > 1.0:
                         should_include = False
+                        break
+                
+                if should_include:
+                    for j in range(m_hard.shape[0]):
+                        if m_hard[j] != k_hard[j]:
+                            should_include = False
+                            break
 
-            if should_include:
-                s_include[m_index] = True
-                matches += 1
+                    if should_include:
+                        s_include[m_index] = True
+                        matches += 1
 
-            # Don't find any more M's
-            if matches == required:
-                break
+                        # Don't find any more M's
+                        if matches == required:
+                            break
 
         k_miss[k] = matches == 0
 
