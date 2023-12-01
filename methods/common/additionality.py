@@ -8,7 +8,7 @@ import pandas as pd # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps  # type: ignore
 
-from methods.common import LandUseClass, dump_dir
+from methods.common import LandUseClass, partials_dir
 
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
 
@@ -220,7 +220,7 @@ def generate_additionality(
     for year, values in treatment_data.items():
         p_tot[year] = np.average(values)
 
-    if dump_dir is not None:
+    if partials_dir is not None:
         figure, axis = plt.subplots(1, 3)
         figure.set_figheight(10)
         figure.set_figwidth(18)
@@ -237,10 +237,10 @@ def generate_additionality(
         )
         plot_carbon_stock(axis[0], p_tot, c_tot, int(project_start))
 
-        os.makedirs(dump_dir, exist_ok=True)
         out_path = os.path.join(
-            dump_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png"
+            partials_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png"
         )
+
         figure.savefig(out_path)
 
         # Now for all the pairs we create a GeoJSON for visualising
@@ -259,7 +259,7 @@ def generate_additionality(
 
             geomtry_collection = FeatureCollection(linestrings)
             out_path = os.path.join(
-                dump_dir, os.path.splitext(pairs)[0] + "-pairs.geojson"
+                partials_dir, os.path.splitext(pairs)[0] + "-pairs.geojson"
             )
 
             with open(out_path, "w", encoding="utf-8") as output_file:
@@ -276,7 +276,7 @@ def generate_additionality(
 
             points_gc = FeatureCollection(points)
             out_path = os.path.join(
-                dump_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson"
+                partials_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson"
             )
 
             with open(out_path, "w", encoding="utf-8") as output_file:
@@ -301,7 +301,7 @@ def generate_additionality(
                     smds["feature"].append(feature)
                     smds["smd"].append(smd)
         smd_path = os.path.join(
-            dump_dir,
+            partials_dir,
             "smd.csv"
         )
         smds_df = pd.DataFrame.from_dict(smds)
