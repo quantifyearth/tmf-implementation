@@ -59,7 +59,7 @@ def plot_carbon_trajectories(
     axis[idx].set_title(title)
     axis[idx].set_xlabel("Year")
     axis[idx].set_ylabel("Carbon Stock (MgCO2e)")
-    axis[idx].axvline(start_year)
+    axis[idx].axvline(int(start_year))
 
 
 def find_first_luc(columns: list[str]) -> int:
