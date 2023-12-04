@@ -267,12 +267,15 @@ class RSplit(RTree):
         return False
     
     def members(self, range):
+        #print(f"Node d:{self.d} value:{self.value}")
         l = self.value - range[0, self.d] # Amount on left side
         r = range[1, self.d] - self.value # Amount on right side
         result = None
         if l >= 0:
+            #print(f"  <-")
             result = self.left.members(range)
         if r >= 0:
+            #print(f"  ->")
             rights = self.right.members(range)
             if result is None:
                 result = rights
@@ -297,7 +300,7 @@ class RSplit(RTree):
 
 @jitclass([('ds', int32[:]), ('values', float32[:]), ('items', int32[:]), ('lefts', int32[:]), ('rights', int32[:]), ('rows', float32[:, :]), ('dimensions', int32)])
 class RumbaTree:
-    def __init__(self, ds, values, items, lefts, rights, rows, dimensions):
+    def __init__(self, ds: np.ndarray, values: np.ndarray, items: np.ndarray, lefts: np.ndarray, rights: np.ndarray, rows: np.ndarray, dimensions: int):
         self.ds = ds
         self.values = values
         self.items = items
@@ -305,7 +308,9 @@ class RumbaTree:
         self.rights = rights
         self.rows = rows
         self.dimensions = dimensions
-    def members(self, range):
+    def members(self, point: np.ndarray):
+        low = point - 1
+        high = point + 1
         queue = [0]
         finds = []
         while len(queue) > 0:
@@ -313,6 +318,7 @@ class RumbaTree:
             d = self.ds[pos]
             value = self.values[pos]
             if math.isnan(value):
+                #print(f"Pos {pos} search_range: {search_range}")
                 i = d
                 item = self.items[i]
                 while item != -1:
@@ -320,25 +326,30 @@ class RumbaTree:
                     found = True
                     for d in range(self.dimensions):
                         value = self.rows[item, d]
-                        if value < range[0, d]:
+                        if value < low[d]:
                             found = False
                             break
-                        if value > range[1, d]:
+                        if value > high[d]:
                             found = False
                             break
+                    #print(f"search_range: {search_range}")
+                    #print(f"Item {item} found:{found} row:{self.rows[item]}")
                     if found:
                         finds.append(item)
                     i += 1
                     item = self.items[i]
             else:
-                if value >= range[0, d]:
-                    queue.append(self.lefts[pos])
-                if value <= range[1, d]:
+                #print(f"Pos {pos} d:{d} value:{value}")
+                if value <= high[d]:
+                    #print(f"  -> {self.rights[pos]}")
                     queue.append(self.rights[pos])
+                if value >= low[d]:
+                    #print(f"  <- {self.lefts[pos]}")
+                    queue.append(self.lefts[pos])
         return finds
 
 NAN = float('nan')
-def make_rumba_tree(tree, rows):
+def make_rumba_tree(tree: RTree, rows: np.ndarray):
     ds = []
     values = []
     items = []
@@ -346,21 +357,27 @@ def make_rumba_tree(tree, rows):
     rights = []
     def recurse(node):
         if isinstance(node, RSplit):
+            pos = len(ds)
             ds.append(node.d)
             values.append(node.value)
-            lefts.append(len(ds))
+            lefts.append(pos + 1) # Next node we output will be left
+            rights.append(0xDEADBEEF) # Put placeholder here
             recurse(node.left)
-            rights.append(len(ds))
+            rights[pos] = len(ds) # Fixup right to be the next node we output
             recurse(node.right)
         elif isinstance(node, RList):
             values.append(NAN)
             ds.append(len(items))
+            lefts.append(-1) # Specific wrong values for spotting incorrect tree build
+            rights.append(-2)
             for item in node.indexes:
                 items.append(item)
             items.append(-1)
         elif isinstance(node, RLeaf):
             values.append(NAN)
             ds.append(len(items))
+            lefts.append(-3)
+            rights.append(-4)
             items.append(node.index)
             items.append(-1)
     recurse(tree)
@@ -431,7 +448,7 @@ def make_rtree(points):
         rights_indexes = indexes[right_side]
         return RSplit(chosen_d, split_at, make_rtree_internal(lefts, lefts_indexes), make_rtree_internal(rights, rights_indexes), dimensions)
     indexes = np.arange(len(points))
-    return RWrapper(make_rumba_tree(make_rtree_internal(points, indexes), points), np.ones(points.shape[1]))
+    return RWrapper(make_rtree_internal(points, indexes), np.ones(points.shape[1]))
 
 def make_s_set_mask(
     m_dist_thresholded: np.ndarray,
@@ -445,9 +462,7 @@ def make_s_set_mask(
     # Make a k-d tree for m_dist_thresholded
     # Ignore dist_hard for now...
     m_tree = make_rtree(m_dist_thresholded)
-    #logging.info("Size: %d", m_tree.size())
-    #logging.info("Depth: %d", m_tree.depth())
-    #logging.info("Points: %d Len: %d", m_tree.count(), len(m_dist_thresholded))
+    rumba_tree = make_rumba_tree(m_tree.tree, m_dist_thresholded)
 
     k_size = k_set_dist_thresholded.shape[0]
     m_size = m_dist_thresholded.shape[0]
@@ -455,15 +470,17 @@ def make_s_set_mask(
     s_include = np.zeros(m_size, dtype=np.bool_)
     k_miss = np.zeros(k_size, dtype=np.bool_)
 
-    for k in range(k_set_dist_thresholded.shape[0]):
+    for k in range(k_size):
         k_row =  k_set_dist_thresholded[k]
-        possible_s = m_tree.members(k_row)
+        possible_s = rumba_tree.members(k_row)
         if len(possible_s) == 0:
             k_miss[k] = True
+            #logging.info("MISS %d of %d", k, k_size)
         else:
             samples = min(len(possible_s), required)
             chosen_s = rng.choice(possible_s, samples, replace=False)
             s_include[chosen_s] = True
+            #logging.info("%d of %d found %d, picked %a", k, k_size, len(possible_s), chosen_s)
     
     return s_include, k_miss
 
