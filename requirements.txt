@@ -6,6 +6,8 @@ polars
 geopandas
 scipy
 numba
+matplotlib
+geojson
 git+https://github.com/quantifyearth/yirgacheffe@743d26520c6438bd6e1f08e7822a54f965723405
 git+https://github.com/carboncredits/biomass-recovery@170630d50e42083c545643928747d67aa7245291
 
