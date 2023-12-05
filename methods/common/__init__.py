@@ -1,4 +1,12 @@
-from enum import Enum
+import os
+from enum import IntEnum
+
+
+# A directory for storing intermediate or partial results
+partials_dir = os.getenv("TMF_PARTIALS")
+
+if partials_dir is not None:
+    os.makedirs(partials_dir, exist_ok=True)
 
 class DownloadError(Exception):
     def __init__(self, status_code: int, reason: str, url: str):
@@ -10,7 +18,7 @@ class DownloadError(Exception):
     def msg(self) -> str:
         return f"Download failed, status {self.status_code}: {self.reason}"
 
-class LandUseClass(Enum):
+class LandUseClass(IntEnum):
     UNDISTURBED = 1
     DEGRADED = 2
     DEFORESTED = 3
