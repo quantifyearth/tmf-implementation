@@ -11,7 +11,7 @@ from numba import jit
 from methods.common.luc import luc_matching_columns
 from methods.utils.kd_tree import make_kdrangetree, make_rumba_tree
 
-REPEAT_MATCH_FINDING = 1
+REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
 
@@ -38,11 +38,6 @@ def find_match_iteration(
     logging.info("Loading K from %s", k_parquet_filename)
 
     k_set = pd.read_parquet(k_parquet_filename)
-    # Methodology 6.5.7: For a 10% sample of K
-    k_subset = k_set.sample(
-        frac=0.1,
-        random_state=rng
-    ).reset_index()
 
     logging.info("Loading M from %s", m_parquet_filename)
     m_set = pd.read_parquet(m_parquet_filename)
@@ -64,8 +59,7 @@ def find_match_iteration(
 
     m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
     k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / thresholds_for_columns
-    # IDEA: Maybe we can bin these somehow?
-    
+
     # Rearrange columns by variance so we throw out the least likely to match first
     # except the bottom three which are deforestation CPCs and have more cross-variance between K and M
     variances = np.std(m_dist_thresholded_df, axis=0)
@@ -89,33 +83,50 @@ def find_match_iteration(
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
     assert len(hard_match_columns) == HARD_COLUMN_COUNT
 
-    # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
-    k_set_dist_hard = np.ascontiguousarray(k_set[hard_match_columns].to_numpy()).astype(np.int32)
+    # Find categories in K
+    hard_match_categories = [k[hard_match_columns].to_numpy() for _, k in k_set.iterrows()]
+    hard_match_categories = {k.tobytes(): k for k in hard_match_categories}
+    no_potentials = []
 
     # Methodology 6.5.5: S should be 10 times the size of K
     required = 10
 
     logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_set_dist_thresholded.shape[0]))
-    s_set_mask_true, no_potentials = make_s_set_mask(
-        m_dist_thresholded,
-        k_set_dist_thresholded,
-        m_dist_hard,
-        k_set_dist_hard,
-        starting_positions,
-        required,
-        rng
-    )
+
+    s_set_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
+    no_potentials = np.zeros(k_set.shape[0], dtype=np.bool_)
+
+    # Split K and M into those categories and create masks
+    for values in hard_match_categories.values():
+        k_selector = np.all(k_set[hard_match_columns] == values, axis=1)
+        m_selector = np.all(m_set[hard_match_columns] == values, axis=1)
+        logging.info("  category: %a |K|: %d |M|: %d", values, k_selector.sum(), m_selector.sum())
+        # Make masks for each of those pairs
+        key_s_set_mask_true, key_no_potentials = make_s_set_mask(
+            m_dist_thresholded[m_selector],
+            k_set_dist_thresholded[k_selector],
+            required,
+            rng
+        )
+        # Merge into one s_set_mask_true
+        s_set_mask_true[m_selector] = key_s_set_mask_true
+        # Merge into no_potentials
+        no_potentials[k_selector] = key_no_potentials
 
     logging.info("Done make_s_set_mask. s_set_mask.shape: %a", {s_set_mask_true.shape})
 
     s_set = m_set[s_set_mask_true]
+    logging.info("Finished preparing s_set. shape: %a", {s_set.shape})
     potentials = np.invert(no_potentials)
 
-    # FIXME: Not sure this line is meaningful any more if potentials drawn from K?
-    k_subset = k_subset[potentials]
-    logging.info("Finished preparing s_set. shape: %a", {s_set.shape})
+    # Methodology 6.5.7: For a 10% sample of K
+    k_subset = k_set.sample(
+        frac=0.1,
+        random_state=rng
+    )
+    k_subset = k_subset.apply(lambda row: potentials[row.index])
+    k_subset.reset_index()
+    logging.info("Finished preparing k_subset. shape: %a", {k_subset.shape})
 
     # Notes:
     # 1. Not all pixels may have matches
@@ -190,14 +201,9 @@ def find_match_iteration(
 def make_s_set_mask(
     m_dist_thresholded: np.ndarray,
     k_set_dist_thresholded: np.ndarray,
-    m_dist_hard: np.ndarray,
-    k_set_dist_hard: np.ndarray,
-    starting_positions: np.ndarray,
     required: int,
     rng: np.random.Generator
 ):
-    # Make a k-d tree for m_dist_thresholded
-    # Ignore dist_hard for now...
     m_tree = make_kdrangetree(m_dist_thresholded, np.ones(m_dist_thresholded.shape[1]))
     rumba_tree = make_rumba_tree(m_tree, m_dist_thresholded)
 
@@ -216,59 +222,6 @@ def make_s_set_mask(
             samples = min(len(possible_s), required)
             chosen_s = rng.choice(possible_s, samples, replace=False)
             s_include[chosen_s] = True
-    
-    return s_include, k_miss
-
-
-@jit(nopython=True, fastmath=True, error_model="numpy")
-def make_s_set_mask_old(
-    m_dist_thresholded: np.ndarray,
-    k_set_dist_thresholded: np.ndarray,
-    m_dist_hard: np.ndarray,
-    k_set_dist_hard: np.ndarray,
-    starting_positions: np.ndarray,
-    required: int
-):
-    k_size = k_set_dist_thresholded.shape[0]
-    m_size = m_dist_thresholded.shape[0]
-
-    s_include = np.zeros(m_size, dtype=np.bool_)
-    k_miss = np.zeros(k_size, dtype=np.bool_)
-
-    for k in range(k_size):
-        matches = 0
-        k_row = k_set_dist_thresholded[k, :]
-        k_hard = k_set_dist_hard[k]
-
-        for index in range(m_size):
-            m_index = (index + starting_positions[k]) % m_size
-
-            m_row = m_dist_thresholded[m_index, :]
-            m_hard = m_dist_hard[m_index]
-
-            should_include = True
-            
-            if should_include:
-                for j in range(m_row.shape[0]):
-                    if abs(m_row[j] - k_row[j]) > 1.0:
-                        should_include = False
-                        break
-                
-                if should_include:
-                    for j in range(m_hard.shape[0]):
-                        if m_hard[j] != k_hard[j]:
-                            should_include = False
-                            break
-
-                    if should_include:
-                        s_include[m_index] = True
-                        matches += 1
-
-                        # Don't find any more M's
-                        if matches == required:
-                            break
-
-        k_miss[k] = matches == 0
 
     return s_include, k_miss
 
