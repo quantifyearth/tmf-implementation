@@ -1,16 +1,15 @@
 import argparse
-import math
 import os
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-from numba import jit, float32, int32  # type: ignore
-from numba.experimental import jitclass
 
 import numpy as np
 import pandas as pd
+from numba import jit
 
 from methods.common.luc import luc_matching_columns
+from methods.utils.kd_tree import make_kdrangetree, make_rumba_tree
 
 REPEAT_MATCH_FINDING = 1
 DEFAULT_DISTANCE = 10000000.0
@@ -188,268 +187,6 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-class RTree:
-    def __init__():
-        pass
-
-    def contains(self, range) -> bool:
-        raise NotImplemented()
-
-    def depth(self) -> int:
-        return 1
-
-    def size(self) -> int:
-        return 1
-    
-    def count(self) -> int:
-        return 0
-    
-    def members(self, range) -> [np.ndarray]:
-        raise NotImplemented()
-
-    def dump(self, space: str):
-        raise NotImplemented()
-
-class RLeaf(RTree):
-    def __init__(self, point, index):
-        self.point = point
-        self.index = index
-    def contains(self, range) -> bool:
-        return np.all(range[0] <= self.point) & np.all(range[1] >= self.point) # type: ignore
-    def members(self, range):
-        if self.contains(range):
-            return np.array([self.index])
-        return np.empty(0, dtype=np.int_)
-    def dump(self, space: str):
-        print(space, f"point {self.point}")
-    def count(self):
-        return 1
-
-class RList(RTree):
-    def __init__(self, points, indexes):
-        self.points = points
-        self.indexes = indexes
-    def contains(self, range) -> bool:
-        return np.any(np.all(range[0] <= self.points, axis=1) & np.all(range[1] >= self.points, axis=1)) # type: ignore
-    def members(self, range):
-        return self.indexes[np.all(range[0] <= self.points, axis=1) & np.all(range[1] >= self.points, axis=1)]
-    def dump(self, space: str):
-        print(space, f"points {self.points}")
-    def count(self):
-        return len(self.points)
-
-class RSplit(RTree):
-    def __init__(self, d: int, value: float, left: RTree, right: RTree, width: int):
-        self.d = d
-        self.value = value
-        self.left = left
-        self.right = right
-        self.width = width
-    def contains(self, range) -> bool:
-        l = self.value - range[0, self.d] # Amount on left side
-        r = range[1, self.d] - self.value # Amount on right side
-        # Either l or r must be positive, or both
-        # Pick the biggest first
-        if l >= r:
-            if self.left.contains(range):
-                return True
-            # Visit the rest if it is inside
-            if r >= 0:
-                if self.right.contains(range):
-                    return True
-        else:
-            if self.right.contains(range):
-                return True
-            # Visit the rest if it is inside
-            if l >= 0:
-                if self.left.contains(range):
-                    return True
-        return False
-    
-    def members(self, range):
-        #print(f"Node d:{self.d} value:{self.value}")
-        l = self.value - range[0, self.d] # Amount on left side
-        r = range[1, self.d] - self.value # Amount on right side
-        result = None
-        if l >= 0:
-            #print(f"  <-")
-            result = self.left.members(range)
-        if r >= 0:
-            #print(f"  ->")
-            rights = self.right.members(range)
-            if result is None:
-                result = rights
-            else:
-                result = np.append(result, rights, axis=0)
-        return result if result is not None else np.empty(0, dtype=np.int_)
-
-    def size(self) -> int:
-        return 1 + self.left.size() + self.right.size()
-
-    def depth(self) -> int:
-        return 1 + max(self.left.depth(), self.right.depth())
-
-    def dump(self, space: str):
-        print(space, f"split d{self.d} at {self.value}")
-        print(space + "  <")
-        self.left.dump(space + "\t")
-        print(space + "  >")
-        self.right.dump(space + "\t")
-    def count(self):
-        return self.left.count() + self.right.count()
-
-@jitclass([('ds', int32[:]), ('values', float32[:]), ('items', int32[:]), ('lefts', int32[:]), ('rights', int32[:]), ('rows', float32[:, :]), ('dimensions', int32)])
-class RumbaTree:
-    def __init__(self, ds: np.ndarray, values: np.ndarray, items: np.ndarray, lefts: np.ndarray, rights: np.ndarray, rows: np.ndarray, dimensions: int):
-        self.ds = ds
-        self.values = values
-        self.items = items
-        self.lefts = lefts
-        self.rights = rights
-        self.rows = rows
-        self.dimensions = dimensions
-    def members(self, point: np.ndarray):
-        low = point - 1
-        high = point + 1
-        queue = [0]
-        finds = []
-        while len(queue) > 0:
-            pos = queue.pop()
-            d = self.ds[pos]
-            value = self.values[pos]
-            if math.isnan(value):
-                #print(f"Pos {pos} search_range: {search_range}")
-                i = d
-                item = self.items[i]
-                while item != -1:
-                    # Check item
-                    found = True
-                    for d in range(self.dimensions):
-                        value = self.rows[item, d]
-                        if value < low[d]:
-                            found = False
-                            break
-                        if value > high[d]:
-                            found = False
-                            break
-                    #print(f"search_range: {search_range}")
-                    #print(f"Item {item} found:{found} row:{self.rows[item]}")
-                    if found:
-                        finds.append(item)
-                    i += 1
-                    item = self.items[i]
-            else:
-                #print(f"Pos {pos} d:{d} value:{value}")
-                if value <= high[d]:
-                    #print(f"  -> {self.rights[pos]}")
-                    queue.append(self.rights[pos])
-                if value >= low[d]:
-                    #print(f"  <- {self.lefts[pos]}")
-                    queue.append(self.lefts[pos])
-        return finds
-
-NAN = float('nan')
-def make_rumba_tree(tree: RTree, rows: np.ndarray):
-    ds = []
-    values = []
-    items = []
-    lefts = []
-    rights = []
-    def recurse(node):
-        if isinstance(node, RSplit):
-            pos = len(ds)
-            ds.append(node.d)
-            values.append(node.value)
-            lefts.append(pos + 1) # Next node we output will be left
-            rights.append(0xDEADBEEF) # Put placeholder here
-            recurse(node.left)
-            rights[pos] = len(ds) # Fixup right to be the next node we output
-            recurse(node.right)
-        elif isinstance(node, RList):
-            values.append(NAN)
-            ds.append(len(items))
-            lefts.append(-1) # Specific wrong values for spotting incorrect tree build
-            rights.append(-2)
-            for item in node.indexes:
-                items.append(item)
-            items.append(-1)
-        elif isinstance(node, RLeaf):
-            values.append(NAN)
-            ds.append(len(items))
-            lefts.append(-3)
-            rights.append(-4)
-            items.append(node.index)
-            items.append(-1)
-    recurse(tree)
-    return RumbaTree(
-        np.array(ds, dtype=np.int32),
-        np.array(values, dtype=np.float32),
-        np.array(items, dtype=np.int32),
-        np.array(lefts, dtype=np.int32),
-        np.array(rights, dtype=np.int32),
-        rows,
-        rows.shape[1],
-    )
-
-class RWrapper(RTree):
-    def __init__(self, tree, widths):
-        self.tree = tree
-        self.widths = widths
-    def contains(self, point) -> bool:
-        return self.tree.contains(np.array([point - self.widths, point + self.widths]))
-    def members(self, point) -> bool:
-        return self.tree.members(np.array([point - self.widths, point + self.widths]))
-    def dump(self, space: str):
-        self.tree.dump(space)
-    def size(self):
-        return self.tree.size()
-    def depth(self):
-        return self.tree.depth()
-    def count(self):
-        return self.tree.count()
-
-def make_rtree(points):
-    def make_rtree_internal(points, indexes):
-        if len(points) == 1:
-            return RLeaf(points[0], indexes[0])
-        if len(points) < 30:
-            return RList(points, indexes)
-        # Find split in dimension with most bins
-        dimensions = points.shape[1]
-        bins = None
-        chosen_d_min = 0
-        chosen_d_max = 0
-        chosen_d = 0
-        for d in range(dimensions):
-            d_max = np.max(points[:, d])
-            d_min = np.min(points[:, d])
-            d_range = d_max - d_min
-            d_bins = d_range
-            if bins == None or d_bins > bins:
-                bins = d_bins
-                chosen_d = d
-                chosen_d_max = d_max
-                chosen_d_min = d_min
-        
-        if bins < 1.3:
-            # No split is very worthwhile, so dump points
-            return RList(points, indexes)
-        
-        split_at = np.median(points[:, chosen_d])
-        # Avoid degenerate cases
-        if split_at == chosen_d_max or split_at == chosen_d_min:
-            split_at = (chosen_d_max + chosen_d_min) / 2
-        
-        left_side = points[:, chosen_d] <= split_at
-        right_side = ~left_side
-        lefts = points[left_side]
-        rights = points[right_side]
-        lefts_indexes = indexes[left_side]
-        rights_indexes = indexes[right_side]
-        return RSplit(chosen_d, split_at, make_rtree_internal(lefts, lefts_indexes), make_rtree_internal(rights, rights_indexes), dimensions)
-    indexes = np.arange(len(points))
-    return RWrapper(make_rtree_internal(points, indexes), np.ones(points.shape[1]))
-
 def make_s_set_mask(
     m_dist_thresholded: np.ndarray,
     k_set_dist_thresholded: np.ndarray,
@@ -461,8 +198,8 @@ def make_s_set_mask(
 ):
     # Make a k-d tree for m_dist_thresholded
     # Ignore dist_hard for now...
-    m_tree = make_rtree(m_dist_thresholded)
-    rumba_tree = make_rumba_tree(m_tree.tree, m_dist_thresholded)
+    m_tree = make_kdrangetree(m_dist_thresholded, np.ones(m_dist_thresholded.shape[1]))
+    rumba_tree = make_rumba_tree(m_tree, m_dist_thresholded)
 
     k_size = k_set_dist_thresholded.shape[0]
     m_size = m_dist_thresholded.shape[0]
@@ -475,12 +212,10 @@ def make_s_set_mask(
         possible_s = rumba_tree.members(k_row)
         if len(possible_s) == 0:
             k_miss[k] = True
-            #logging.info("MISS %d of %d", k, k_size)
         else:
             samples = min(len(possible_s), required)
             chosen_s = rng.choice(possible_s, samples, replace=False)
             s_include[chosen_s] = True
-            #logging.info("%d of %d found %d, picked %a", k, k_size, len(possible_s), chosen_s)
     
     return s_include, k_miss
 
