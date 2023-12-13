@@ -214,14 +214,14 @@ def make_s_set_mask(
     k_miss = np.zeros(k_size, dtype=np.bool_)
 
     for k in range(k_size):
+        if (k % 100) == 0:
+            logging.info(f"{100 * k / k_size}% completed...")
         k_row =  k_set_dist_thresholded[k]
-        possible_s = rumba_tree.members(k_row)
+        possible_s = rumba_tree.members_sample(k_row, required, rng)
         if len(possible_s) == 0:
             k_miss[k] = True
         else:
-            samples = min(len(possible_s), required)
-            chosen_s = rng.choice(possible_s, samples, replace=False)
-            s_include[chosen_s] = True
+            s_include[possible_s] = True
 
     return s_include, k_miss
 
