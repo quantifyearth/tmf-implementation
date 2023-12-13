@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import logging
 from functools import partial
@@ -124,7 +125,7 @@ def find_match_iteration(
         frac=0.1,
         random_state=rng
     )
-    k_subset = k_subset.apply(lambda row: potentials[row.index])
+    k_subset = k_subset[k_subset.apply(lambda row: potentials[row.name], axis=1)]
     k_subset.reset_index()
     logging.info("Finished preparing k_subset. shape: %a", {k_subset.shape})
 
@@ -204,20 +205,41 @@ def make_s_set_mask(
     required: int,
     rng: np.random.Generator
 ):
-    m_tree = make_kdrangetree(m_dist_thresholded, np.ones(m_dist_thresholded.shape[1]))
-    rumba_tree = make_rumba_tree(m_tree, m_dist_thresholded)
-
     k_size = k_set_dist_thresholded.shape[0]
     m_size = m_dist_thresholded.shape[0]
 
     s_include = np.zeros(m_size, dtype=np.bool_)
     k_miss = np.zeros(k_size, dtype=np.bool_)
 
+    m_sets = max(1, min(100, math.floor(m_size // 1e6), math.ceil(m_size / (k_size * required * 10))))
+
+    m_lookup = np.arange(m_size)
+    rng.shuffle(m_lookup)
+    m_step = math.ceil(m_size / m_sets)
+
+    def m_index(m_set: int, pos: int):
+        return m_lookup[m_set * m_step + pos]
+    def m_indexes(m_set: int):
+        return m_lookup[m_set * m_step:(m_set + 1) * m_step]
+
+    m_trees = [make_kdrangetree(m_dist_thresholded[m_indexes(m_set)], np.ones(m_dist_thresholded.shape[1])) for m_set in range(m_sets)]
+
+    rumba_trees = [make_rumba_tree(m_tree, m_dist_thresholded) for m_tree in m_trees]
+
     for k in range(k_size):
-        if (k % 100) == 0:
-            logging.info(f"{100 * k / k_size}% completed...")
         k_row =  k_set_dist_thresholded[k]
-        possible_s = rumba_tree.members_sample(k_row, required, rng)
+        m_order = np.arange(m_sets)
+        rng.shuffle(m_order)
+        possible_s = []
+        for m_set in m_order:
+            next_possible_s = rumba_trees[m_set].members_sample(k_row, required, rng)
+            if possible_s is None:
+                possible_s = [m_index(m_set, s) for s in next_possible_s]
+            else:
+                take = min(required - len(possible_s), len(next_possible_s))
+                possible_s[len(possible_s):len(possible_s)+take] = [m_index(m_set, s) for s in next_possible_s[0:take]]
+            if len(possible_s) == required:
+                break
         if len(possible_s) == 0:
             k_miss[k] = True
         else:
@@ -277,6 +299,8 @@ def greedy_match(
                 results.append((k_idx, min_dist_idx))
                 s_available[min_dist_idx] = False
                 total_available -= 1
+            else:
+                matchless.append(k_idx)
         else:
             matchless.append(k_idx)
 
