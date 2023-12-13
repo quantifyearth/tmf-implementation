@@ -214,6 +214,81 @@ class RumbaTree:
                 if value >= low[d]:
                     queue.append(self.lefts[pos])
         return finds
+    def count_members(self, point: np.ndarray):
+        low = point - self.widths
+        high = point + self.widths
+        queue = [0]
+        count = 0
+        while len(queue) > 0:
+            pos = queue.pop()
+            d = self.ds[pos]
+            value = self.values[pos]
+            if math.isnan(value):
+                i = d
+                item = self.items[i]
+                while item != -1:
+                    # Check item
+                    found = True
+                    for d in range(self.dimensions):
+                        value = self.rows[item, d]
+                        if value < low[d]:
+                            found = False
+                            break
+                        if value > high[d]:
+                            found = False
+                            break
+                    if found:
+                        count += 1
+                    i += 1
+                    item = self.items[i]
+            else:
+                if value <= high[d]:
+                    queue.append(self.rights[pos])
+                if value >= low[d]:
+                    queue.append(self.lefts[pos])
+        return count
+    def members_sample(self, point: np.ndarray, count: int, rng: np.random.Generator):
+        low = point - self.widths
+        high = point + self.widths
+        queue = [0]
+        finds = []
+        rand = rng.integers(0, 2**32)
+        while len(queue) > 0:
+            pos = queue.pop()
+            d = self.ds[pos]
+            value = self.values[pos]
+            if math.isnan(value):
+                i = d
+                item = self.items[i]
+                while item != -1:
+                    # Check item
+                    found = True
+                    for d in range(self.dimensions):
+                        value = self.rows[item, d]
+                        if value < low[d]:
+                            found = False
+                            break
+                        if value > high[d]:
+                            found = False
+                            break
+                    if found:
+                        if len(finds) < count:
+                            finds.append(item)
+                        else:
+                            # Replace a random item in finds based on on-line search probability
+                            pos = rand % len(finds)
+                            rand *= 65539
+                            rand &= 0x7FFFFFFF
+                            if pos < count:
+                                finds[pos] = item
+                    i += 1
+                    item = self.items[i]
+            else:
+                if value <= high[d]:
+                    queue.append(self.rights[pos])
+                if value >= low[d]:
+                    queue.append(self.lefts[pos])
+        return finds
 
 NAN = float('nan')
 def make_rumba_tree(tree: KDRangeTree, rows: np.ndarray):
