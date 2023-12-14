@@ -1,10 +1,15 @@
 import argparse
+import atexit
 import math
+from multiprocessing.shared_memory import SharedMemory
 import os
 import logging
 from functools import partial
-from multiprocessing import Pool, Queue, cpu_count, set_start_method
+from multiprocessing import Manager, Pool, cpu_count, set_start_method
+from queue import Queue
+from typing import Iterable
 
+NUMBA_CAPTURED_ERRORS='new_style'
 import numpy as np
 import pandas as pd
 from numba import jit
@@ -99,7 +104,6 @@ def load_and_process_m(
 
     for category in hard_match_categories:
         m_selector = np.all(m_set[hard_match_columns] == category_to_numpy(category), axis=1)
-        logging.info("Building M trees for category %a count: %d", category, np.sum(m_selector))
         m_dist_thresholded_by[category] = m_dist_thresholded[m_selector]
         m_selector_by[category] = m_selector
         
@@ -109,7 +113,9 @@ def load_and_process_m(
         m_sets = max(1, min(100, math.floor(m_size // 1e6), math.ceil(m_size / (k_size * REQUIRED * 10))))
         m_step = math.ceil(m_size / m_sets)
 
-        m_lookup = np.arange(m_size)
+        logging.info("Building %d M trees for category %s count: %d", m_sets, category, np.sum(m_selector))
+
+        m_lookup = np.arange(m_size, dtype=np.int32)
         rng.shuffle(m_lookup)
         
         def m_indexes(m_set: int):
@@ -128,6 +134,39 @@ def load_and_process_m(
     invconv = np.linalg.inv(covarience).astype(np.float32)
 
     return m_set, m_dist_thresholded_by, m_selector_by, rumba_trees_by, m_lookup_by, invconv
+
+@jit(nopython=True)
+def merge_filter(a: np.ndarray, b: np.ndarray):
+    i = 0
+    j = 0
+    output = []
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            output.append(a[i])
+            i += 1
+            j += 1
+        elif a[i] < b[j]:
+            i += 1
+        else:
+            j += 1
+    return np.array(output)
+
+@jit(nopython=True)
+def merge_is_member(a: np.ndarray, b: np.ndarray):
+    i = 0
+    j = 0
+    output = []
+    while i < len(a) and j < len(b):
+        if a[i] == b[j]:
+            output.append(True)
+            i += 1
+            j += 1
+        elif a[i] < b[j]:
+            output.append(False)
+            i += 1
+        else:
+            j += 1
+    return np.array(output, dtype=np.bool_)
 
 def find_match_iteration_fast(
     k_size: int,
@@ -171,15 +210,28 @@ def find_match_iteration_fast(
             rng
         )
 
-        k_subset_indexes = np.flatnonzero(k_selector & k_subset_mask)
+        logging.info("s_set_mask_true built, set values %d of expected %d", np.sum(s_set_mask_true), len(k_dist_thresholded_by[category])*REQUIRED)
 
-        matchless.extend(k_subset_indexes[no_potentials])
+        k_selected_indexes = np.flatnonzero(k_selector)
+        k_subset_indexes = np.flatnonzero(k_subset_mask)
 
-        k_subset_match_indexes = k_subset_indexes[~no_potentials] 
-        k_subset_match = k_dist_thresholded_by[category][k_subset_match_indexes]
+        matchless.extend(merge_filter(k_selected_indexes[no_potentials], k_subset_indexes))
+
+        k_subset_match_indexes = merge_filter(k_selected_indexes[~no_potentials], k_subset_indexes)
+
+        logging.info("k_subset_match_indexes %a", k_subset_match_indexes)
+        
+        k_subset_match_flags = ~no_potentials & merge_is_member(k_selected_indexes, k_subset_indexes)
+
+        logging.info("k_subset_match_flags %a", k_subset_match_flags)
+
+        k_subset_match = k_dist_thresholded_by[category][k_subset_match_flags]
+        logging.info("k_subset_match %a", k_subset_match)
 
         s_set_match = m_dist_thresholded_by[category][s_set_mask_true]
+        logging.info("s_set_match %a", s_set_match)
         s_set_match_indexes = np.flatnonzero(m_selector)[s_set_mask_true]
+        logging.info("s_set_match_indexes %a", s_set_match_indexes)
 
         add_results, k_idx_matchless = greedy_match_simple(
             k_subset_match,
@@ -201,6 +253,8 @@ def match_storage(
 ):
     # As well as all the LUC columns for later use
     luc_columns = [x for x in m_set.columns if x.startswith('luc')]
+
+    logging.info("Waiting for matches...")
 
     for _ in range(REPEAT_MATCH_FINDING):
         idx_and_seed, results, matchless = match_queue.get()
@@ -254,6 +308,9 @@ def make_s_set_mask(
     def m_index(m_set: int, pos: int):
         return m_lookup[m_set * m_step + pos]
 
+    logging.info("make_s_set_mask: k_size %d m_size %d m_sets %d", k_size, m_size, m_sets)
+
+    logging.info("k_set_dist_thresholded.shape %a", k_set_dist_thresholded.shape)
     for k in range(k_size):
         k_row =  k_set_dist_thresholded[k]
         m_order = np.arange(m_sets)
@@ -316,7 +373,132 @@ def batch_mahalanobis_squared(rows, vector, invcov):
     dists = (np.dot(diff, invcov) * diff).sum(axis=1)
     return dists
 
+def shared_memory_key(names: Iterable[str]) -> str:
+    return "_".join(names)
 
+MEMORY_TO_CLOSE: list[SharedMemory] = []
+atexit.register(lambda: map(lambda sm: sm.close(), MEMORY_TO_CLOSE))
+
+def unpack_shared_memory(cols: int, *names: str, dtype) -> np.ndarray:
+    name = shared_memory_key(names)
+    def make_shape(rows: int):
+        if cols == 1:
+            return rows
+        else:
+            return (rows, cols)
+    try:
+        sm = SharedMemory(name)
+        MEMORY_TO_CLOSE.append(sm)
+        itemsize = np.dtype(dtype).itemsize
+        rows_f = sm.size / itemsize / cols
+        rows = math.floor(rows_f)
+        if rows != math.floor(rows):
+            raise ValueError(f"SharedMemory for {name} is of incorrect size, got fractional rows {rows}")
+        result = np.ndarray(make_shape(rows), dtype=dtype, buffer=sm.buf)
+        return result
+    except FileNotFoundError:
+        logging.info("Shared memory %s is empty",name)
+        return np.ndarray(make_shape(0), dtype=dtype)
+
+def unpack_shared_rumba_tree(*names: str) -> RumbaTree:
+    ds = unpack_shared_memory(1, *names, "ds", dtype=np.int32)
+    items = unpack_shared_memory(1, *names, "items", dtype=np.int32)
+    lefts = unpack_shared_memory(1, *names, "lefts", dtype=np.int32)
+    rights = unpack_shared_memory(1, *names, "rights", dtype=np.int32)
+    
+    values = unpack_shared_memory(1, *names, "values", dtype=np.float32)
+    rows = unpack_shared_memory(len(DISTANCE_COLUMNS), *names, "rows", dtype=np.float32)
+    widths = unpack_shared_memory(1, *names, "widths", dtype=np.float32)
+    return RumbaTree(
+        ds,
+        values,
+        items,
+        lefts,
+        rights,
+        rows,
+        len(DISTANCE_COLUMNS), # You want to change this, you implement it.
+        widths,
+    )
+
+def unpack_iteration_shared_memory(
+    prefix: str,
+    k_size: int,
+    categories: list[str],
+    m_tree_counts: dict[str, int],
+    invconv: np.ndarray,
+    output_queue: Queue,
+    idx_and_seed: tuple[int, int],
+) -> None:
+    logging.info("Unpacking iteration %d of %d...", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
+
+    k_dist_thresholded_by = {category: unpack_shared_memory(len(DISTANCE_COLUMNS), prefix, "k_dist_thresholded_by", category, dtype=np.float32) for category in categories}
+    k_selector_by = {category: unpack_shared_memory(1, prefix, "k_selector_by", category, dtype=np.bool_) for category in categories}
+    m_dist_thresholded_by = {category: unpack_shared_memory(len(DISTANCE_COLUMNS), prefix, "m_dist_thresholded_by", category, dtype=np.float32) for category in categories}
+    m_selector_by = {category: unpack_shared_memory(1, prefix, "m_selector_by", category, dtype=np.bool_) for category in categories}
+    m_trees = {category: [unpack_shared_rumba_tree(prefix, "m_trees", category, str(i)) for i in range(m_tree_counts[category])] for category in categories}
+    m_lookup_by = {category: unpack_shared_memory(1, prefix, "m_lookup_by", category, dtype=np.int32) for category in categories}
+
+    logging.info("Unpacked iteration %d of %d, doing matching...", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
+    find_match_iteration_fast(
+        k_size,
+        categories,
+        k_dist_thresholded_by,
+        k_selector_by,
+        m_dist_thresholded_by,
+        m_selector_by,
+        m_trees,
+        m_lookup_by,
+        invconv,
+        output_queue,
+        idx_and_seed,
+    )
+
+MEMORY_TO_CLEANUP: list[SharedMemory] = []
+atexit.register(lambda: map(lambda sm: sm.unlink(), MEMORY_TO_CLEANUP))
+
+def pack_shared_memory(value: np.ndarray, *names: str):
+    name = shared_memory_key(names)
+    size = value.nbytes
+    if size > 0:
+        sm = SharedMemory(name, True, size)
+        MEMORY_TO_CLEANUP.append(sm)
+        dest = np.ndarray(shape=value.shape, dtype=value.dtype, buffer=sm.buf)
+        dest[:] = value[:]
+
+def pack_shared_rumba_tree(tree: RumbaTree, *names: str):
+    pack_shared_memory(tree.ds, *names, "ds")
+    pack_shared_memory(tree.items, *names, "items")
+    pack_shared_memory(tree.lefts, *names, "lefts")
+    pack_shared_memory(tree.rights, *names, "rights")
+    
+    pack_shared_memory(tree.values, *names, "values")
+    pack_shared_memory(tree.rows, *names, "rows")
+    pack_shared_memory(tree.widths, *names, "widths")
+
+def load_data_into_shared_memory(
+    prefix: str,
+    categories: list[str],
+    k_dist_thresholded_by: dict[str, np.ndarray],
+    k_selector_by: dict[str, np.ndarray],
+    m_dist_thresholded_by: dict[str, np.ndarray],
+    m_selector_by: dict[str, np.ndarray],
+    m_trees: dict[str, list[RumbaTree]],
+    m_lookup_by: dict[str, np.ndarray],
+) -> dict[str, int]:
+    m_tree_counts = {category: len(trees) for category, trees in m_trees.items()}
+
+    for category in categories:
+        pack_shared_memory(k_dist_thresholded_by[category], prefix, "k_dist_thresholded_by", category)
+        pack_shared_memory(k_selector_by[category], prefix, "k_selector_by", category)
+        pack_shared_memory(m_dist_thresholded_by[category], prefix, "m_dist_thresholded_by", category)
+        pack_shared_memory(m_selector_by[category], prefix, "m_selector_by", category)
+        pack_shared_memory(m_lookup_by[category], prefix, "m_lookup_by", category)
+        
+        for i in range(m_tree_counts[category]):
+            pack_shared_rumba_tree(m_trees[category][i], prefix, "m_trees", category, str(i))
+
+    return m_tree_counts
+    
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
@@ -324,7 +506,7 @@ def find_pairs(
     seed: int,
     output_folder: str,
     processes_count: int
-) -> None:
+    ) -> None:
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
 
@@ -339,31 +521,47 @@ def find_pairs(
         rng,
         len(k_set)
     )
+
+    key = shared_memory_key(["find_pairs", str(os.getpid())])
+
+    m_tree_counts = load_data_into_shared_memory(
+        key,
+        hard_match_categories,
+        k_set_dist_thresholded_by,
+        k_selector_by,
+        m_dist_thresholded_by,
+        m_selector_by,
+        rumba_trees_by,
+        m_lookup_by,
+    )
     
-    queue = Queue()
+    manager = Manager()
+    queue = manager.Queue()
+
+    logging.info("Beginning execution...")
 
     pool = Pool(processes=processes_count)
-    pool.apply_async(
+    pool.map_async(
         partial(
-            find_match_iteration_fast,
+            unpack_iteration_shared_memory,
+            key,
             len(k_set),
             hard_match_categories,
-            k_set_dist_thresholded_by,
-            k_selector_by,
-            m_dist_thresholded_by,
-            m_selector_by,
-            rumba_trees_by,
-            m_lookup_by,
+            m_tree_counts,
             invconv,
             queue,
         ),
-        iteration_seeds
+        iteration_seeds,
+        error_callback=lambda error: logging.error("Process error %a\r\n%a", error, error.__traceback__)
     )
     logging.info("Started pool...")
 
     # Handle output queue
     match_storage(output_folder, k_set, m_set, queue)
+
     pool.join()
+
+    logging.info("Finished, cleaning up...")
 
 def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
