@@ -3,14 +3,15 @@ import math
 import os
 import logging
 from functools import partial
-from multiprocessing import Pool, cpu_count, set_start_method
+from multiprocessing import Pool, Queue, cpu_count, set_start_method
 
 import numpy as np
 import pandas as pd
 from numba import jit
+from pandas import DataFrame
 
 from methods.common.luc import luc_matching_columns
-from methods.utils.kd_tree import make_kdrangetree, make_rumba_tree
+from methods.utils.kd_tree import RumbaTree, make_kdrangetree, make_rumba_tree
 
 REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
@@ -23,185 +24,221 @@ DISTANCE_COLUMNS = [
     "cpc10_u", "cpc10_d"
 ]
 HARD_COLUMN_COUNT = 5
+THRESHOLDS_FOR_COLUMNS = np.array([
+        200.0, # Elev
+        2.5, # Slope
+        10.0,  # Access
+        0.1, # CPCs
+        0.1, # CPCs
+        0.1, # CPCs
+        0.1, # CPCs
+        0.1, # CPCs
+        0.1, # CPCs
+])
+REQUIRED = 10
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-def find_match_iteration(
-    k_parquet_filename: str,
-    m_parquet_filename: str,
-    start_year: int,
-    output_folder: str,
-    idx_and_seed: tuple[int, int]
-) -> None:
-    logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
-    rng = np.random.default_rng(idx_and_seed[1])
+def category_to_numpy(category_name: str):
+    return np.array([*map(int, category_name.split(","))])
 
+def to_category_name(category: np.ndarray):
+    return ",".join(map(lambda x: str(int(x)), category))
+
+def load_and_process_k(
+    k_parquet_filename: str,
+    start_year: int,
+) -> tuple[DataFrame, dict[str, np.ndarray], dict[str, np.ndarray], list[str]]:
     logging.info("Loading K from %s", k_parquet_filename)
 
     k_set = pd.read_parquet(k_parquet_filename)
 
-    logging.info("Loading M from %s", m_parquet_filename)
-    m_set = pd.read_parquet(m_parquet_filename)
-
-    # get the column ids for DISTANCE_COLUMNS
-    thresholds_for_columns = np.array([
-            200.0, # Elev
-            2.5, # Slope
-            10.0,  # Access
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-    ])
-
-    logging.info("Preparing s_set...")
-
-    m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
-    k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / thresholds_for_columns
-
-    # Rearrange columns by variance so we throw out the least likely to match first
-    # except the bottom three which are deforestation CPCs and have more cross-variance between K and M
-    variances = np.std(m_dist_thresholded_df, axis=0)
-    cols = DISTANCE_COLUMNS
-    order = np.argsort(-variances.to_numpy())
-    order = np.roll(order, 3)
-    new_cols = [cols[o] for o in order]
-    m_dist_thresholded_df = m_dist_thresholded_df[new_cols]
-    k_set_dist_thresholded_df = k_set_dist_thresholded_df[new_cols]
-
-    # convert to float32 numpy arrays and make them contiguous for numba to vectorise
-    m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
-    k_set_dist_thresholded = np.ascontiguousarray(k_set_dist_thresholded_df, dtype=np.float32)
-
     # LUC columns are all named with the year in, so calculate the column names
     # for the years we are intested in
     luc0, luc5, luc10 = luc_matching_columns(start_year)
-    # As well as all the LUC columns for later use
-    luc_columns = [x for x in m_set.columns if x.startswith('luc')]
 
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
     assert len(hard_match_columns) == HARD_COLUMN_COUNT
 
     # Find categories in K
-    hard_match_categories = [k[hard_match_columns].to_numpy() for _, k in k_set.iterrows()]
-    hard_match_categories = {k.tobytes(): k for k in hard_match_categories}
-    no_potentials = []
+    hard_match_categories = {to_category_name(k[hard_match_columns].to_numpy()) for _, k in k_set.iterrows()}
+    hard_match_categories = [*hard_match_categories]
 
-    # Methodology 6.5.5: S should be 10 times the size of K
-    required = 10
+    k_set_dist_thresholded_df = k_set[DISTANCE_COLUMNS] / THRESHOLDS_FOR_COLUMNS
+    k_set_dist_thresholded = np.ascontiguousarray(k_set_dist_thresholded_df, dtype=np.float32)
 
-    logging.info("Running make_s_set_mask... required: %d", required)
+    k_set_dist_thresholded_by = {}
+    k_selector_by = {}
+    for category in hard_match_categories:
+        k_selector = np.all(k_set[hard_match_columns] == category_to_numpy(category), axis=1)
+        logging.info("Building K set for category %a count: %d", category, np.sum(k_selector))
+        k_set_dist_thresholded_by[category] = k_set_dist_thresholded[k_selector]
+        k_selector_by[category] = k_selector
+    
+    return k_set, k_set_dist_thresholded_by, k_selector_by, hard_match_categories
 
-    s_set_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
-    no_potentials = np.zeros(k_set.shape[0], dtype=np.bool_)
+def load_and_process_m(
+    m_parquet_filename: str,
+    hard_match_categories: list[str],
+    start_year: int,
+    rng: np.random.Generator,
+    k_size: int,
+) -> tuple[DataFrame, dict[str, np.ndarray], dict[str, np.ndarray], dict[str, list[RumbaTree]], dict[str, np.ndarray], np.ndarray]:
+    logging.info("Loading M from %s", m_parquet_filename)
+    luc0, luc5, luc10 = luc_matching_columns(start_year)
+    hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
 
-    # Split K and M into those categories and create masks
-    for values in hard_match_categories.values():
-        k_selector = np.all(k_set[hard_match_columns] == values, axis=1)
-        m_selector = np.all(m_set[hard_match_columns] == values, axis=1)
-        logging.info("  category: %a |K|: %d |M|: %d", values, k_selector.sum(), m_selector.sum())
-        # Make masks for each of those pairs
-        key_s_set_mask_true, key_no_potentials = make_s_set_mask(
-            m_dist_thresholded[m_selector],
-            k_set_dist_thresholded[k_selector],
-            required,
-            rng
-        )
-        # Merge into one s_set_mask_true
-        s_set_mask_true[m_selector] = key_s_set_mask_true
-        # Merge into no_potentials
-        no_potentials[k_selector] = key_no_potentials
+    m_set = pd.read_parquet(m_parquet_filename)
+    m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / THRESHOLDS_FOR_COLUMNS
+    m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
 
-    logging.info("Done make_s_set_mask. s_set_mask.shape: %a", {s_set_mask_true.shape})
+    m_dist_thresholded_by = {}
+    m_selector_by = {}
+    rumba_trees_by = {}
+    m_lookup_by = {}
 
-    s_set = m_set[s_set_mask_true]
-    logging.info("Finished preparing s_set. shape: %a", {s_set.shape})
-    potentials = np.invert(no_potentials)
+    for category in hard_match_categories:
+        m_selector = np.all(m_set[hard_match_columns] == category_to_numpy(category), axis=1)
+        logging.info("Building M trees for category %a count: %d", category, np.sum(m_selector))
+        m_dist_thresholded_by[category] = m_dist_thresholded[m_selector]
+        m_selector_by[category] = m_selector
+        
+        # Build sets of trees
+        m_size = m_dist_thresholded_by[category].shape[0]
 
-    # Methodology 6.5.7: For a 10% sample of K
-    k_subset = k_set.sample(
-        frac=0.1,
-        random_state=rng
-    )
-    k_subset = k_subset[k_subset.apply(lambda row: potentials[row.name], axis=1)]
-    k_subset.reset_index()
-    logging.info("Finished preparing k_subset. shape: %a", {k_subset.shape})
+        m_sets = max(1, min(100, math.floor(m_size // 1e6), math.ceil(m_size / (k_size * REQUIRED * 10))))
+        m_step = math.ceil(m_size / m_sets)
 
-    # Notes:
-    # 1. Not all pixels may have matches
-    results = []
-    matchless = []
+        m_lookup = np.arange(m_size)
+        rng.shuffle(m_lookup)
+        
+        def m_indexes(m_set: int):
+            return m_lookup[m_set * m_step:(m_set + 1) * m_step]
 
-    s_set_for_cov = s_set[DISTANCE_COLUMNS]
+        m_trees = [make_kdrangetree(m_dist_thresholded[m_indexes(m_set)], np.ones(m_dist_thresholded.shape[1])) for m_set in range(m_sets)]
+
+        rumba_trees = [make_rumba_tree(m_tree, m_dist_thresholded) for m_tree in m_trees]
+        rumba_trees_by[category] = rumba_trees
+        m_lookup_by[category] = m_lookup
+    
+    m_set_for_cov = m_set[DISTANCE_COLUMNS]
     logging.info("Calculating covariance...")
-    covarience = np.cov(s_set_for_cov, rowvar=False)
+    covarience = np.cov(m_set_for_cov, rowvar=False)
     logging.info("Calculating inverse covariance...")
     invconv = np.linalg.inv(covarience).astype(np.float32)
 
-    # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_set_match = s_set[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
-    # this is required so numba can vectorise the loop in greedy_match
-    s_set_match = np.ascontiguousarray(s_set_match)
+    return m_set, m_dist_thresholded_by, m_selector_by, rumba_trees_by, m_lookup_by, invconv
 
-    # Now we do the same thing for k_subset
-    k_subset_match = k_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
-    # this is required so numba can vectorise the loop in greedy_match
-    k_subset_match = np.ascontiguousarray(k_subset_match)
+def find_match_iteration_fast(
+    k_size: int,
+    hard_match_categories: list[str],
+    k_dist_thresholded_by: dict[str, np.ndarray],
+    k_selector_by: dict[str, np.ndarray],
+    m_dist_thresholded_by: dict[str, np.ndarray],
+    m_selector_by: dict[str, np.ndarray],
+    m_trees: dict[str, list[RumbaTree]],
+    m_lookup_by: dict[str, np.ndarray],
+    invconv: np.ndarray,
+    output_queue: Queue,
+    idx_and_seed: tuple[int, int],
+) -> None:
+    logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
+    rng = np.random.default_rng(idx_and_seed[1])
 
-    logging.info("Starting greedy matching... k_subset_match.shape: %s, s_set_match.shape: %s",
-                 k_subset_match.shape, s_set_match.shape)
+    # Methodology 6.5.7: For a 10% sample of K
+    k_subset_indexes = np.arange(k_size)
+    rng.shuffle(k_subset_indexes)
+    k_subset_indexes = k_subset_indexes[0:math.ceil(0.1 * k_size)]
+    k_subset_mask = np.zeros(k_size, dtype=np.bool_)
+    k_subset_mask[k_subset_indexes] = True
 
-    add_results, k_idx_matchless = greedy_match(
-        k_subset_match,
-        s_set_match,
-        invconv
-    )
+    results = []
+    matchless = []
 
-    logging.info("Finished greedy matching...")
-
-    logging.info("Starting storing matches...")
-
-    for result in add_results:
-        (k_idx, s_idx) = result
-        k_row = k_subset.iloc[k_idx]
-        match = s_set.iloc[s_idx]
-
-        if DEBUG:
-            for hard_match_column in hard_match_columns:
-                if k_row[hard_match_column] != match[hard_match_column]:
-                    print(k_row)
-                    print(match)
-                    raise ValueError("Hard match inconsistency")
-
-        results.append(
-            [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + DISTANCE_COLUMNS] + \
-            [match.lat, match.lng] + [match[x] for x in luc_columns + DISTANCE_COLUMNS]
+    # Split K and M into those categories and create masks
+    for category in hard_match_categories:
+        logging.info("%d: Running category %a", idx_and_seed[0] + 1, category)
+        k_selector = k_selector_by[category]
+        m_selector = m_selector_by[category]
+        
+        # Make masks for each of those pairs
+        s_set_mask_true, no_potentials = make_s_set_mask(
+            m_dist_thresholded_by[category],
+            k_dist_thresholded_by[category],
+            m_trees[category],
+            m_lookup_by[category],
+            REQUIRED,
+            rng
         )
 
-    logging.info("Finished storing matches...")
+        k_subset_indexes = np.flatnonzero(k_selector & k_subset_mask)
 
-    for k_idx in k_idx_matchless:
-        k_row = k_subset.iloc[k_idx]
-        matchless.append(k_row)
+        matchless.extend(k_subset_indexes[no_potentials])
 
-    columns = ['k_lat', 'k_lng'] + \
-        [f'k_{x}' for x in luc_columns + DISTANCE_COLUMNS] + \
-        ['s_lat', 's_lng'] + \
-        [f's_{x}' for x in luc_columns + DISTANCE_COLUMNS]
+        k_subset_match_indexes = k_subset_indexes[~no_potentials] 
+        k_subset_match = k_dist_thresholded_by[category][k_subset_match_indexes]
 
-    results_df = pd.DataFrame(results, columns=columns)
-    results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
+        s_set_match = m_dist_thresholded_by[category][s_set_mask_true]
+        s_set_match_indexes = np.flatnonzero(m_selector)[s_set_mask_true]
 
-    matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
-    matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
+        add_results, k_idx_matchless = greedy_match_simple(
+            k_subset_match,
+            s_set_match,
+            invconv
+        )
 
-    logging.info("Finished find match iteration")
+        matchless.extend(k_subset_match_indexes[k_idx_matchless])
+
+        results.extend([[k_subset_match_indexes[r[0]], s_set_match_indexes[r[1]]] for r in add_results])
+    
+    output_queue.put((idx_and_seed, results, matchless))
+
+def match_storage(
+    output_folder: str,
+    k_set: DataFrame,
+    m_set: DataFrame,
+    match_queue: Queue,
+):
+    # As well as all the LUC columns for later use
+    luc_columns = [x for x in m_set.columns if x.startswith('luc')]
+
+    for _ in range(REPEAT_MATCH_FINDING):
+        idx_and_seed, results, matchless = match_queue.get()
+
+        logging.info("Storing match iteration %d", idx_and_seed[0])
+
+        for result in results:
+            (k_idx, s_idx) = result
+            k_row = k_set.iloc[k_idx]
+            match = m_set.iloc[s_idx]
+
+            results.append(
+                [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + DISTANCE_COLUMNS] + \
+                [match.lat, match.lng] + [match[x] for x in luc_columns + DISTANCE_COLUMNS]
+            )
+
+        logging.info("Finished storing matches...")
+
+        for k_idx in matchless:
+            k_row = k_set.iloc[k_idx]
+            matchless.append(k_row)
+
+        columns = ['k_lat', 'k_lng'] + \
+            [f'k_{x}' for x in luc_columns + DISTANCE_COLUMNS] + \
+            ['s_lat', 's_lng'] + \
+            [f's_{x}' for x in luc_columns + DISTANCE_COLUMNS]
+
+        results_df = pd.DataFrame(results, columns=columns)
+        results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
+
+        matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
+        matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
 
 def make_s_set_mask(
     m_dist_thresholded: np.ndarray,
     k_set_dist_thresholded: np.ndarray,
+    rumba_trees: list[RumbaTree],
+    m_lookup: np.ndarray,
     required: int,
     rng: np.random.Generator
 ):
@@ -211,20 +248,11 @@ def make_s_set_mask(
     s_include = np.zeros(m_size, dtype=np.bool_)
     k_miss = np.zeros(k_size, dtype=np.bool_)
 
-    m_sets = max(1, min(100, math.floor(m_size // 1e6), math.ceil(m_size / (k_size * required * 10))))
-
-    m_lookup = np.arange(m_size)
-    rng.shuffle(m_lookup)
+    m_sets = len(rumba_trees)
     m_step = math.ceil(m_size / m_sets)
 
     def m_index(m_set: int, pos: int):
         return m_lookup[m_set * m_step + pos]
-    def m_indexes(m_set: int):
-        return m_lookup[m_set * m_step:(m_set + 1) * m_step]
-
-    m_trees = [make_kdrangetree(m_dist_thresholded[m_indexes(m_set)], np.ones(m_dist_thresholded.shape[1])) for m_set in range(m_sets)]
-
-    rumba_trees = [make_rumba_tree(m_tree, m_dist_thresholded) for m_tree in m_trees]
 
     for k in range(k_size):
         k_row =  k_set_dist_thresholded[k]
@@ -247,24 +275,8 @@ def make_s_set_mask(
 
     return s_include, k_miss
 
-# Function which returns a boolean array indicating whether all values in a row are true
 @jit(nopython=True, fastmath=True, error_model="numpy")
-def rows_all_true(rows: np.ndarray):
-    # Don't use np.all because not supported by numba
-
-    # Create an array of booleans for rows in s still available
-    all_true = np.ones((rows.shape[0],), dtype=np.bool_)
-    for row_idx in range(rows.shape[0]):
-        for col_idx in range(rows.shape[1]):
-            if not rows[row_idx, col_idx]:
-                all_true[row_idx] = False
-                break
-
-    return all_true
-
-
-@jit(nopython=True, fastmath=True, error_model="numpy")
-def greedy_match(
+def greedy_match_simple(
     k_subset: np.ndarray,
     s_set: np.ndarray,
     invcov: np.ndarray
@@ -276,31 +288,20 @@ def greedy_match(
     results = []
     matchless = []
 
-    s_tmp = np.zeros((s_set.shape[0],), dtype=np.float32)
-
     for k_idx in range(k_subset.shape[0]):
         k_row = k_subset[k_idx, :]
 
-        hard_matches = rows_all_true(s_set[:, :HARD_COLUMN_COUNT] == k_row[:HARD_COLUMN_COUNT]) & s_available
-        hard_matches = hard_matches.reshape(
-            -1,
-        )
-
         if total_available > 0:
             # Now calculate the distance between the k_row and all the hard matches we haven't already matched
-            s_tmp[hard_matches] = batch_mahalanobis_squared(
-                s_set[hard_matches, HARD_COLUMN_COUNT:], k_row[HARD_COLUMN_COUNT:], invcov
+            distances = batch_mahalanobis_squared(
+                s_set[s_available], k_row, invcov
             )
-            # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_set
-            if np.any(hard_matches):
-                min_dist_idx = np.argmin(s_tmp[hard_matches])
-                min_dist_idx = np.arange(s_tmp.shape[0])[hard_matches][min_dist_idx]
+            min_dist_idx = np.argmin(distances)
+            min_dist_idx = np.flatnonzero(s_available)[min_dist_idx]
 
-                results.append((k_idx, min_dist_idx))
-                s_available[min_dist_idx] = False
-                total_available -= 1
-            else:
-                matchless.append(k_idx)
+            results.append((k_idx, min_dist_idx))
+            s_available[min_dist_idx] = False
+            total_available -= 1
         else:
             matchless.append(k_idx)
 
@@ -330,17 +331,39 @@ def find_pairs(
     rng = np.random.default_rng(seed)
     iteration_seeds = zip(range(REPEAT_MATCH_FINDING), rng.integers(0, 1000000, REPEAT_MATCH_FINDING))
 
-    with Pool(processes=processes_count) as pool:
-        pool.map(
-            partial(
-                find_match_iteration,
-                k_parquet_filename,
-                m_parquet_filename,
-                start_year,
-                output_folder
-            ),
-            iteration_seeds
-        )
+    k_set, k_set_dist_thresholded_by, k_selector_by, hard_match_categories = load_and_process_k(k_parquet_filename, start_year)
+    m_set, m_dist_thresholded_by, m_selector_by, rumba_trees_by, m_lookup_by, invconv = load_and_process_m(
+        m_parquet_filename,
+        hard_match_categories,
+        start_year,
+        rng,
+        len(k_set)
+    )
+    
+    queue = Queue()
+
+    pool = Pool(processes=processes_count)
+    pool.apply_async(
+        partial(
+            find_match_iteration_fast,
+            len(k_set),
+            hard_match_categories,
+            k_set_dist_thresholded_by,
+            k_selector_by,
+            m_dist_thresholded_by,
+            m_selector_by,
+            rumba_trees_by,
+            m_lookup_by,
+            invconv,
+            queue,
+        ),
+        iteration_seeds
+    )
+    logging.info("Started pool...")
+
+    # Handle output queue
+    match_storage(output_folder, k_set, m_set, queue)
+    pool.join()
 
 def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
