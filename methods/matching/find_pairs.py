@@ -210,7 +210,9 @@ def find_match_iteration_fast(
             rng
         )
 
-        logging.info("%d: s_set_mask_true built, set values %d of expected %d", idx_and_seed[0] + 1, np.sum(s_set_mask_true), len(k_dist_thresholded_by[category])*REQUIRED)
+        count_no_potentials = np.sum(no_potentials)
+        logging.info("%d: s_set_mask_true built, set values %d of expected %d, with %d no potentials",
+                     idx_and_seed[0] + 1, np.sum(s_set_mask_true), (len(k_dist_thresholded_by[category]) - count_no_potentials)*REQUIRED, count_no_potentials)
 
         k_selected_indexes = np.flatnonzero(k_selector)
         k_subset_indexes = np.flatnonzero(k_subset_mask)
@@ -308,11 +310,12 @@ def make_s_set_mask(
         rng.shuffle(m_order)
         possible_s = []
         for m_set in m_order:
-            next_possible_s = rumba_trees[m_set].members_sample(k_row, required, rng)
+            needed = required - len(possible_s)
+            next_possible_s = rumba_trees[m_set].members_sample(k_row, needed, rng)
             if possible_s is None:
                 possible_s = [m_index(m_set, s) for s in next_possible_s]
             else:
-                take = min(required - len(possible_s), len(next_possible_s))
+                take = min(needed, len(next_possible_s))
                 possible_s[len(possible_s):len(possible_s)+take] = [m_index(m_set, s) for s in next_possible_s[0:take]]
             if len(possible_s) == required:
                 break
