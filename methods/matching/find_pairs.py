@@ -156,14 +156,14 @@ def merge_is_member(a: np.ndarray, b: np.ndarray):
     i = 0
     j = 0
     output = []
-    while i < len(a) and j < len(b):
-        if a[i] == b[j]:
+    while i < len(a):
+        if j >= len(b) or a[i] < b[j]:
+            output.append(False)
+            i += 1
+        elif a[i] == b[j]:
             output.append(True)
             i += 1
             j += 1
-        elif a[i] < b[j]:
-            output.append(False)
-            i += 1
         else:
             j += 1
     return np.array(output, dtype=np.bool_)
@@ -210,7 +210,7 @@ def find_match_iteration_fast(
             rng
         )
 
-        logging.info("s_set_mask_true built, set values %d of expected %d", np.sum(s_set_mask_true), len(k_dist_thresholded_by[category])*REQUIRED)
+        logging.info("%d: s_set_mask_true built, set values %d of expected %d", idx_and_seed[0] + 1, np.sum(s_set_mask_true), len(k_dist_thresholded_by[category])*REQUIRED)
 
         k_selected_indexes = np.flatnonzero(k_selector)
         k_subset_indexes = np.flatnonzero(k_subset_mask)
@@ -219,19 +219,12 @@ def find_match_iteration_fast(
 
         k_subset_match_indexes = merge_filter(k_selected_indexes[~no_potentials], k_subset_indexes)
 
-        logging.info("k_subset_match_indexes %a", k_subset_match_indexes)
-        
         k_subset_match_flags = ~no_potentials & merge_is_member(k_selected_indexes, k_subset_indexes)
 
-        logging.info("k_subset_match_flags %a", k_subset_match_flags)
-
         k_subset_match = k_dist_thresholded_by[category][k_subset_match_flags]
-        logging.info("k_subset_match %a", k_subset_match)
 
         s_set_match = m_dist_thresholded_by[category][s_set_mask_true]
-        logging.info("s_set_match %a", s_set_match)
         s_set_match_indexes = np.flatnonzero(m_selector)[s_set_mask_true]
-        logging.info("s_set_match_indexes %a", s_set_match_indexes)
 
         add_results, k_idx_matchless = greedy_match_simple(
             k_subset_match,
@@ -257,11 +250,13 @@ def match_storage(
     logging.info("Waiting for matches...")
 
     for _ in range(REPEAT_MATCH_FINDING):
-        idx_and_seed, results, matchless = match_queue.get()
+        idx_and_seed, result_idxs, matchless_idxs = match_queue.get()
 
         logging.info("Storing match iteration %d", idx_and_seed[0])
+        logging.info("Got results count %d, matchless count %d", len(result_idxs), len(matchless_idxs))
 
-        for result in results:
+        results = []
+        for result in result_idxs:
             (k_idx, s_idx) = result
             k_row = k_set.iloc[k_idx]
             match = m_set.iloc[s_idx]
@@ -271,9 +266,8 @@ def match_storage(
                 [match.lat, match.lng] + [match[x] for x in luc_columns + DISTANCE_COLUMNS]
             )
 
-        logging.info("Finished storing matches...")
-
-        for k_idx in matchless:
+        matchless = []
+        for k_idx in matchless_idxs:
             k_row = k_set.iloc[k_idx]
             matchless.append(k_row)
 
@@ -308,9 +302,6 @@ def make_s_set_mask(
     def m_index(m_set: int, pos: int):
         return m_lookup[m_set * m_step + pos]
 
-    logging.info("make_s_set_mask: k_size %d m_size %d m_sets %d", k_size, m_size, m_sets)
-
-    logging.info("k_set_dist_thresholded.shape %a", k_set_dist_thresholded.shape)
     for k in range(k_size):
         k_row =  k_set_dist_thresholded[k]
         m_order = np.arange(m_sets)
@@ -377,7 +368,10 @@ def shared_memory_key(names: Iterable[str]) -> str:
     return "_".join(names)
 
 MEMORY_TO_CLOSE: list[SharedMemory] = []
-atexit.register(lambda: map(lambda sm: sm.close(), MEMORY_TO_CLOSE))
+def close_shared_memory():
+    for sm in MEMORY_TO_CLOSE:
+        sm.close()
+atexit.register(close_shared_memory)
 
 def unpack_shared_memory(cols: int, *names: str, dtype) -> np.ndarray:
     name = shared_memory_key(names)
@@ -397,7 +391,7 @@ def unpack_shared_memory(cols: int, *names: str, dtype) -> np.ndarray:
         result = np.ndarray(make_shape(rows), dtype=dtype, buffer=sm.buf)
         return result
     except FileNotFoundError:
-        logging.info("Shared memory %s is empty",name)
+        logging.debug("Shared memory %s is empty",name)
         return np.ndarray(make_shape(0), dtype=dtype)
 
 def unpack_shared_rumba_tree(*names: str) -> RumbaTree:
@@ -429,8 +423,6 @@ def unpack_iteration_shared_memory(
     output_queue: Queue,
     idx_and_seed: tuple[int, int],
 ) -> None:
-    logging.info("Unpacking iteration %d of %d...", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
-
     k_dist_thresholded_by = {category: unpack_shared_memory(len(DISTANCE_COLUMNS), prefix, "k_dist_thresholded_by", category, dtype=np.float32) for category in categories}
     k_selector_by = {category: unpack_shared_memory(1, prefix, "k_selector_by", category, dtype=np.bool_) for category in categories}
     m_dist_thresholded_by = {category: unpack_shared_memory(len(DISTANCE_COLUMNS), prefix, "m_dist_thresholded_by", category, dtype=np.float32) for category in categories}
@@ -438,7 +430,6 @@ def unpack_iteration_shared_memory(
     m_trees = {category: [unpack_shared_rumba_tree(prefix, "m_trees", category, str(i)) for i in range(m_tree_counts[category])] for category in categories}
     m_lookup_by = {category: unpack_shared_memory(1, prefix, "m_lookup_by", category, dtype=np.int32) for category in categories}
 
-    logging.info("Unpacked iteration %d of %d, doing matching...", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
     find_match_iteration_fast(
         k_size,
         categories,
@@ -453,15 +444,19 @@ def unpack_iteration_shared_memory(
         idx_and_seed,
     )
 
-MEMORY_TO_CLEANUP: list[SharedMemory] = []
-atexit.register(lambda: map(lambda sm: sm.unlink(), MEMORY_TO_CLEANUP))
+MEMORY_TO_UNLINK: list[SharedMemory] = []
+def unlink_shared_memory():
+    for sm in MEMORY_TO_UNLINK:
+        sm.unlink()
+atexit.register(unlink_shared_memory)
+
 
 def pack_shared_memory(value: np.ndarray, *names: str):
     name = shared_memory_key(names)
     size = value.nbytes
     if size > 0:
         sm = SharedMemory(name, True, size)
-        MEMORY_TO_CLEANUP.append(sm)
+        MEMORY_TO_UNLINK.append(sm)
         dest = np.ndarray(shape=value.shape, dtype=value.dtype, buffer=sm.buf)
         dest[:] = value[:]
 
@@ -554,14 +549,13 @@ def find_pairs(
         iteration_seeds,
         error_callback=lambda error: logging.error("Process error %a\r\n%a", error, error.__traceback__)
     )
-    logging.info("Started pool...")
 
     # Handle output queue
     match_storage(output_folder, k_set, m_set, queue)
 
-    pool.join()
-
     logging.info("Finished, cleaning up...")
+    pool.close()
+    manager.shutdown()
 
 def main():
     # If you use the default multiprocess model then you risk deadlocks when logging (which we
