@@ -15,8 +15,8 @@ from biomassrecovery.utils.unzip import unzip # type: ignore
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
-URL_TEMPLATE = "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_%d_%d.zip"
-TIFF_NAME_TEMPLATE = "srtm_%d_%d.tif"
+URL_TEMPLATE = "https://srtm.csi.cgiar.org/wp-content/uploads/files/srtm_5x5/TIFF/srtm_%02d_%02d.zip"
+TIFF_NAME_TEMPLATE = "srtm_%02d_%02d.tif"
 
 def download_srtm_data(
     project_boundaries_filename: str,
