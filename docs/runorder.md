@@ -28,7 +28,7 @@ The zips are kept around for archival purposes, due to known difficultly in vers
 We also want to generate the FCC maps. This stage is very expensive, but only needs to be done once per year when JRC updates.
 
 ```shell
-$ python -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange --output /data/tmf/fcc-cpcs
+$ python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange --output /data/tmf/fcc-cpcs
 ```
 
 
@@ -102,7 +102,7 @@ $ python3 -m methods.inputs.generate_leakage --project /data/tmf/projects/123/bo
 We conver the JRC tiles binary tiles per LUC. In theory we could do this for all JRC tiles, but to save space we just calculate the areas we need.
 
 ```shell
-$ python -m methods.inputs.generate_luc_layer /data/tmf/123/buffer.geojson /data/tmf/jrc/tif/products/tmf_v1/AnnualChange /data/tmf/123/luc.tif
+$ python3 -m methods.inputs.generate_luc_layer /data/tmf/123/buffer.geojson /data/tmf/jrc/tif/products/tmf_v1/AnnualChange /data/tmf/123/luc.tif
 ```
 
 NB: In theory we could remove this stage if we updated `generate_carbon_density.py` to use the GroupLayers of yirgacheffe that we added later on and is  used by other parts of the pipeline.
@@ -152,7 +152,7 @@ $ python3 -m methods.inputs.generate_carbon_density /data/tmf/123/buffer.geojson
 We need a list of countries that a project intersects with to calculate the matching area:
 
 ```shell
-python -m methods.inputs.generate_country_list --leakage /data/tmf/projects/123/boundary.geojson \
+$ python3 -m methods.inputs.generate_country_list --leakage /data/tmf/projects/123/boundary.geojson \
                                                --countries /data/tmf/osm_borders.geojson \
                                                --output /data/tmf/projects/123/country-list.json
 ```
@@ -161,7 +161,7 @@ Note that this stage requires a full list of other project boundaries that must 
 
 
 ```shell
-$ python -m methods.inputs.generate_matching_area --project /data/tmf/projects/123/boundary.geojson \
+$ python3 -m methods.inputs.generate_matching_area --project /data/tmf/projects/123/boundary.geojson \
                                                   --countrycodes /data/tmf/projects/123/country-list.json \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --ecoregions /data/tmf/ecoregions/ecoregions.geojson \
@@ -171,7 +171,42 @@ $ python -m methods.inputs.generate_matching_area --project /data/tmf/projects/1
 
 ## Elevation and slope data
 
+We use the SRTM elevation data, which we download to cover the matching area:
 
+```shell
+$ python3 -m methods.inputs.download_srtm_data /data/tmf/projects/123/boundary.geojson \
+    /data/tmf/projects/123/matching-area.geojson \
+    /data/tmf/srtm/zip \
+    /data/tmf/srtm/tif
+```
+
+Then from that generate slope data using GDAL:
+
+```shell
+$ python3 -m methods.inputs.generate_slope --input /data/tmf/srtm/tif --output /data/tmf/slopes
+```
+
+Once we have that we need to rescale the data to match JRC resolution:
+
+```shell
+$ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange
+                                                 --tiles /data/tmf/srtm/tif \
+                                                 --output /data/tmf/rescaled-elevation
+$ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange \
+                                                 --tiles /data/tmf/slopes \
+                                                 --output /data/tmf/rescaled-slopes
+```
+
+## Country raster
+
+Again, rather than repeatedly dynamically rasterize the country vectors, we rasterise them once and re-use them:
+
+```shell
+python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
+                                                  --matching /data/tmf/projects/123/matching-area.geojson \
+                                                  --countries /data/tmf/osm_borders.geojson \
+                                                  --output /data/tmf/123/countries.tif
+```
 
 # Pixel matching
 
@@ -210,7 +245,7 @@ $ python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet
                                                      --output /data/tmf/123/matches
 ```
 
-Then these rasters get combined into a single raster that is all the potential matches as one:
+Then these rasters get combined into a single raster that is all the potential matches as one. The j parameter controls how many concurrent processes the script can use, which is bounded mostly by how much memory you have available. The value 20 is good for our server, but may not match yours.
 
 ```shell
 $ python3 -m methods.matching.build_m_raster --rasters_directory /data/tmf/123/matches \
@@ -237,7 +272,7 @@ $ python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
 
 ## Find pairs
 
-Finally we can find the 100 sets of matched pairs:
+Finally we can find the 100 sets of matched pairs. The seed is used to control the random number generator, and using the same seed on each run ensures consistency despite randomness being part of the selection process.
 
 ```shell
 $ python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
@@ -253,24 +288,10 @@ $ python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
 Finally this script calculates additionality:
 
 ```shell
-$ python -m methods.outputs.calculate_additionality --project /data/tmf/projects/123/boundary.geojson \
+$ python3 -m methods.outputs.calculate_additionality --project /data/tmf/projects/123/boundary.geojson \
                                                     --project_start 2012
                                                     --evaluation_year 2021 \
                                                     --density /data/tmf/123/carbon-density.csv \
                                                     --matches /data/tmf/123/pairs \
                                                     --output /data/tmf/123/additionality.csv
-```
-
-
-
-```shell
-python -m methods.inputs.generate_country_raster --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange --matching ./inputs/1201-matching-area.geojson --countries ./inputs/countries.geojson --output ./data/1201-countries.tif
-python -m methods.inputs.generate_country_list --leakage ./inputs/1201-leakage.geojson --countries ./inputs/countries.geojson --output ./data/1201-leakage-country-list.json
-python -m methods.inputs.generate_matching_area --project ./inputs/1201-leakage.geojson --countrycodes ./inputs/1201-leakage-country-list.json --countries ./inputs/countries.geojson --ecoregions ./inputs/ecoregions.geojson --projects ./inputs/projects --output ./data/1201-leakage-matching-area.geojson
-python -m methods.inputs.generate_country_raster --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange --matching ./inputs/1201-leakage-matching-area.geojson --countries ./inputs/countries.geojson --output ./data/1201-leakage-countries.tif
-python -m methods.inputs.download_srtm_data ./inputs/1201.geojson ./inputs/1201-leakage-matching-area.geojson ./data/srtm_zip ./data/srtm_tif
-python -m methods.inputs.generate_slope --input ./inputs/srtm_tif --output ./data/slopes
-python -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange --tiles ./inputs/slopes --output ./data/rescaled-slopes
-python -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange --tiles ./inputs/srtm_tif --output ./data/rescaled-elevation
-
 ```
