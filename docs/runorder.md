@@ -25,7 +25,7 @@ python3 -m methods.inputs.download_jrc_data /data/tmf/jrc/zips /data/tmf/jrc/tif
 
 The zips are kept around for archival purposes, due to known difficultly in versioning JRC data, but only the tifs directory is needed from here on.
 
-We also want to generate the FCC maps. This stage is very expensive, but only needs to be done once per year when JRC updates.
+We also want to generate the Finegrain Circular CPC (FCC) maps. This stage is very expensive, taking days to run, but only needs to be done once per year when JRC updates.
 
 ```ShellSession
 python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange --output /data/tmf/fcc-cpcs
@@ -70,31 +70,25 @@ python3 -m methods.inputs.osm_countries /data/tmf/osm_borders.geojson
 
 # Download resources for a specific project
 
-For this section you will now need to have a project JSON file and a GEOJSON of the project boundaries. The JSON file should look like:
+For this section you will now need to have the following:
 
-```json
-{
-	"vcs_id": 123,
-	"country_code": "SE",
-	"project_start": 2012,
-	"quality": "high"
-}
-```
-
-We will assume they are kept in `/data/tmf/projects/123/data.json` and `/data/tmf/projects/123/boundary.geojson` respectively.
+* A GEOJSON of the project boundaries. For this documentation we will assume you're assessing project `123` and its boundary file is at `/data/tmf/project_boundaries/123.geojson`
+* A list of other projects to avoid. For simplicity we assume in this documentation that you have all your project boundaries in `/data/tmf/projects`.
+* The start year of the project. For this we use the year 2012.
+* A directory to store the results in. For this document we put the results in `/data/tmf/123`
 
 ## Make variations on project shapes
 
 We add a 30km buffer around the project for generating land usage and AGB data:
 
 ```ShellSession
-python3 -m methods.inputs.generate_boundary --project /data/tmf/projects/123/boundary.geojson --output /data/tmf/123/buffer.geojson
+python3 -m methods.inputs.generate_boundary --project /data/tmf/project_boundaries/123.geojson --output /data/tmf/123/buffer.geojson
 ```
 
 We also want a shape for the leakage zone:
 
 ```ShellSession
-python3 -m methods.inputs.generate_leakage --project /data/tmf/projects/123/boundary.geojson --output /data/tmf/123/leakage.geojson
+python3 -m methods.inputs.generate_leakage --project /data/tmf/project_boundaries/123.geojson --output /data/tmf/123/leakage.geojson
 ```
 
 ## Make LUC tiles
@@ -152,21 +146,21 @@ python3 -m methods.inputs.generate_carbon_density /data/tmf/123/buffer.geojson /
 We need a list of countries that a project intersects with to calculate the matching area:
 
 ```ShellSession
-python3 -m methods.inputs.generate_country_list --leakage /data/tmf/projects/123/boundary.geojson \
+python3 -m methods.inputs.generate_country_list --leakage /data/tmf/project_boundaries/123.geojson \
                                                --countries /data/tmf/osm_borders.geojson \
-                                               --output /data/tmf/projects/123/country-list.json
+                                               --output /data/tmf/123/country-list.json
 ```
 
 Note that this stage requires a full list of other project boundaries that must be avoided for matching purposes, which is in `/data/tmf/project_boundaries`
 
 
 ```ShellSession
-python3 -m methods.inputs.generate_matching_area --project /data/tmf/projects/123/boundary.geojson \
-                                                  --countrycodes /data/tmf/projects/123/country-list.json \
+python3 -m methods.inputs.generate_matching_area --project /data/tmf/project_boundaries/123.geojson \
+                                                  --countrycodes /data/tmf/123/country-list.json \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --ecoregions /data/tmf/ecoregions/ecoregions.geojson \
                                                   --projects /data/tmf/project_boundaries \
-                                                  --output /data/tmf/projects/123/matching-area.geojson
+                                                  --output /data/tmf/project_boundaries/123/matching-area.geojson
 ```
 
 ## Elevation and slope data
@@ -174,8 +168,8 @@ python3 -m methods.inputs.generate_matching_area --project /data/tmf/projects/12
 We use the SRTM elevation data, which we download to cover the matching area:
 
 ```ShellSession
-python3 -m methods.inputs.download_srtm_data /data/tmf/projects/123/boundary.geojson \
-    /data/tmf/projects/123/matching-area.geojson \
+python3 -m methods.inputs.download_srtm_data /data/tmf/project_boundaries/123.geojson \
+    /data/tmf/project_boundaries/123/matching-area.geojson \
     /data/tmf/srtm/zip \
     /data/tmf/srtm/tif
 ```
@@ -203,7 +197,7 @@ Again, rather than repeatedly dynamically rasterize the country vectors, we rast
 
 ```ShellSession
 python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
-                                                  --matching /data/tmf/projects/123/matching-area.geojson \
+                                                  --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --output /data/tmf/123/countries.tif
 ```
@@ -217,7 +211,7 @@ Pixel matching is split into three main stages: Calculating K, then M, and then 
 First we make K.
 
 ```ShellSession
-python3 -m methods.matching.calculate_k --project /data/tmf/projects/123/boundary.geojson \
+python3 -m methods.matching.calculate_k --project /data/tmf/project_boundaries/123.geojson \
                                           --start_year 2012 \
                                           --evaluation_year 2021 \
                                           --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
@@ -292,7 +286,7 @@ python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
 Finally this script calculates additionality:
 
 ```ShellSession
-python3 -m methods.outputs.calculate_additionality --project /data/tmf/projects/123/boundary.geojson \
+python3 -m methods.outputs.calculate_additionality --project /data/tmf/project_boundaries/123.geojson \
                                                     --project_start 2012
                                                     --evaluation_year 2021 \
                                                     --density /data/tmf/123/carbon-density.csv \
