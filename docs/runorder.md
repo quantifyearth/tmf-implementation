@@ -28,7 +28,7 @@ The zips are kept around for archival purposes, due to known difficultly in vers
 We also want to generate the Finegrain Circular CPC (FCC) maps. This stage is very expensive, taking days to run, but only needs to be done once per year when JRC updates.
 
 ```ShellSession
-python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange --output /data/tmf/fcc-cpcs
+python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif --output /data/tmf/fcc-cpcs
 ```
 
 
@@ -43,7 +43,7 @@ python3 -m methods.inputs.download_shapefiles ecoregion /data/tmf/ecoregions/eco
 Then we convert it into raster files. This takes up more space, but the ecoregions are slow to raster on demand each time, so this is faster doing it just once.
 
 ```ShellSession
-python3 -m methods.inputs.generate_ecoregion_rasters /data/tmf/ecoregions/ecoregions.geojson /data/tmf/jrc/tif/products/tmf_v1/AnnualChange /data/tmf/ecoregions
+python3 -m methods.inputs.generate_ecoregion_rasters /data/tmf/ecoregions/ecoregions.geojson /data/tmf/jrc/tif /data/tmf/ecoregions
 ```
 
 ## ACCESS
@@ -96,7 +96,7 @@ python3 -m methods.inputs.generate_leakage --project /data/tmf/project_boundarie
 We conver the JRC tiles binary tiles per LUC. In theory we could do this for all JRC tiles, but to save space we just calculate the areas we need.
 
 ```ShellSession
-python3 -m methods.inputs.generate_luc_layer /data/tmf/123/buffer.geojson /data/tmf/jrc/tif/products/tmf_v1/AnnualChange /data/tmf/123/luc.tif
+python3 -m methods.inputs.generate_luc_layer /data/tmf/123/buffer.geojson /data/tmf/jrc/tif /data/tmf/123/luc.tif
 ```
 
 NB: In theory we could remove this stage if we updated `generate_carbon_density.py` to use the GroupLayers of yirgacheffe that we added later on and is  used by other parts of the pipeline.
@@ -183,10 +183,10 @@ python3 -m methods.inputs.generate_slope --input /data/tmf/srtm/tif --output /da
 Once we have that we need to rescale the data to match JRC resolution:
 
 ```ShellSession
-python3 -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange
+python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif
                                                  --tiles /data/tmf/srtm/tif \
                                                  --output /data/tmf/rescaled-elevation
-python3 -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/tmf_v1/AnnualChange \
+python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
                                                  --tiles /data/tmf/slopes \
                                                  --output /data/tmf/rescaled-slopes
 ```
@@ -196,7 +196,7 @@ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc ./inputs/jrc/tif/products/t
 Again, rather than repeatedly dynamically rasterize the country vectors, we rasterise them once and re-use them:
 
 ```ShellSession
-python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
+python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif \
                                                   --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --output /data/tmf/123/countries.tif
@@ -214,7 +214,7 @@ First we make K.
 python3 -m methods.matching.calculate_k --project /data/tmf/project_boundaries/123.geojson \
                                           --start_year 2012 \
                                           --evaluation_year 2021 \
-                                          --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
+                                          --jrc /data/tmf/jrc/tif \
                                           --cpc /data/tmf/fcc-cpcs \
                                           --ecoregions /data/tmf/ecoregions \
                                           --elevation /data/tmf/rescaled-elevation \
@@ -233,7 +233,7 @@ python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet \
                                                      --matching /data/tmf/123/matching-area.geojson \
                                                      --start_year 2012 \
                                                      --evaluation_year 2021 \
-                                                     --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
+                                                     --jrc /data/tmf/jrc/tif \
                                                      --cpc /data/tmf/fcc-cpcs \
                                                      --ecoregions /data/tmf/ecoregions \
                                                      --elevation /data/tmf/rescaled-elevation \
@@ -258,7 +258,7 @@ python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
                                             --matching /data/tmf/123/matching-area.geojson \
                                             --start_year 2012 \
                                             --evaluation_year 2021 \
-                                            --jrc /data/tmf/jrc/tif/products/tmf_v1/AnnualChange \
+                                            --jrc /data/tmf/jrc/tif \
                                             --cpc /data/tmf/fcc-cpcs \
                                             --ecoregions /data/tmf/ecoregions \
                                             --elevation /data/tmf/rescaled-elevation \
@@ -278,7 +278,7 @@ python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
                                          --start_year 2012 \
                                          --output /data/tmf/123/pairs \
                                          --seed 42 \
-                                         -j 1 \
+                                         -j 1
 ```
 
 # Calculate additionality
