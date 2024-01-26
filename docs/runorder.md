@@ -293,3 +293,5 @@ python3 -m methods.outputs.calculate_additionality --project /data/tmf/project_b
                                                     --matches /data/tmf/123/pairs \
                                                     --output /data/tmf/123/additionality.csv
 ```
+
+By running the additionality step with the environment variable `TMF_PARTIALS` set to some directory, this step will also generate GeoJSON files for visualising the pairs and the standardised mean difference calculations for the matching variables. You can add `TMF_PARTIALS=/some/dir` before `python3` to set this just for a specific run of `calculate_additionality`. 
