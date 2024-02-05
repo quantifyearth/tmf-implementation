@@ -1,4 +1,6 @@
 import csv
+import os
+import sys
 import argparse
 
 import pandas as pd # type: ignore
@@ -61,7 +63,14 @@ if __name__ == "__main__":
 
     # TODO: may be present in config, in which case use that, but for now we use
     # the calculate version.
-    density_df = pd.read_csv(args.carbon_density)
+    _, ext = os.path.splitext(args.carbon_density)
+    if ext == ".csv":
+        density_df = pd.read_csv(args.carbon_density)
+    elif ext == ".parquet":
+        density_df = pd.read_parquet(args.carbon_density)
+    else:
+        print(f"Unrecognised file extension: {ext}", file=sys.stderr)
+        sys.exit(1)
     density = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     # Density may have left some LUCs out like water
