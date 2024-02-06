@@ -68,6 +68,8 @@ We use OSM data for country board data:
 python3 -m methods.inputs.osm_countries /data/tmf/osm_borders.geojson
 ```
 
+This file file is heavy to work with as geojson, so it'll later be rendered to a GeoTIFF.
+
 # Download resources for a specific project
 
 For this section you will now need to have the following:
@@ -140,6 +142,7 @@ Once the data has been downloaded and ingested into POSTGIS, you then need to ge
 python3 -m methods.inputs.generate_carbon_density /data/tmf/123/buffer.geojson /data/tmf/123/luc.tif /data/tmf/123/carbon-density.csv
 ```
 
+This is the only part of the pipeline that needs the PostGIS server access.
 
 ## Generate matching area
 
@@ -168,10 +171,10 @@ python3 -m methods.inputs.generate_matching_area --project /data/tmf/project_bou
 We use the SRTM elevation data, which we download to cover the matching area:
 
 ```ShellSession
-python3 -m methods.inputs.download_srtm_data /data/tmf/project_boundaries/123.geojson \
-    /data/tmf/project_boundaries/123/matching-area.geojson \
-    /data/tmf/srtm/zip \
-    /data/tmf/srtm/tif
+python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundaries/123.geojson \
+                                            --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                            --zips /data/tmf/srtm/zip \
+                                            --tifs /data/tmf/srtm/tif
 ```
 
 Then from that generate slope data using GDAL:
