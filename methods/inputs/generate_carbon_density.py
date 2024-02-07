@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import math
@@ -114,13 +115,33 @@ def generate_carbon_density(boundary_file: str, luc_raster_file: str, output_fil
             assert False, "Extensions was validated earlier"
 
 def main() -> None:
-    try:
-        boundary_file = sys.argv[1]
-        luc_raster_file = sys.argv[2]
-        output_file = sys.argv[3]
-    except IndexError:
-        print(f"Usage: {sys.argv[0]} BUFFER_BOUNDARY_FILE LUC_RASTER_FILE OUTPUT_FILE", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Finds the country codes for those the project intersects with")
+    parser.add_argument(
+        "--buffer",
+        type=str,
+        required=True,
+        dest="buffer_boundary_filename",
+        help="Buffer boundary file"
+    )
+    parser.add_argument(
+        "--luc",
+        type=str,
+        required=True,
+        dest="luc_raster_file",
+        help="File of country vector shapes."
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        dest="output_filename",
+        help="Output file name."
+    )
+    args = parser.parse_args()
+
+    boundary_file = args.buffer_boundary_filename
+    luc_raster_file = args.luc_raster_file
+    output_file = args.output_filename
 
     generate_carbon_density(boundary_file, luc_raster_file, output_file)
 

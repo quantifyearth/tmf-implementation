@@ -1,3 +1,4 @@
+import argparse
 import math
 import os
 import re
@@ -101,15 +102,31 @@ def main() -> None:
     # it pointlessly hogs memory, and then spends a long time tidying it up after.
     gdal.SetCacheMax(1024 * 1024 * 16)
 
-    try:
-        boundary_filename = sys.argv[1]
-        jrc_folder = sys.argv[2]
-        luc_raster_filename = sys.argv[3]
-    except IndexError:
-        print(f"Usage: {sys.argv[0]} INPUT JRC_TILE_FOLDER OUTPUT", file=sys.stderr)
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Generate LUC tile for project.")
+    parser.add_argument(
+        "--buffer",
+        type=str,
+        required=True,
+        dest="boundary_filename",
+        help="Buffer boundary."
+    )
+    parser.add_argument(
+        "--jrc",
+        type=str,
+        required=True,
+        dest="jrc_directory_path",
+        help="Location of JRC tiles."
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        dest="output_filename",
+        help="Project specific LUC tif."
+    )
+    args = parser.parse_args()
 
-    generate_luc_layer(boundary_filename, jrc_folder, luc_raster_filename)
+    generate_luc_layer(args.boundary_filename, args.jrc_directory_path, args.output_filename)
 
 if __name__ == "__main__":
     main()
