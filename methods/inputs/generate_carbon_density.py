@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import math
-import sys
 from typing import Dict, List
 
 import geopandas as gpd  # type: ignore
