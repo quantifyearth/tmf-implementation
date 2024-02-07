@@ -52,6 +52,13 @@ if __name__ == "__main__":
         help="Directory containing the parquet files of the matches.",
     )
     parser.add_argument(
+        "--stopping",
+        type=str,
+        required=True,
+        dest="stopping_csv",
+        help="The destination stopping criteria path.",
+    )
+    parser.add_argument(
         "--output",
         type=str,
         required=True,
@@ -81,7 +88,7 @@ if __name__ == "__main__":
     project_gpd = gpd.read_file(args.project_boundary_file)
     project_area_msq = area_for_geometry(project_gpd)
 
-    additionality = generate_additionality(
+    additionality, stopping_criteria = generate_additionality(
         project_area_msq,
         args.project_start,
         args.evaluation_year,
@@ -95,3 +102,9 @@ if __name__ == "__main__":
         writer.writerow(["year", "additionality"])
         for year, value in additionality.items():
             writer.writerow([year, value])
+
+    with open(args.stopping_csv, "w", encoding="utf-8") as file:
+        writer = csv.writer(file)
+        writer.writerow(["iteration", "stable"])
+        for index, value in enumerate(stopping_criteria):
+            writer.writerow([index + 1, value])
