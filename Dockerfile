@@ -1,4 +1,11 @@
+FROM golang:bullseye AS littlejohn
+RUN git clone https://github.com/carboncredits/littlejohn.git
+WORKDIR littlejohn
+RUN go build
+
 FROM ghcr.io/osgeo/gdal:ubuntu-small-3.6.4
+
+COPY --from=littlejohn /go/littlejohn/littlejohn /bin/littlejohn
 
 RUN apt-get update -qqy && \
 apt-get install -qy \
