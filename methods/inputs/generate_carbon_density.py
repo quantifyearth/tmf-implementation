@@ -57,6 +57,8 @@ def generate_carbon_density(boundary_file: str, luc_raster_file: str, output_fil
             if not intersection.IsEmpty():
                 wkts.append(intersection.ExportToWkt())
             feature = boundary_layer.GetNextFeature()
+        if len(wkts) == 0:
+            continue
         as_series = gpd.GeoSeries.from_wkt(wkts)
 
         # The date limits here come from discussion with Miranda Lam:
