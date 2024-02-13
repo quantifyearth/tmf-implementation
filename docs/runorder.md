@@ -98,7 +98,9 @@ python3 -m methods.inputs.generate_leakage --project /data/tmf/project_boundarie
 We conver the JRC tiles binary tiles per LUC. In theory we could do this for all JRC tiles, but to save space we just calculate the areas we need.
 
 ```ShellSession
-python3 -m methods.inputs.generate_luc_layer /data/tmf/123/buffer.geojson /data/tmf/jrc/tif /data/tmf/123/luc.tif
+python3 -m methods.inputs.generate_luc_layer --buffer /data/tmf/123/buffer.geojson \
+                                            --jrc /data/tmf/jrc/tif \
+                                            --output /data/tmf/123/luc.tif
 ```
 
 NB: In theory we could remove this stage if we updated `generate_carbon_density.py` to use the GroupLayers of yirgacheffe that we added later on and is  used by other parts of the pipeline.
@@ -139,7 +141,9 @@ python3 -m methods.inputs.import_gedi_data /data/tmf/gedi
 Once the data has been downloaded and ingested into POSTGIS, you then need to generate AGB data layers:
 
 ```ShellSession
-python3 -m methods.inputs.generate_carbon_density /data/tmf/123/buffer.geojson /data/tmf/123/luc.tif /data/tmf/123/carbon-density.csv
+python3 -m methods.inputs.generate_carbon_density --buffer /data/tmf/123/buffer.geojson \
+                                                --luc /data/tmf/123/luc.tif \
+                                                --output /data/tmf/123/carbon-density.csv
 ```
 
 This is the only part of the pipeline that needs the PostGIS server access.
