@@ -5,7 +5,7 @@ import geopandas as gpd # type: ignore
 from methods.common.geometry import area_for_geometry
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prints area of area in m^2")
+    parser = argparse.ArgumentParser(description="Prints area in m^2")
     parser.add_argument(
         "--project",
         type=str,
