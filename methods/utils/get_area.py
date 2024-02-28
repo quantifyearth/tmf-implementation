@@ -18,7 +18,7 @@ def main() -> None:
         required=False,
         default=False,
         dest="in_hectares",
-        help="Covert to hectares",
+        help="Convert to hectares",
         action='store_true'
     )
     args = parser.parse_args()
