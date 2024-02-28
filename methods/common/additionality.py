@@ -232,7 +232,7 @@ def generate_additionality(
     variance = np.sum(np.power((additionality - a_mu), 2)) / (df - 1)
     stderr = np.sqrt(variance) / np.sqrt(df)
     d = np.abs(cv * a_mu)
-    stopping_criteria = stderr < d
+    stopping_criteria = stderr / d
 
     if partials_dir is not None:
         figure, axis = plt.subplots(1, 3)
