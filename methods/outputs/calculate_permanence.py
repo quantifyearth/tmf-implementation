@@ -40,8 +40,8 @@ def net_sequestration(
     if a_len != l_len:
         raise ValueError("additionality and leakage lists not of equal length")
 
-    minimum_year = additionality.index.min()
-    maximum_year = additionality.index.max()
+    minimum_year = int(additionality.index.min())
+    maximum_year = int(additionality.index.max())
 
     if year < minimum_year + 1 or year > maximum_year:
         raise ValueError(f"index for net sequesteration out of bounds: {year}")
@@ -70,8 +70,8 @@ def release(
         raise ValueError("additionality and leakage lists not of equal length")
 
     start_year = end_year - years
-    minimum_year = additionality.index.min()
-    maximum_year = additionality.index.max()
+    minimum_year = int(additionality.index.min())
+    maximum_year = int(additionality.index.max())
 
     if start_year < minimum_year or end_year > maximum_year:
         raise ValueError(
@@ -102,7 +102,7 @@ def adjusted_net_sequestration(
     j as estimated in year i. Any values in the matrix where i >= j will not be used.
     """
     adjustment = 0.0
-    minimum_year = schedule.index.min()
+    minimum_year = int(schedule.index.min())
 
     for est_year in range(minimum_year, year):
         estimate = schedule[est_year]
@@ -125,7 +125,7 @@ def release_schedule(
     Note, this deviates slightly in the RFC section in that we don't return zero when the adjusted net sequestration
     goes to zero. That is up to the end user to check should they compute past this point.
     """
-    minimum_year = additionality.index.min()
+    minimum_year = int(additionality.index.min())
 
     if quality == "low":  # i.e. HIGH RISK
         return release(additionality, leakage, from_year, 5)
