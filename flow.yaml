@@ -1,0 +1,355 @@
+
+"JRC Land Usage data":
+  type: "group"
+  children:
+    methods.inputs.download_jrc_data:
+      type: "download"
+      domains:
+        - ies-ows.jrc.ec.europa.eu
+      outputs:
+        - "/data/tmf/jrc/tif*"
+
+    methods.inputs.generate_fine_circular_coverage:
+      type: "process"
+      inputs:
+        - "/data/tmf/jrc/tif"
+      outputs:
+        - "/data/tmf/fcc-cpcs*"
+
+"Ecoregions":
+  type: "group"
+  children:
+    methods.inputs.download_shapefiles:
+      type: "download"
+      domains:
+        - storage.googleapis.com
+      outputs:
+        - "/data/tmf/ecoregions/ecoregions.geojson"
+
+    methods.inputs.generate_ecoregion_rasters:
+      type: "process"
+      inputs:
+        - "/data/tmf/ecoregions/ecoregions.geojson"
+        - "/data/tmf/jrc/tif"
+      outputs:
+        - "/data/tmf/ecoregions*"
+
+"Accessibility":
+  type: "group"
+  children:
+    methods.inputs.download_accessibility:
+      type: "download"
+      domains:
+        - data.malariaatlas.org
+      outputs:
+        - "/data/tmf/access/raw.tif"
+
+    methods.inputs.generate_access_tiles:
+      type: "process"
+      inputs:
+        - "/data/tmf/access/raw.tif"
+        - "/data/tmf/jrc/tif"
+      outputs:
+        - "/data/tmf/access*"
+
+methods.inputs.download_osm_countries:
+  type: "download"
+  domains:
+    - osm-boundaries.com
+  outputs:
+    - "/data/tmf/osm_borders.geojson"
+
+prep:
+  type: "group"
+  children:
+    methods.inputs.generate_boundary:
+      type: "process"
+      inputs:
+        - "/data/tmf/project_boundaries/123.geojson"
+      outputs:
+        - "/data/tmf/123/buffer.geojson"
+
+    methods.inputs.generate_leakage:
+      type: "process"
+      inputs:
+        - "/data/tmf/project_boundaries/123.geojson"
+      outputs:
+        - "/data/tmf/123/leakage.geojson"
+
+methods.inputs.generate_luc_layer:
+  type: "process"
+  inputs:
+    - "/data/tmf/123/buffer.geojson"
+    - "/data/tmf/jrc/tif"
+  outputs:
+    - "/data/tmf/123/luc.tif"
+
+GEDI:
+  type: "group"
+  children:
+    methods.inputs.download_gedi_data:
+      type: "download"
+      domains:
+        - cmr.earthdata.nasa.gov
+      inputs:
+        - "/data/tmf/123/buffer.geojson"
+      outputs:
+        - "/data/tmf/gedi*"
+
+    methods.inputs.import_gedi_data:
+      type: "process"
+      inputs:
+        - "/data/tmf/gedi"
+      outputs:
+        - "PostGIS GEDI database"
+
+    methods.inputs.generate_carbon_density:
+      type: "process"
+      inputs:
+        - "PostGIS GEDI database"
+        - "/data/tmf/123/luc.tif"
+        - "/data/tmf/123/buffer.geojson"
+      outputs:
+        - "/data/tmf/123/carbon-density.csv"
+
+methods.inputs.generate_country_list:
+  type: "process"
+  inputs:
+    - "/data/tmf/project_boundaries/123.geojson"
+    - "/data/tmf/osm_borders.geojson"
+  outputs:
+    - "/data/tmf/123/country-list.json"
+
+methods.inputs.generate_matching_area:
+  type: "process"
+  name: methods.inputs.generate_matching_area
+  inputs:
+    - "/data/tmf/123/leakage.geojson"
+    - "/data/tmf/123/country-list.json"
+    - "/data/tmf/osm_borders.geojson"
+    - "/data/tmf/ecoregions/ecoregions.geojson"
+    - "/data/tmf/project_boundaries"
+  outputs:
+    - "/data/tmf/project_boundaries/123/matching-area.geojson"
+
+"Elevation & Slope":
+  type: "group"
+  children:
+    methods.inputs.download_srtm_data:
+      type: "download"
+      domains:
+        - srtm.csi.cgiar.org
+      inputs:
+        - "/data/tmf/project_boundaries/123.geojson"
+        - "/data/tmf/project_boundaries/123/matching-area.geojson"
+      outputs:
+        - "/data/tmf/srtm/zip*"
+        - "/data/tmf/srtm/tif*"
+
+    methods.inputs.generate_slope:
+      type: "process"
+      inputs:
+        - "/data/tmf/srtm/tif"
+      outputs:
+        - "/data/tmf/slopes*"
+
+    methods.inputs.rescale_tiles_to_jrc_elevation:
+      type: "process"
+      name: "methods.inputs.rescale_tiles_to_jrc"
+      inputs:
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/srtm/tif"
+      outputs:
+        - "/data/tmf/rescaled-elevation*"
+
+    methods.inputs.rescale_tiles_to_jrc_slop:
+      type: "process"
+      name: "methods.inputs.rescale_tiles_to_jrc"
+      inputs:
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/slopes"
+      outputs:
+        - "/data/tmf/rescaled-slopes*"
+
+methods.inputs.generate_country_raster:
+  type: "process"
+  inputs:
+    - "/data/tmf/jrc/tif"
+    - "/data/tmf/project_boundaries/123/matching-area.geojson"
+    - "/data/tmf/osm_borders.geojson"
+  outputs:
+    - "/data/tmf/123/countries.tif"
+
+"Pixel Matching: Additionality":
+  type: "group"
+  context: "additionality"
+  children:
+    methods.matching.calculate_k:
+      type: "process"
+      inputs:
+        - "/data/tmf/project_boundaries/123.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/k.parquet"
+
+    methods.matching.find_potential_matches:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/k.parquet"
+        - "/data/tmf/project_boundaries/123/matching-area.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/matches*"
+
+    methods.matching.build_m_raster:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/matches"
+      outputs:
+        - "/data/tmf/123/matches.tif"
+
+    methods.matching.build_m_table:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/matches.tif"
+        - "/data/tmf/project_boundaries/123/matching-area.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/matches.parquet"
+
+    methods.matching.find_pairs:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/k.parquet"
+        - "/data/tmf/123/matches.parquet"
+        - "start_year"
+        - "seed"
+      outputs:
+        - "/data/tmf/123/pairs*"
+
+    methods.outputs.calculate_additionality:
+      type: "process"
+      inputs:
+        - "/data/tmf/project_boundaries/123.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/123/carbon-density.csv"
+        - "/data/tmf/123/pairs"
+      outputs:
+        - "/data/tmf/123/additionality.csv"
+
+"Pixel Matching: Leakage":
+  type: "group"
+  context: "leakage"
+  children:
+    methods.matching.calculate_k:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/leakage.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/k.parquet"
+
+    methods.matching.find_potential_matches:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/k.parquet"
+        - "/data/tmf/project_boundaries/123/matching-area.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/matches*"
+
+    methods.matching.build_m_raster:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/matches"
+      outputs:
+        - "/data/tmf/123/matches.tif"
+
+    methods.matching.build_m_table:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/matches.tif"
+        - "/data/tmf/project_boundaries/123/matching-area.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/jrc/tif"
+        - "/data/tmf/fcc-cpcs"
+        - "/data/tmf/ecoregions"
+        - "/data/tmf/rescaled-elevation"
+        - "/data/tmf/rescaled-slopes"
+        - "/data/tmf/access"
+        - "/data/tmf/123/countries.tif"
+      outputs:
+        - "/data/tmf/123/matches.parquet"
+
+    methods.matching.find_pairs:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/k.parquet"
+        - "/data/tmf/123/matches.parquet"
+        - "start_year"
+        - "seed"
+      outputs:
+        - "/data/tmf/123/pairs*"
+
+    methods.outputs.calculate_leakage:
+      type: "process"
+      inputs:
+        - "/data/tmf/123/leakage.geojson"
+        - "start_year"
+        - "evaluation_year"
+        - "/data/tmf/123/carbon-density.csv"
+        - "/data/tmf/123/pairs"
+      outputs:
+        - "/data/tmf/123/leakage.csv"
+
+Permenance:
+  type: "process"
+  inputs:
+    - "/data/tmf/123/additionality.csv additionality"
+    - "/data/tmf/123/leakage.csv leakage"
+    - "/data/tmf/scc.csv"
+    - "evaluation_year"
+  outputs:
+    - "/data/tmf/123/permenance.json"
