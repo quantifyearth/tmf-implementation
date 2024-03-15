@@ -151,8 +151,6 @@ def make_kdrangetree(points, widths):
                 chosen_d_min = d_min
 
         if bins < 1.3:
-            print(bins)
-            print(chosen_d, chosen_d_min, chosen_d_max)
             # No split is very worthwhile, so dump points
             return KDList(points, indexes)
 
