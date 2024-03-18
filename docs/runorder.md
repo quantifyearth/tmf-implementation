@@ -190,7 +190,7 @@ python3 -m methods.inputs.generate_slope --input /data/tmf/srtm/tif --output /da
 Once we have that we need to rescale the data to match JRC resolution:
 
 ```ShellSession
-python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif
+python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
                                                  --tiles /data/tmf/srtm/tif \
                                                  --output /data/tmf/rescaled-elevation
 python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
@@ -294,7 +294,7 @@ Finally this script calculates additionality:
 
 ```ShellSession
 python3 -m methods.outputs.calculate_additionality --project /data/tmf/project_boundaries/123.geojson \
-                                                    --project_start 2012
+                                                    --project_start 2012 \
                                                     --evaluation_year 2021 \
                                                     --density /data/tmf/123/carbon-density.csv \
                                                     --matches /data/tmf/123/pairs \
