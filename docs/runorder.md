@@ -1,3 +1,7 @@
+---
+inputs:
+- /data/tmf/123/buffer.geojson
+---
 # Running the pipeline
 
 This documents a simple run through of the pipeline for a single project. It assumes you are starting from scratch - most times you don't need to run the full pipeline as you already have the inputs, and just run the matching sections.
