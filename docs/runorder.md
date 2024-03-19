@@ -1,6 +1,7 @@
 ---
 inputs:
-- /data/tmf/123/buffer.geojson
+- /data/tmf/project_boundaries/123.geojson
+- /data/tmf/project_boundaries
 ---
 # Running the pipeline
 
@@ -171,7 +172,7 @@ python3 -m methods.inputs.generate_matching_area --project /data/tmf/project_bou
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --ecoregions /data/tmf/ecoregions/ecoregions.geojson \
                                                   --projects /data/tmf/project_boundaries \
-                                                  --output /data/tmf/project_boundaries/123/matching-area.geojson
+                                                  --output /data/tmf/123/matching-area.geojson
 ```
 
 ## Elevation and slope data
@@ -180,7 +181,7 @@ We use the SRTM elevation data, which we download to cover the matching area:
 
 ```ShellSession
 python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundaries/123.geojson \
-                                            --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                            --matching /data/tmf/123/matching-area.geojson \
                                             --zips /data/tmf/srtm/zip \
                                             --tifs /data/tmf/srtm/tif
 ```
@@ -208,7 +209,7 @@ Again, rather than repeatedly dynamically rasterize the country vectors, we rast
 
 ```ShellSession
 python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif \
-                                                  --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                                  --matching /data/tmf/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --output /data/tmf/123/countries.tif
 ```
