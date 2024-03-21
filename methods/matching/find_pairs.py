@@ -3,11 +3,13 @@ import os
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
+from typing import Any
 from numba import jit  # type: ignore
 import numpy as np
 import pandas as pd
 
 from methods.common.luc import luc_matching_columns
+from methods.utils.kd_tree import make_kdrangetree, make_rumba_tree
 
 REPEAT_MATCH_FINDING = 100
 DEFAULT_DISTANCE = 10000000.0
@@ -38,7 +40,7 @@ def find_match_iteration(
     # Methodology 6.5.7: For a 10% sample of K
     k_set = pd.read_parquet(k_parquet_filename)
     k_subset = k_set.sample(
-        frac=0.1,
+        frac=1,
         random_state=rng
     ).reset_index()
 
@@ -76,23 +78,25 @@ def find_match_iteration(
     hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
     assert len(hard_match_columns) == HARD_COLUMN_COUNT
 
-    # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
-    k_subset_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
-
     # Methodology 6.5.5: S should be 10 times the size of K, in order to achieve this for every
     # pixel in the subsample (which is 10% the size of K) we select 100 pixels.
-    required = 100
+    required = 10
+
+    # Find categories in K
+    hard_match_category_columns = [k[hard_match_columns].to_numpy() for _, k in k_set.iterrows()]
+    hard_match_categories = {k.tobytes(): k for k in hard_match_category_columns}
 
     logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_subset_dist_thresholded.shape[0]))
+
     s_set_mask_true, no_potentials = make_s_set_mask(
+        rng,
+        k_set,
+        m_set,
         m_dist_thresholded,
         k_subset_dist_thresholded,
-        m_dist_hard,
-        k_subset_dist_hard,
-        starting_positions,
-        required
+        hard_match_columns,
+        required,
+        hard_match_categories
     )
 
     logging.info("Done make_s_set_mask. s_set_mask.shape: %a", {s_set_mask_true.shape})
@@ -173,8 +177,65 @@ def find_match_iteration(
 
     logging.info("Finished find match iteration")
 
-@jit(nopython=True, fastmath=True, error_model="numpy")
 def make_s_set_mask(
+        rng: np.random.Generator,
+        k_set: pd.DataFrame,
+        m_set: pd.DataFrame,
+        m_dist_thresholded: np.ndarray,
+        k_subset_dist_thresholded: np.ndarray,
+        hard_match_columns: list,
+        required: int,
+        hard_match_categories: dict[Any, np.ndarray]
+    ):
+    s_set_mask_true = np.zeros(m_set.shape[0], dtype=np.bool_)
+    no_potentials = np.zeros(k_set.shape[0], dtype=np.bool_)
+
+    # Split K and M into those categories and create masks
+    for values in hard_match_categories.values():
+        k_selector = np.all(k_set[hard_match_columns] == values, axis=1)
+        m_selector = np.all(m_set[hard_match_columns] == values, axis=1)
+        logging.info("  category: %a |K|: %d |M|: %d", values, k_selector.sum(), m_selector.sum())
+        # Make masks for each of those pairs
+        key_s_set_mask_true, key_no_potentials = make_s_set_mask_rumba_inner(
+            m_dist_thresholded[m_selector],
+            k_subset_dist_thresholded[k_selector],
+            required,
+            rng
+        )
+        # Merge into one s_set_mask_true
+        s_set_mask_true[m_selector] = key_s_set_mask_true
+        # Merge into no_potentials
+        no_potentials[k_selector] = key_no_potentials
+    return s_set_mask_true,no_potentials
+
+def make_s_set_mask_rumba_inner(
+    m_dist_thresholded: np.ndarray,
+    k_set_dist_thresholded: np.ndarray,
+    required: int,
+    rng: np.random.Generator
+):
+    k_size = k_set_dist_thresholded.shape[0]
+    m_size = m_dist_thresholded.shape[0]
+
+    s_include = np.zeros(m_size, dtype=np.bool_)
+    k_miss = np.zeros(k_size, dtype=np.bool_)
+
+    m_tree = make_kdrangetree(m_dist_thresholded, np.ones(m_dist_thresholded.shape[1]))
+
+    rumba_tree = make_rumba_tree(m_tree, m_dist_thresholded)
+
+    for k in range(k_size):
+        k_row =  k_set_dist_thresholded[k]
+        possible_s = rumba_tree.members_sample(k_row, required, rng)
+        if len(possible_s) == 0:
+            k_miss[k] = True
+        else:
+            s_include[possible_s] = True
+
+    return s_include, k_miss
+
+@jit(nopython=True, fastmath=True, error_model="numpy")
+def make_s_set_mask_numba(
     m_dist_thresholded: np.ndarray,
     k_subset_dist_thresholded: np.ndarray,
     m_dist_hard: np.ndarray,
