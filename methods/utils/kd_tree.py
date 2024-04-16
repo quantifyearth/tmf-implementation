@@ -6,28 +6,42 @@ from numba.experimental import jitclass # type: ignore
 
 
 class KDTree:
+    """
+    A k-d tree represents points in a K-dimensional space.
+    
+    We expect to do range searches to find points that match a range on all k dimensions.
+    """
     def __init__(self):
         pass
 
-    def contains(self, _range) -> bool:
+    def contains(self, range) -> bool:
+        """Does the tree contain a point in range?"""
         raise NotImplementedError()
 
     def depth(self) -> int:
+        """The height of the deepest node in the tree."""
         return 1
 
     def size(self) -> int:
+        """The number of nodes in the tree."""
         return 1
 
     def count(self) -> int:
+        """The number of points in the tree."""
         return 0
 
-    def members(self, _range) -> np.ndarray:
+    def members(self, range) -> np.ndarray:
+        """Return a list of all members in range."""
         raise NotImplementedError()
 
     def dump(self, _space: str):
+        """Return a string representation of the tree for debugging."""
         raise NotImplementedError()
 
 class KDLeaf(KDTree):
+    """
+    A leaf repesents a single point in the tree.
+    """
     def __init__(self, point, index):
         self.point = point
         self.index = index
@@ -43,6 +57,11 @@ class KDLeaf(KDTree):
         return 1
 
 class KDList(KDTree):
+    """
+    A list node repesents a list of points in the tree.
+
+    This is an optimisation for when linear search becomes quicker than walking the tree.
+    """
     def __init__(self, points, indexes):
         self.points = points
         self.indexes = indexes
@@ -56,6 +75,13 @@ class KDList(KDTree):
         return len(self.points)
 
 class KDSplit(KDTree):
+    """
+    A split node represents am axis-aligned binary split in the tree.
+
+    The tree splits into tree disjoint subtrees at value in dimension d, called left and right.
+    All the functions that take a range must consider the need to look into both left and right
+    if the range intersects the split point.
+    """
     def __init__(self, d: int, value: float, left: KDTree, right: KDTree):
         self.d = d
         self.value = value
@@ -111,6 +137,8 @@ class KDSplit(KDTree):
 
 
 class KDRangeTree:
+    """Wrap up a KDTree with a fixed width range for queries. 
+    """
     def __init__(self, tree, widths):
         self.tree = tree
         self.widths = widths
@@ -128,6 +156,12 @@ class KDRangeTree:
         return self.tree.count()
 
 def make_kdrangetree(points, widths):
+    """Make a KDRangeTree containing points that is queried with ranges of width width.
+    
+    We recursively split up the data by the most-discriminating dimension.
+    If no dimension splits the data up very much, or there are less than a cut-off number of
+    points, we output a list node instead of a split.
+    """
     def make_kdtree_internal(points, indexes):
         if len(points) == 1:
             return KDLeaf(points[0], indexes[0])
@@ -171,6 +205,11 @@ def make_kdrangetree(points, widths):
 
 @jitclass([('ds', int32[:]),  ('values', float32[:]), ('items', int32[:]), ('lefts', int32[:]), ('rights', int32[:]), ('rows', float32[:, :]), ('dimensions', int32), ('widths', float32[:])])
 class RumbaTree:
+    """A RumbaTree is a KDRangeTree which is optimised with Numba.
+    
+    Instead of pointers, the various members of the tree are serialised into arrays to make
+    traversal in Numba easy.
+    """
     def __init__(self, ds: np.ndarray, values: np.ndarray, items: np.ndarray, lefts: np.ndarray, rights: np.ndarray, rows: np.ndarray, dimensions: int, widths: np.ndarray):
         self.ds = ds
         self.values = values
@@ -181,6 +220,14 @@ class RumbaTree:
         self.dimensions = dimensions
         self.widths = widths
     def members(self, point: np.ndarray):
+        """
+        Return all the items that are within widths of point.
+
+        We use a queue to start at the top of the tree and, for each node, decide if the left or
+        right need to be processed, adding them to the queue if so.
+        For leaf nodes (marked with a value of NaN), we instead process the list of items at that
+        node and return all of the items that are within widths of point.
+        """
         low = point - self.widths
         high = point + self.widths
         queue = [0]
@@ -214,6 +261,11 @@ class RumbaTree:
                     queue.append(self.lefts[pos])
         return finds
     def count_members(self, point: np.ndarray):
+        """
+        Return a count of items that are within widths of point.
+
+        Mostly just for debugging.
+        """
         low = point - self.widths
         high = point + self.widths
         queue = [0]
@@ -247,11 +299,23 @@ class RumbaTree:
                     queue.append(self.lefts[pos])
         return count
     def members_sample(self, point: np.ndarray, count: int, rng: np.random.Generator):
+        """
+        Return up to count items that are within widths of point, selected at random.
+
+        As with members, we use a queue to start at the top of the tree and, for each node, decide
+        if the left or right need to be processed, adding them to the queue if so.
+
+        However, for leaf nodes, instead of taking all items that match, we use algorithm R for
+        resoivoir sampling to select up to count items at random.
+        https://en.wikipedia.org/wiki/Reservoir_sampling#Simple:_Algorithm_R
+        """
         low = point - self.widths
         high = point + self.widths
         queue = [0]
         finds: list[int] = []
+        # We need to track how many items have been found for the sampling.
         found_count = 0
+        # rng is noticable slow, so we seed 256-bit inline xoshiro generator here.
         rand_state = rng.integers(0, 0xFFFF_FFFF_FFFF_FFFF, 4, np.uint64, True)
         while len(queue) > 0:
             pos = queue.pop()
@@ -272,11 +336,29 @@ class RumbaTree:
                             found = False
                             break
                     if found:
+                        # Keep track of how many items are found for the probabilities to work out.
                         found_count += 1
+                        # For each item we find, decide here whether to include it in the output.
                         if len(finds) < count:
+                            # If we haven't found count items yet, we provisionaly take this item.
                             finds.append(item)
                         else:
-                            # Replace a random item in finds based on on-line search probability
+                            # Replace a random item in finds based on algorithm R.
+
+                            # When we find the N+1th item, by induction, we assume we have selected
+                            # count of the previous N items with 1/N probability.
+                            #
+                            # We want to select this item with count/N+1 probability
+                            # and we want it to replace one of the previously selected
+                            # items with a uniform 1/count probability.
+                            # We generate a uniform random number, pos, from [0, N+1)
+                            # and select this item if that number is less than count
+                            # (which corresponds to our count/N+1 probability of selection).
+                            # The position to replace the item is then given by pos,
+                            # given we now know it is a uniform random number in [0, count)
+                            # (which again matches our desired distribution).
+
+                            # Generate a random number
                             # Source: https://prng.di.unimi.it/xoshiro256plus.c
                             rand = rand_state[0] + rand_state[3]
                             t = rand_state[1] << 17
@@ -287,8 +369,10 @@ class RumbaTree:
                             rand_state[2] ^= t
                             rand_state[3] = (rand_state[3] >> 45) | (rand_state[3] << 19)
                             
+                            # Work out where this item should fall.
                             pos = rand % found_count
 
+                            # Replace an existing item if we should include this item.
                             if pos < count:
                                 finds[pos] = item
                     i += 1
@@ -302,6 +386,13 @@ class RumbaTree:
 
 NAN = float('nan')
 def make_rumba_tree(tree: KDRangeTree, rows: np.ndarray):
+    """
+    Make a RumbaTree from a KDRangeTree.
+
+    This just involved walking the tree and flattening it out into arrays.
+    The code is slightly fiddly because we don't know how big a node is until we have walked it,
+    so we output a placeholder for the right node and update it after walking the left node.
+    """
     ds: list[int] = []
     values = []
     items: list[int] = []

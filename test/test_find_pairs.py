@@ -65,7 +65,7 @@ def test_make_s_set_mask():
     m_set = pd.DataFrame(m_set)
 
     hard_match_columns = list(range(k_dist_hard.shape[1]))
-    hard_match_categories = {k.tobytes(): k for k in k_dist_hard}
+    hard_match_categories = list({k.tobytes(): k for k in k_dist_hard}.values())
 
     # calculate using make_s_set_mask
     s_subset_mask, misses = find_pairs.make_s_set_mask(
