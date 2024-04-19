@@ -1,7 +1,7 @@
 import glob
 import os
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
@@ -85,7 +85,7 @@ def generate_additionality(
     density: np.ndarray,
     matches_directory: str,
     expected_number_of_iterations: int,
-) -> Dict[int, float]:
+) -> Tuple[Dict[int, float], List[bool]]:
     """Calculate the additionality (or leakage) of a project from the counterfactual pair matchings
     alongside the carbon density values and some project specific metadata."""
     logging.info("Project area: %.2fmsq", project_area_msq)
@@ -220,6 +220,20 @@ def generate_additionality(
     for year, values in treatment_data.items():
         p_tot[year] = np.average(values)
 
+
+    # testing stoping criteria
+    final_p = treatment_data[end_year]
+    final_c = scvt[end_year]
+    additionality = [p - c for p, c in zip(final_p, final_c)]
+    cv = 0.05
+    df = np.array([x + 1 for x in range(len(additionality))])
+
+    a_mu = np.cumsum(additionality) / df
+    variance = np.sum(np.power((additionality - a_mu), 2)) / (df - 1)
+    stderr = np.sqrt(variance) / np.sqrt(df)
+    d = np.abs(cv * a_mu)
+    stopping_criteria = stderr / d
+
     if partials_dir is not None:
         figure, axis = plt.subplots(1, 3)
         figure.set_figheight(10)
@@ -312,5 +326,5 @@ def generate_additionality(
     for year, value in p_tot.items():
         result[year] = value - c_tot[year]
 
-    return result
+    return result, stopping_criteria
     
