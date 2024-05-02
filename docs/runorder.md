@@ -148,7 +148,7 @@ python3 -m methods.inputs.generate_carbon_density --buffer /data/tmf/123/buffer.
 
 This is the only part of the pipeline that needs the PostGIS server access.
 
-## Generate matching area
+## Generate matching area
 
 We need a list of countries that a project intersects with to calculate the matching area:
 
