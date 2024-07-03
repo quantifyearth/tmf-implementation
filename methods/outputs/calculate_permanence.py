@@ -46,10 +46,10 @@ def net_sequestration(
     if year < minimum_year + 1 or year > maximum_year:
         raise ValueError(f"index for net sequesteration out of bounds: {year}")
 
-    additionality_t = additionality.loc[year][0]
-    leakage_t = leakage.loc[year][0]
-    additionality_t_prev = additionality.loc[year - 1][0]
-    leakage_t_prev = leakage.loc[year - 1][0]
+    additionality_t = float(additionality.loc[year][0])
+    leakage_t = float(leakage.loc[year][0])
+    additionality_t_prev = float(additionality.loc[year - 1][0])
+    leakage_t_prev = float(leakage.loc[year - 1][0])
 
     return (additionality_t - leakage_t) - (additionality_t_prev - leakage_t_prev)
 

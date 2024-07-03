@@ -2,7 +2,6 @@ import argparse
 import sys
 
 import shapely # type: ignore
-from fiona.errors import DriverError # type: ignore
 from geopandas import gpd # type: ignore
 
 from methods.common.geometry import expand_boundaries
@@ -42,9 +41,6 @@ def main() -> None:
         generate_leakage(args.project_boundary_filename, args.output_filename)
     except FileNotFoundError as exc:
         print(f"Failed to find file {exc.filename}: {exc.strerror}", file=sys.stderr)
-        sys.exit(1)
-    except DriverError as exc:
-        print(exc.args[0], file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ import re
 import sys
 
 import shapely # type: ignore
-from fiona.errors import DriverError # type: ignore
 from geopandas import gpd # type: ignore
 from shapely.geometry import Polygon # type: ignore
 
@@ -73,11 +72,7 @@ def main() -> None:
         print(f"Usage: {sys.argv[0]} SOURCE_PATH TARGET_PATH JRC_TILES", file=sys.stderr)
         sys.exit(1)
 
-    try:
-        simplify_ecoregions(source_path, target_path, jrc_files_directory)
-    except DriverError as exc:
-        print(exc.args[0], file=sys.stderr)
-        sys.exit(1)
+    simplify_ecoregions(source_path, target_path, jrc_files_directory)
 
 if __name__ == "__main__":
     main()

@@ -9,7 +9,6 @@ import logging
 
 import requests
 import shapely # type: ignore
-from fiona.errors import DriverError # type: ignore
 from geopandas import gpd # type: ignore
 
 from biomassrecovery.utils.unzip import unzip # type: ignore
@@ -127,16 +126,13 @@ def main() -> None:
                 "DESTINATION_ZIP_FOLDER DESTINATION_TIFF_FOLDER", file=sys.stderr)
             sys.exit(1)
 
-    try:
-        download_srtm_data(
-            project_boundaries_filename,
-            pixel_matching_boundaries_filename,
-            destination_zip_folder,
-            destination_tiff_folder
-        )
-    except DriverError as exc:
-        print(exc.args[0], file=sys.stderr)
-        sys.exit(1)
+    download_srtm_data(
+        project_boundaries_filename,
+        pixel_matching_boundaries_filename,
+        destination_zip_folder,
+        destination_tiff_folder
+    )
+
 
 if __name__ == "__main__":
     main()
