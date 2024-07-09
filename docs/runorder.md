@@ -11,6 +11,23 @@ Assumptions:
 
 To make it easier to follow, I will assume you are keeping your data generally in `/data/tmf`
 
+# Build environment
+
+```shark-build:gdalenv
+((from ghcr.io/osgeo/gdal:ubuntu-small-3.6.4)
+ (run (network host) (shell "apt-get update -qqy && apt-get -y install python3-pip libpq-dev git && rm -rf /var/lib/apt/lists/* && rm -rf /var/cache/apt/*"))
+ (run (network host) (shell "pip install --upgrade pip"))
+ (run (network host) (shell "pip install numpy"))
+ (run (network host) (shell "pip install gdal[numpy]==3.6.4"))
+ (workdir "/usr/src/app")
+ (copy (src "requirements.txt") (dst "./"))
+ (run (network host) (shell "pip install --no-cache-dir -r requirements.txt"))
+ (copy (src ".") (dst "./"))
+ (run (shell "make lint && make type && make test"))
+)
+```
+
+
 # Downloading resources used by all projects
 
 First we need to download the layers used by all projects, and in some cases convert them into a more useful form.
@@ -19,7 +36,7 @@ First we need to download the layers used by all projects, and in some cases con
 
 JRC data is generally downloaded first, as all other tiles are at JRC resolution, and so often things that don't need JRC data will still read one JRC tile just to get the correct GeoTIFF projection and pixel scale. To fetch JRC data we do:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.download_jrc_data /data/tmf/jrc/zips /data/tmf/jrc/tif
 ```
 
@@ -27,7 +44,7 @@ The zips are kept around for archival purposes, due to known difficultly in vers
 
 We also want to generate the Finegrain Circular CPC (FCC) maps. This stage is very expensive, taking days to run, but only needs to be done once per year when JRC updates.
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/tif --output /data/tmf/fcc-cpcs
 ```
 
@@ -36,13 +53,13 @@ python3 -m methods.inputs.generate_fine_circular_coverage --jrc /data/tmf/jrc/ti
 
 First we download the ecoregions as a shape file:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.download_shapefiles ecoregion /data/tmf/ecoregions/ecoregions.geojson
 ```
 
 Then we convert it into raster files. This takes up more space, but the ecoregions are slow to raster on demand each time, so this is faster doing it just once.
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_ecoregion_rasters /data/tmf/ecoregions/ecoregions.geojson /data/tmf/jrc/tif /data/tmf/ecoregions
 ```
 
@@ -50,13 +67,13 @@ python3 -m methods.inputs.generate_ecoregion_rasters /data/tmf/ecoregions/ecoreg
 
 Firstly we have access to healthcare data:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.download_accessibility /data/tmf/access/raw.tif
 ```
 
 Which must then be turned into smaller tiles:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_access_tiles /data/tmf/access/raw.tif /data/tmf/jrc/tif /data/tmf/access
 ```
 
@@ -64,7 +81,7 @@ python3 -m methods.inputs.generate_access_tiles /data/tmf/access/raw.tif /data/t
 
 We use OSM data for country board data:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.osm_countries /data/tmf/osm_borders.geojson
 ```
 
@@ -83,31 +100,19 @@ For this section you will now need to have the following:
 
 We add a 30km buffer around the project for generating land usage and AGB data:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_boundary --project /data/tmf/project_boundaries/123.geojson --output /data/tmf/123/buffer.geojson
 ```
 
 We also want a shape for the leakage zone:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_leakage --project /data/tmf/project_boundaries/123.geojson --output /data/tmf/123/leakage.geojson
 ```
 
-## Make LUC tiles
-
-We conver the JRC tiles binary tiles per LUC. In theory we could do this for all JRC tiles, but to save space we just calculate the areas we need.
-
-```ShellSession
-python3 -m methods.inputs.generate_luc_layer --buffer /data/tmf/123/buffer.geojson \
-                                            --jrc /data/tmf/jrc/tif \
-                                            --output /data/tmf/123/luc.tif
-```
-
-NB: In theory we could remove this stage if we updated `generate_carbon_density.py` to use the GroupLayers of yirgacheffe that we added later on and is  used by other parts of the pipeline.
-
 ## GEDI data
 
-The GEDI data is used to calculate the AGB per LUC for a project. This data is downloaded first, then inserted into a POSTGIS database, and then summarised from that. This project uses the [biomassrecovery](https://github.com/ameliaholcomb/biomass-recovery), and that assumes you have a `.env` file in your home directory that looks like this:
+The GEDI data is used to calculate the AGB per LUC for a project. This data is downloaded from the NASA Earthdata portal, and to do that this project uses the [biomassrecovery](https://github.com/ameliaholcomb/biomass-recovery) library, and that assumes you have a `.env` file in your home directory that looks like this:
 
 ```
 # Earthdata access
@@ -118,41 +123,38 @@ EARTH_DATA_COOKIE_FILE="/home/myusername/.urs_cookies"
 # User path constants
 USER_PATH="/home/myusername"
 DATA_PATH="/data/tmf/gedi"
-
-# Database constants
-DB_HOST="mypostgreshost"
-DB_NAME="tmf_gedi"
-DB_USER="tmf_database_user"
-DB_PASSWORD="XXXXXXXX"
 ```
 
-Once you have this the download script is:
+Once you have this the download script to pull the raw GEDI data is:
 
-```ShellSession
-python3 -m methods.inputs.download_gedi_data /data/tmf/123/buffer.geojson /data/tmf/gedi
+```shark-run:gdalenv
+python3 -m methods.inputs.locate_gedi_data /data/tmf/123/buffer.geojson /data/tmf/gedi/granule/info/
+python3 -m methods.inputs.download_gedi_data /data/tmf/gedi/granule/info/* /data/tmf/gedi/granule/
 ```
 
-Then the following script does the actual ingest into POSTGIS:
+Each GEDI granule is a complete sweep from the ISS along the path that crossed the buffer zone, and so contains
+much more data than we need. We thus need to filter this to give us just the GEDI shots we're interested in. At the
+same time we filter based on time and quality as per the methodology document:
 
-```ShellSession
-python3 -m methods.inputs.import_gedi_data /data/tmf/gedi
+```shark-run:gdalenv
+python3 -m methods.inputs.filter_gedi_data --buffer /data/tmf/123/buffer.geojson \
+                                          --granules /data/tmf/gedi/granule/ \
+                                          --output /data/tmf/123/gedi.geojson
 ```
 
-Once the data has been downloaded and ingested into POSTGIS, you then need to generate AGB data layers:
+Once filtered we can then combine the GEDI data with the JRC data we have to work out the carbon density per land usage class:
 
-```ShellSession
-python3 -m methods.inputs.generate_carbon_density --buffer /data/tmf/123/buffer.geojson \
-                                                --luc /data/tmf/123/luc.tif \
-                                                --output /data/tmf/123/carbon-density.csv
+```shark-run:gdalenv
+python3 -m methods.inputs.generate_carbon_density --jrc /data/tmf/jrc/tif \
+                                                  --gedi /data/tmf/123/gedi.geojson \
+                                                  --output /data/tmf/123/carbon-density.csv
 ```
 
-This is the only part of the pipeline that needs the PostGIS server access.
-
-## Generate matching area
+## Generate matching area
 
 We need a list of countries that a project intersects with to calculate the matching area:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_country_list --leakage /data/tmf/project_boundaries/123.geojson \
                                                --countries /data/tmf/osm_borders.geojson \
                                                --output /data/tmf/123/country-list.json
@@ -161,7 +163,7 @@ python3 -m methods.inputs.generate_country_list --leakage /data/tmf/project_boun
 Note that this stage requires a full list of other project boundaries that must be avoided for matching purposes, which is in `/data/tmf/project_boundaries`
 
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_matching_area --project /data/tmf/project_boundaries/123.geojson \
                                                   --countrycodes /data/tmf/123/country-list.json \
                                                   --countries /data/tmf/osm_borders.geojson \
@@ -174,7 +176,7 @@ python3 -m methods.inputs.generate_matching_area --project /data/tmf/project_bou
 
 We use the SRTM elevation data, which we download to cover the matching area:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundaries/123.geojson \
                                             --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                             --zips /data/tmf/srtm/zip \
@@ -183,13 +185,13 @@ python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundar
 
 Then from that generate slope data using GDAL:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_slope --input /data/tmf/srtm/tif --output /data/tmf/slopes
 ```
 
 Once we have that we need to rescale the data to match JRC resolution:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
                                                  --tiles /data/tmf/srtm/tif \
                                                  --output /data/tmf/rescaled-elevation
@@ -202,7 +204,7 @@ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
 
 Again, rather than repeatedly dynamically rasterize the country vectors, we rasterise them once and re-use them:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif \
                                                   --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
@@ -217,7 +219,7 @@ Pixel matching is split into three main stages: Calculating K, then M, and then 
 
 First we make K.
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.matching.calculate_k --project /data/tmf/project_boundaries/123.geojson \
                                           --start_year 2012 \
                                           --evaluation_year 2021 \
@@ -235,7 +237,7 @@ python3 -m methods.matching.calculate_k --project /data/tmf/project_boundaries/1
 
 Calculating the set M is a three step process. First we generate a raster per K that has the matches for that particular pixel:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet \
                                                      --matching /data/tmf/123/matching-area.geojson \
                                                      --start_year 2012 \
@@ -252,7 +254,7 @@ python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet \
 
 Then these rasters get combined into a single raster that is all the potential matches as one. The j parameter controls how many concurrent processes the script can use, which is bounded mostly by how much memory you have available. The value 20 is good for our server, but may not match yours.
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.matching.build_m_raster --rasters_directory /data/tmf/123/matches \
                                           --output /data/tmf/123/matches.tif \
                                           -j 20
@@ -260,7 +262,7 @@ python3 -m methods.matching.build_m_raster --rasters_directory /data/tmf/123/mat
 
 We then convert that raster into a table of pixels plus the data we need:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
                                             --matching /data/tmf/123/matching-area.geojson \
                                             --start_year 2012 \
@@ -279,7 +281,7 @@ python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
 
 Finally we can find the 100 sets of matched pairs. The seed is used to control the random number generator, and using the same seed on each run ensures consistency despite randomness being part of the selection process.
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
                                          --m /data/tmf/123/matches.parquet \
                                          --start_year 2012 \
@@ -292,7 +294,7 @@ python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
 
 Finally this script calculates additionality:
 
-```ShellSession
+```shark-run:gdalenv
 python3 -m methods.outputs.calculate_additionality --project /data/tmf/project_boundaries/123.geojson \
                                                     --project_start 2012 \
                                                     --evaluation_year 2021 \
