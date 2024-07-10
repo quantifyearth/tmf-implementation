@@ -27,7 +27,7 @@ def parse_file(file: str) -> gpd.GeoDataFrame:
 def filter_gedi_data(
     boundary_file: str,
     gedi_directory_path: str,
-    output_file: str
+    output_filename: str
 ) -> None:
 
     boundary = gpd.read_file(boundary_file)
@@ -50,12 +50,12 @@ def filter_gedi_data(
         df.drop(df.index[df.l4_quality_flag != 1], inplace=True)
         df.drop(df.index[df.absolute_time < datetime(2020, 1, 1, tzinfo=timezone.utc)], inplace=True)
         df.drop(df.index[df.absolute_time >= datetime(2021, 1, 1, tzinfo=timezone.utc)], inplace=True)
-        df.drop(df.index[df.within(boundary.geometry.values[0]) is False], inplace=True)
+        df.drop(df.index[~df.within(boundary.geometry.values[0])], inplace=True)
 
         granules.append(df)
 
     superset = gpd.GeoDataFrame(pd.concat(granules, ignore_index=True))
-    superset.to_parquet(output_file)
+    superset.to_file(output_filename, driver="GeoJSON")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Takes a set of GEDI granules and filters down" \
@@ -68,7 +68,7 @@ def main() -> None:
         help="Buffer boundary file"
     )
     parser.add_argument(
-        "--gedi",
+        "--granules",
         type=str,
         required=True,
         dest="gedi_directory_path",

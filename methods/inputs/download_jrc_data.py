@@ -43,7 +43,6 @@ def download_jrc_data(
     os.makedirs(target_tif_directory, exist_ok=True)
 
     boundary = gpd.read_file(boundary_filename) if boundary_filename else None
-    print(boundary.geometry.values[0])
 
     tile_urls = []
     for lat in range(30, -30, -10):

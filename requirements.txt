@@ -1,5 +1,5 @@
-numpy
-gdal[numpy]<3.7
+numpy<2
+gdal[numpy]
 requests
 pandas
 polars
