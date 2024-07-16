@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 import tempfile
+from typing import List
 from http import HTTPStatus
 
 import requests
@@ -39,15 +40,16 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
 
         shutil.move(download_target_name, final_name)
 
-def gedi_fetch(granule_json_file: str, gedi_data_dir: str) -> None:
-    with open(granule_json_file, "r", encoding="utf-8") as f:
-        metadata = json.loads(f.read())
-    download_granule(gedi_data_dir, metadata["name"], metadata["url"])
+def gedi_fetch(granule_json_files: List[str], gedi_data_dir: str) -> None:
+    for granule_json_file in granule_json_files:
+        with open(granule_json_file, "r", encoding="utf-8") as f:
+            metadata = json.loads(f.read())
+        download_granule(gedi_data_dir, metadata["name"], metadata["url"])
 
 def main() -> None:
     try:
-        granule_json_file = sys.argv[1]
-        gedi_data_dir = sys.argv[2]
+        granule_json_files = sys.argv[1:-1]
+        gedi_data_dir = sys.argv[-1]
     except IndexError:
         print(f"Usage: {sys.argv[0]} BUFFER_BOUNDRY_FILE GEDI_DATA_DIRECTORY")
         sys.exit(1)
@@ -55,7 +57,7 @@ def main() -> None:
         print(f"Failed to download: {exc.msg}")
         sys.exit(1)
 
-    gedi_fetch(granule_json_file, gedi_data_dir)
+    gedi_fetch(granule_json_files, gedi_data_dir)
 
 if __name__ == "__main__":
     main()
