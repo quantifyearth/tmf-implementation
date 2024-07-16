@@ -16,6 +16,10 @@ EARTHDATA_USER = os.getenv("EARTHDATA_USER")
 EARTHDATA_PASSWORD = os.getenv("EARTHDATA_PASSWORD")
 
 def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
+    os.makedirs(gedi_data_dir, exist_ok=True)
+    final_name = os.path.join(gedi_data_dir, name)
+    if os.path.exists(final_name):
+        return
     with tempfile.TemporaryDirectory() as tmpdir:
         with requests.Session() as session:
             if EARTHDATA_USER and EARTHDATA_PASSWORD:
@@ -33,7 +37,6 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
                 for chunk in response.iter_content(chunk_size=1024*1024):
                     output_file.write(chunk)
 
-        final_name = os.path.join(gedi_data_dir, name)
         shutil.move(download_target_name, final_name)
 
 def gedi_fetch(granule_json_file: str, gedi_data_dir: str) -> None:
