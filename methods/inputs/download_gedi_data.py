@@ -20,7 +20,9 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
     os.makedirs(gedi_data_dir, exist_ok=True)
     final_name = os.path.join(gedi_data_dir, name)
     if os.path.exists(final_name):
+        print(f"Skipping {name}, already downloaded.")
         return
+    print(f"Fetching {name}...")
     with tempfile.TemporaryDirectory() as tmpdir:
         with requests.Session() as session:
             if EARTHDATA_USER and EARTHDATA_PASSWORD:
@@ -39,6 +41,7 @@ def download_granule(gedi_data_dir: str, name: str, url: str) -> None:
                     output_file.write(chunk)
 
         shutil.move(download_target_name, final_name)
+    print(f"Downloading {name} complete.")
 
 def gedi_fetch(granule_json_files: List[str], gedi_data_dir: str) -> None:
     for granule_json_file in granule_json_files:
