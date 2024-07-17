@@ -3,7 +3,7 @@ RUN git clone https://github.com/carboncredits/littlejohn.git
 WORKDIR littlejohn
 RUN go build
 
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.6.4
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.8.4
 
 COPY --from=littlejohn /go/littlejohn/littlejohn /bin/littlejohn
 
@@ -20,7 +20,7 @@ apt-get install -qy \
 # to build, and this means it'll be cached
 RUN pip install --upgrade pip
 RUN pip install numpy
-RUN pip install gdal[numpy]==3.6.4
+RUN pip install gdal[numpy]==3.8.4
 
 WORKDIR /usr/src/app
 COPY requirements.txt ./
