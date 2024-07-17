@@ -79,10 +79,16 @@ python3 -m methods.inputs.generate_access_tiles /data/tmf/access/raw.tif /data/t
 
 ## Country boarders
 
-We use OSM data for country board data:
+We use OSM data for country borders data. This requires an API key to access the downloads. To get an API key you must follow these steps:
+
+1. Sign up to [openstreetmap.org](https://openstreetmaps.com)
+2. Use that account to sign into [osm-boundaries.com](https://osm-boundaries.com/)
+3. In the top right of osm-boundaries, click on your profuile
+4. Copy your API key from here, and replace the XXXXXXXX below with that.
 
 ```shark-run:gdalenv
-python3 -m methods.inputs.osm_countries /data/tmf/osm_borders.geojson
+export OSM_BOUNDARIES_KEY="XXXXXXXX"
+python3 -m methods.inputs.download_osm_countries /data/tmf/osm_borders.geojson
 ```
 
 This file file is heavy to work with as geojson, so it'll later be rendered to a GeoTIFF.

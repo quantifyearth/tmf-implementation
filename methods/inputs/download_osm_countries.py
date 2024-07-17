@@ -273,8 +273,8 @@ def download_osm_polygons(target_filename: str) -> None:
     if not osm_boundaries_key:
         raise ValueError("OSM_BOUNDARIES_KEY must be provided in the environment")
     source_url = f"https://osm-boundaries.com/Download/Submit?apiKey={osm_boundaries_key}" \
-        "&db=osm20230605&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326" \
-        "&osmIds="
+        "&db=osm20240701&minAdminLevel=2&maxAdminLevel=2&format=GeoJSON&srid=4326" \
+        "&boundary=administrative&osmIds="
 
     # The IDs are negated by this API; I have no idea why and I'm not about to ask.
     # Exclude Russia, Norway, Sweden, Finland and Canada. For whatever reason (Slartibartfast)
@@ -283,15 +283,27 @@ def download_osm_polygons(target_filename: str) -> None:
     osm_keys = list(osm_ids.keys())
     shape_file_data_list = []
 
+    retry_limit = 3
     download_at_once = 20 # Download limited number of countries at a time
                           # due to 100 limit in API & API reliability issues.
     for i in range(0, len(osm_keys), download_at_once):
+        timeout = 60
         keys_to_download = osm_keys[i:i+download_at_once]
         download_url = source_url + ",".join([str(id) for id in keys_to_download])
         print("Downloading: ", download_url)
         with tempfile.TemporaryDirectory() as tmpdir:
             download_path = os.path.join(tmpdir, "countries.gz")
-            response = requests.get(download_url, stream=True, timeout=60)
+            for i in range(retry_limit):
+                try:
+                    response = requests.get(download_url, stream=True, timeout=timeout)
+                    break
+                except requests.exceptions.ReadTimeout as exc:
+                    if (i + 1) < retry_limit:
+                        print("Timed out, retrying...")
+                        timeout = timeout * 2
+                        continue
+                    raise RuntimeError("Download timed out") from exc
+
             if not response.ok:
                 raise DownloadError(response.status_code, response.reason, download_url)
             with open(download_path, 'wb') as output_file:
@@ -303,6 +315,8 @@ def download_osm_polygons(target_filename: str) -> None:
                 shape = geopandas.read_file(compressed_data)
                 shape_file_data_list.append(shape)
             except Exception as exception: # pylint: disable=broad-exception-caught
+                with open(download_path, 'r', encoding='utf8') as f:
+                    print(f.read(), file=sys.stderr)
                 failed_countries = [osm_ids[osm_id] for osm_id in keys_to_download]
                 if failed_countries != ["AX"]: # Aland islands alone has no geometry
                     error_message = "Failed to load geometry for countries: " + ", ".join(failed_countries)
