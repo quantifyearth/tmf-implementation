@@ -50,6 +50,9 @@ The code is broken into three main sections contained in the
     to generate the outputs from the methodology like the equivalent permanence
     and the additionality per year.
 
+Additionally, there is a wrapper script called `tmfpython.sh` in the `scripts/` folder. 
+This contains all of the pipeline commands and uses the `tmfpython3` magic wrapper.
+
 ## Bugs
 
 Should you find any bugs or issues with the code then please do open an issue on
