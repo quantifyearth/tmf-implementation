@@ -1,12 +1,13 @@
+import io
 import os
+import shutil
 import sys
 import tempfile
+import zipfile
 from glob import glob
 
 import geopandas # type: ignore
 import requests
-
-from biomassrecovery.utils.unzip import unzip  # type: ignore
 
 from ..common import DownloadError
 
@@ -32,26 +33,23 @@ class UnpackError(Exception):
 # 4: convert it to something more useful (i.e., geojson/gpkg)
 def download_country_polygons(source_url: str, target_filename: str) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        download_path = os.path.join(tmpdir, "countries.zip")
-        response = requests.get(source_url, stream=True, timeout=60)
-        if not response.ok:
-            raise DownloadError(response.status_code, response.reason, source_url)
-        with open(download_path, 'wb') as output_file:
-            for chunk in response.iter_content(chunk_size=1024*1024):
-                output_file.write(chunk)
-        unzip_path = os.path.join(tmpdir, "countries")
-        unzip(download_path, unzip_path)
+        with requests.get(source_url, stream=True, timeout=60) as response:
+            if not response.ok:
+                raise DownloadError(response.status_code, response.reason, source_url)
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zipf:
+                members = zipf.namelist()
+                for member in members:
+                    _ = zipf.extract(member, path=tmpdir)
 
         # find the shape file and convert it to a geojson
-
-        shape_files = glob("*.shp", root_dir=unzip_path)
+        shape_files = glob("*.shp", root_dir=tmpdir)
         matches = len(shape_files)
         if matches == 0:
             raise UnpackError("No shape files found in archive")
         elif matches > 1:
             raise UnpackError("Too many shape files found")
 
-        shape_file_path = os.path.join(unzip_path, shape_files[0])
+        shape_file_path = os.path.join(tmpdir, shape_files[0])
         shape_file_data = geopandas.read_file(shape_file_path)
         shape_file_data.to_file(target_filename, driver='GeoJSON')
 

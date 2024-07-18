@@ -185,7 +185,6 @@ We use the SRTM elevation data, which we download to cover the matching area:
 ```shark-run:gdalenv
 python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundaries/123.geojson \
                                             --matching /data/tmf/project_boundaries/123/matching-area.geojson \
-                                            --zips /data/tmf/srtm/zip \
                                             --tifs /data/tmf/srtm/tif
 ```
 

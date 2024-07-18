@@ -107,7 +107,6 @@ echo "--Matching area created.--"
 #Download SRTM data
 tmfpython3 -m methods.inputs.download_srtm_data --project "${input_dir}/${proj}.geojson" \
 --matching "${output_dir}/${proj}/matching-area.geojson" \
---zips "${output_dir}/srtm/zip" \
 --tifs "${output_dir}/srtm/tif"
 echo "--SRTM downloaded.--"
 
