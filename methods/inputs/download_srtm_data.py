@@ -1,11 +1,9 @@
 import argparse
-import errno
 import io
 import logging
 import math
 import os
 import shutil
-import sys
 import tempfile
 import zipfile
 
@@ -60,7 +58,7 @@ def download_srtm_data(
                                 unziped_path = zipf.extract(member, path=tempdir)
                                 # The zip file has metadata files in it alongside the TIF we care about
                                 if unziped_path.endswith(".tif"):
-                                   shutil.move(unziped_path, tiff_target_path)
+                                    shutil.move(unziped_path, tiff_target_path)
 
 def main() -> None:
     # To not break the pipeline, I need to support the old non-named arguments and the new named version.

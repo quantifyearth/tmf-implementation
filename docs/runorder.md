@@ -71,12 +71,6 @@ Firstly we have access to healthcare data:
 python3 -m methods.inputs.download_accessibility /data/tmf/access/raw.tif
 ```
 
-Which must then be turned into smaller tiles:
-
-```shark-run:gdalenv
-python3 -m methods.inputs.generate_access_tiles /data/tmf/access/raw.tif /data/tmf/jrc/tif /data/tmf/access
-```
-
 ## Country boarders
 
 We use OSM data for country borders data. This requires an API key to access the downloads. To get an API key you must follow these steps:
@@ -205,15 +199,35 @@ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
                                                  --output /data/tmf/rescaled-slopes
 ```
 
-## Country raster
+## Project baselayer rasters
 
-Again, rather than repeatedly dynamically rasterize the country vectors, we rasterise them once and re-use them:
+For various source inputs we generate a single raster layer that contains all we want, at the correct scale.
+
+First a map of countries:
 
 ```shark-run:gdalenv
 python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif \
                                                   --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --output /data/tmf/123/countries.tif
+```
+
+Then a raster map of ecoregions.
+
+```shark-run:gdalenv
+python3 -m methods.inputs.generate_ecoregion_rasters --jrc /data/jrc/AnnualChange/ \
+                                                     --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                                     --ecoregions /data/tmf/ecoregions/ecoregions.geojson \
+                                                     --output /data/tmf/ecoregions/ecoregion.tif
+```
+
+Finally a map of access data.
+
+```shark-run:gdalenv
+python3 -m methods.inputs.generate_access_raster --jrc /data/jrc/AnnualChange/ \
+                                               --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                               --access /data/tmf/access/raw.tif \
+                                               --output /data/tmf/123/access.tif
 ```
 
 # Pixel matching
@@ -244,7 +258,7 @@ Calculating the set M is a three step process. First we generate a raster per K 
 
 ```shark-run:gdalenv
 python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet \
-                                                     --matching /data/tmf/123/matching-area.geojson \
+                                                     --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                      --start_year 2012 \
                                                      --evaluation_year 2021 \
                                                      --jrc /data/tmf/jrc/tif \
@@ -269,7 +283,7 @@ We then convert that raster into a table of pixels plus the data we need:
 
 ```shark-run:gdalenv
 python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
-                                            --matching /data/tmf/123/matching-area.geojson \
+                                            --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                             --start_year 2012 \
                                             --evaluation_year 2021 \
                                             --jrc /data/tmf/jrc/tif \

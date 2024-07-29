@@ -1,6 +1,5 @@
 import io
 import os
-import shutil
 import sys
 import tempfile
 import zipfile
@@ -36,10 +35,14 @@ def download_country_polygons(source_url: str, target_filename: str) -> None:
         with requests.get(source_url, stream=True, timeout=60) as response:
             if not response.ok:
                 raise DownloadError(response.status_code, response.reason, source_url)
-            with zipfile.ZipFile(io.BytesIO(response.content)) as zipf:
-                members = zipf.namelist()
-                for member in members:
-                    _ = zipf.extract(member, path=tmpdir)
+            try:
+                with zipfile.ZipFile(io.BytesIO(response.content)) as zipf:
+                    members = zipf.namelist()
+                    for member in members:
+                        _ = zipf.extract(member, path=tmpdir)
+            except zipfile.BadZipFile as exc:
+                print(response.content)
+                raise exc
 
         # find the shape file and convert it to a geojson
         shape_files = glob("*.shp", root_dir=tmpdir)
