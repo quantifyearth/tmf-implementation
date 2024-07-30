@@ -131,16 +131,16 @@ tmfpython3 -m methods.inputs.generate_country_raster --jrc /maps/forecol/data/JR
 --output "${output_dir}/${proj}/countries.tif"
 echo "--Country raster created.--"
 
-#Create ecroregion raster
-python3 -m methods.inputs.generate_ecoregion_rasters --jrc /data/jrc/AnnualChange/ \
---matching /data/tmf/project_boundaries/123/matching-area.geojson \
+#Create ecoregion raster
+tmfpython3 -m methods.inputs.generate_ecoregion_rasters --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs  \
+--matching "${output_dir}/${proj}/matching-area.geojson" \
 --ecoregions /maps/4C/ecoregions/ecoregions.geojson \
 --output "${output_dir}/${proj}/ecoregion.tif"
 echo "--Ecoregions raster created.--"
 
 #Create access raster
-tmfpython3 -m methods.inputs.generate_access_raster --jrc /data/jrc/AnnualChange/ \
---matching /data/tmf/project_boundaries/123/matching-area.geojson \
+tmfpython3 -m methods.inputs.generate_access_raster --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs  \
+---matching "${output_dir}/${proj}/matching-area.geojson" \
 --access /maps/4C/access/raw/202001_Global_Walking_Only_Travel_Time_To_Healthcare_2019.tif \
 --output "${output_dir}/${proj}/access.tif"
 echo "--Access raster created.--"
