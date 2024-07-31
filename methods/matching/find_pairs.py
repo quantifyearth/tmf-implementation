@@ -3,15 +3,34 @@ import os
 import logging
 from functools import partial
 from multiprocessing import Pool, cpu_count, set_start_method
-from numba import jit  # type: ignore
+from numba import njit  # type: ignore
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
+import faiss
 
 from methods.common.luc import luc_matching_columns
 
+# TO DO: 
+# 1. Rename columns to luc10, luc5 and luc0 to align with the pipeline
+
+# to delete: 
+# start_year = 2012
+# k_parquet_filename = '/maps/tws36/tmf_pipe_out/1201/k_all.parquet'
+# m_parquet_filename = '/maps/aew85/tmf_pipe_out/1201/tom_pairs/matches.parquet'
+# luc_match = True
+
 REPEAT_MATCH_FINDING = 100
-DEFAULT_DISTANCE = 10000000.0
 DEBUG = False
+
+K_SUB_PROPORTION = 0.01
+M_SUB_PROPORTION = 0.1
+# Number of clusters
+NUM_CLUSTERS = 9
+# Number of iterations for K means fitting
+NUM_ITERATIONS = 100
+RELATIVE_MATCH_YEARS = [-10, -5, 0]
+
 
 DISTANCE_COLUMNS = [
     "elevation", "slope", "access",
@@ -23,297 +42,219 @@ HARD_COLUMN_COUNT = 5
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
+# this function uses loops instead of numpy vector operations
+@njit
+def loop_match(m_pca, k_pca):
+    picked = np.ones((m_pca.shape[0],), dtype=np.bool_)
+    fast_matches = np.full(k_pca.shape[0], -1, dtype=np.int32)
+    for i in range(0, k_pca.shape[0]):
+        min_squared_diff_sum = np.inf
+        min_squared_diff_j = -1
+        for j in range(0, m_pca.shape[0]):
+            if picked[j]:
+                squared_diff_sum = np.sum((m_pca[j, :] - k_pca[i, :])**2)
+                if squared_diff_sum < min_squared_diff_sum:
+                    min_squared_diff_sum = squared_diff_sum
+                    min_squared_diff_j = j
+        fast_matches[i] = min_squared_diff_j
+        picked[min_squared_diff_j] = False
+    return fast_matches
+
+### Now try with real numbers
+
+def to_int32(x):
+    # Normalize the data to the range 0 to 1
+    min_val = np.min(x)
+    max_val = np.max(x)
+    normalized_data = (x - min_val) / (max_val - min_val)
+    # Scale the normalized data to the range 0 to 255 for unsigned 8-bit integers
+    scaled_data = normalized_data * 255
+    # Convert to 32-bit integers (0 to 255)
+    int32_data = scaled_data.astype(np.int32)
+    return int32_data
+
+def to_pca_int32(x):
+    # Perform PCA and convert to dataframe
+    pca = PCA(n_components=min(len(x), len(x.columns)), 
+            whiten=False)  # Centering and scaling done by default
+    pca_result = pca.fit_transform(x)
+    pca_df = pd.DataFrame(pca_result)
+    # Convert all columns to int8
+    pca_32 = pca_df.apply(to_int32)
+    return pca_32
+
+
+def calculate_smd(group1, group2):
+    # Means
+    mean1, mean2 = np.mean(group1), np.mean(group2)
+    # Standard deviations
+    std1, std2 = np.std(group1, ddof=1), np.std(group2, ddof=1)
+    # Sample sizes
+    n1, n2 = len(group1), len(group2)
+    # Pooled standard deviation
+    pooled_std = np.sqrt(((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2))
+    # Standardized mean difference
+    smd = (mean1 - mean2) / pooled_std
+    return smd, mean1, mean2, pooled_std
+
 def find_match_iteration(
-    k_parquet_filename: str,
-    m_parquet_filename: str,
+    km_pixels: pd.DataFrame,
+    km_pca: np.ndarray,
     start_year: int,
+    luc_match: bool,
     output_folder: str,
     idx_and_seed: tuple[int, int]
 ) -> None:
     logging.info("Find match iteration %d of %d", idx_and_seed[0] + 1, REPEAT_MATCH_FINDING)
     rng = np.random.default_rng(idx_and_seed[1])
-
-    logging.info("Loading K from %s", k_parquet_filename)
-
-    # Methodology 6.5.7: For a 10% sample of K
-    k_set = pd.read_parquet(k_parquet_filename)
-    k_subset = k_set.sample(
-        frac=0.1,
-        random_state=rng
-    ).reset_index()
-
-    logging.info("Loading M from %s", m_parquet_filename)
-    m_set = pd.read_parquet(m_parquet_filename)
-
-    # get the column ids for DISTANCE_COLUMNS
-    thresholds_for_columns = np.array([
-            200.0, # Elev
-            2.5, # Slope
-            10.0,  # Access
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-            0.1, # CPCs
-    ])
-
-    logging.info("Preparing s_set...")
-
-    m_dist_thresholded_df = m_set[DISTANCE_COLUMNS] / thresholds_for_columns
-    k_subset_dist_thresholded_df = k_subset[DISTANCE_COLUMNS] / thresholds_for_columns
-
-    # convert to float32 numpy arrays and make them contiguous for numba to vectorise
-    m_dist_thresholded = np.ascontiguousarray(m_dist_thresholded_df, dtype=np.float32)
-    k_subset_dist_thresholded = np.ascontiguousarray(k_subset_dist_thresholded_df, dtype=np.float32)
-
-    # LUC columns are all named with the year in, so calculate the column names
-    # for the years we are intested in
-    luc0, luc5, luc10 = luc_matching_columns(start_year)
-    # As well as all the LUC columns for later use
-    luc_columns = [x for x in m_set.columns if x.startswith('luc')]
-
-    hard_match_columns = ['country', 'ecoregion', luc10, luc5, luc0]
-    assert len(hard_match_columns) == HARD_COLUMN_COUNT
-
-    # similar to the above, make the hard match columns contiguous float32 numpy arrays
-    m_dist_hard = np.ascontiguousarray(m_set[hard_match_columns].to_numpy()).astype(np.int32)
-    k_subset_dist_hard = np.ascontiguousarray(k_subset[hard_match_columns].to_numpy()).astype(np.int32)
-
-    # Methodology 6.5.5: S should be 10 times the size of K, in order to achieve this for every
-    # pixel in the subsample (which is 10% the size of K) we select 100 pixels.
-    required = 100
-
-    logging.info("Running make_s_set_mask... required: %d", required)
-    starting_positions = rng.integers(0, int(m_dist_thresholded.shape[0]), int(k_subset_dist_thresholded.shape[0]))
-    s_set_mask_true, no_potentials = make_s_set_mask(
-        m_dist_thresholded,
-        k_subset_dist_thresholded,
-        m_dist_hard,
-        k_subset_dist_hard,
-        starting_positions,
-        required
+    
+    match_years = [start_year + year for year in RELATIVE_MATCH_YEARS]
+    # The categorical columns:
+    if luc_match:
+        match_cats = ["ecoregion", "country", "cluster"] + ["luc_" + str(year) for year in match_years]
+    else:
+        match_cats = ["ecoregion", "country", "cluster"]
+    
+    # Extract K and M pixels 
+    k_pixels = km_pixels.loc[km_pixels['trt'] == 'trt']
+    m_pixels = km_pixels.loc[km_pixels['trt'] == 'ctrl']
+    # Extract K and M PCA transforms
+    k_pca = km_pca.loc[km_pixels['trt'] == 'trt'].to_numpy()
+    m_pca = km_pca.loc[km_pixels['trt'] == 'ctrl'].to_numpy()
+    # Draw subsamples
+    # Methodology 6.5.7: Needs to be updated !!!
+    k_sub_size = int(k_pixels.shape[0]* K_SUB_PROPORTION)
+    m_sub_size = int(m_pixels.shape[0] * M_SUB_PROPORTION)
+    # Define indexs for the samples from K and M
+    k_random_indices = np.random.choice(k_pixels.shape[0], size=k_sub_size, replace=False)
+    m_random_indices = np.random.choice(m_pixels.shape[0], size=m_sub_size, replace=False)
+    # Take random samples from K and M pixels
+    k_sub = k_pixels.iloc[k_random_indices]
+    m_sub = m_pixels.iloc[m_random_indices]
+    # Take corresponding random samples from the PCA transformed K and M 
+    k_sub_pca = k_pca[k_random_indices,:]
+    m_sub_pca = m_pca[m_random_indices,:]
+    
+    logging.info("Starting greedy matching... k_sub.shape: %s, m_sub.shape: %s",
+                 k_sub.shape, m_sub.shape)
+    
+    pairs, matchless = greedy_match(
+        k_sub,
+        m_sub,
+        k_sub_pca,
+        m_sub_pca,
+        match_cats
     )
-
-    logging.info("Done make_s_set_mask. s_set_mask.shape: %a", {s_set_mask_true.shape})
-
-    s_set = m_set[s_set_mask_true]
-    potentials = np.invert(no_potentials)
-
-    k_subset = k_subset[potentials]
-    logging.info("Finished preparing s_set. shape: %a", {s_set.shape})
-
-    # Notes:
-    # 1. Not all pixels may have matches
-    results = []
-    matchless = []
-
-    s_set_for_cov = s_set[DISTANCE_COLUMNS]
-    logging.info("Calculating covariance...")
-    covarience = np.cov(s_set_for_cov, rowvar=False)
-    logging.info("Calculating inverse covariance...")
-    invconv = np.linalg.inv(covarience).astype(np.float32)
-
-    # Match columns are luc10, luc5, luc0, "country" and "ecoregion"
-    s_set_match = s_set[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
-    # this is required so numba can vectorise the loop in greedy_match
-    s_set_match = np.ascontiguousarray(s_set_match)
-
-    # Now we do the same thing for k_subset
-    k_subset_match = k_subset[hard_match_columns + DISTANCE_COLUMNS].to_numpy(dtype=np.float32)
-    # this is required so numba can vectorise the loop in greedy_match
-    k_subset_match = np.ascontiguousarray(k_subset_match)
-
-    logging.info("Starting greedy matching... k_subset_match.shape: %s, s_set_match.shape: %s",
-                 k_subset_match.shape, s_set_match.shape)
-
-    add_results, k_idx_matchless = greedy_match(
-        k_subset_match,
-        s_set_match,
-        invconv
-    )
-
+    
+    # Combine all the pairs DataFrames in the list into a single DataFrame
+    combined_pairs = pd.concat(pairs, ignore_index=True)
+    # Combine all the matchess DataFrames in the list into a single DataFrame
+    combined_matchless = pd.concat(matchless, ignore_index=True)
     logging.info("Finished greedy matching...")
-
+    
     logging.info("Starting storing matches...")
-
-    for result in add_results:
-        (k_idx, s_idx) = result
-        k_row = k_subset.iloc[k_idx]
-        match = s_set.iloc[s_idx]
-
-        if DEBUG:
-            for hard_match_column in hard_match_columns:
-                if k_row[hard_match_column] != match[hard_match_column]:
-                    print(k_row)
-                    print(match)
-                    raise ValueError("Hard match inconsistency")
-
-        results.append(
-            [k_row.lat, k_row.lng] + [k_row[x] for x in luc_columns + DISTANCE_COLUMNS] + \
-            [match.lat, match.lng] + [match[x] for x in luc_columns + DISTANCE_COLUMNS]
-        )
-
-    logging.info("Finished storing matches...")
-
-    for k_idx in k_idx_matchless:
-        k_row = k_subset.iloc[k_idx]
-        matchless.append(k_row)
-
-    columns = ['k_lat', 'k_lng'] + \
-        [f'k_{x}' for x in luc_columns + DISTANCE_COLUMNS] + \
-        ['s_lat', 's_lng'] + \
-        [f's_{x}' for x in luc_columns + DISTANCE_COLUMNS]
-
-    results_df = pd.DataFrame(results, columns=columns)
-    results_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
-
-    matchless_df = pd.DataFrame(matchless, columns=k_set.columns)
-    matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
-
+    combined_pairs_df = pd.DataFrame(combined_pairs)
+    combined_pairs_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}.parquet'))
+    
+    combined_matchless_df = pd.DataFrame(combined_matchless)
+    combined_matchless_df.to_parquet(os.path.join(output_folder, f'{idx_and_seed[1]}_matchless.parquet'))
+    
     logging.info("Finished find match iteration")
 
-@jit(nopython=True, fastmath=True, error_model="numpy")
-def make_s_set_mask(
-    m_dist_thresholded: np.ndarray,
-    k_subset_dist_thresholded: np.ndarray,
-    m_dist_hard: np.ndarray,
-    k_subset_dist_hard: np.ndarray,
-    starting_positions: np.ndarray,
-    required: int
-):
-    m_size = m_dist_thresholded.shape[0]
-    k_size = k_subset_dist_thresholded.shape[0]
-
-    s_include = np.zeros(m_size, dtype=np.bool_)
-    k_miss = np.zeros(k_size, dtype=np.bool_)
-
-    for k in range(k_size):
-        matches = 0
-        k_row = k_subset_dist_thresholded[k, :]
-        k_hard = k_subset_dist_hard[k]
-
-        for index in range(m_size):
-            m_index = (index + starting_positions[k]) % m_size
-
-            m_row = m_dist_thresholded[m_index, :]
-            m_hard = m_dist_hard[m_index]
-
-            should_include = True
-
-            # check that every element of m_hard matches k_hard
-            hard_equals = True
-            for j in range(m_hard.shape[0]):
-                if m_hard[j] != k_hard[j]:
-                    hard_equals = False
-
-            if not hard_equals:
-                should_include = False
-            else:
-                for j in range(m_row.shape[0]):
-                    if abs(m_row[j] - k_row[j]) > 1.0:
-                        should_include = False
-
-            if should_include:
-                s_include[m_index] = True
-                matches += 1
-
-            # Don't find any more M's
-            if matches == required:
-                break
-
-        k_miss[k] = matches == 0
-
-    return s_include, k_miss
-
-# Function which returns a boolean array indicating whether all values in a row are true
-@jit(nopython=True, fastmath=True, error_model="numpy")
-def rows_all_true(rows: np.ndarray):
-    # Don't use np.all because not supported by numba
-
-    # Create an array of booleans for rows in s still available
-    all_true = np.ones((rows.shape[0],), dtype=np.bool_)
-    for row_idx in range(rows.shape[0]):
-        for col_idx in range(rows.shape[1]):
-            if not rows[row_idx, col_idx]:
-                all_true[row_idx] = False
-                break
-
-    return all_true
-
-
-@jit(nopython=True, fastmath=True, error_model="numpy")
 def greedy_match(
-    k_subset: np.ndarray,
-    s_set: np.ndarray,
-    invcov: np.ndarray
+    k_sub: pd.DataFrame,
+    m_sub: pd.DataFrame,
+    k_sub_pca: np.ndarray,
+    m_sub_pca: np.ndarray,
+    match_cats: list
 ):
-    # Create an array of booleans for rows in s still available
-    s_available = np.ones((s_set.shape[0],), dtype=np.bool_)
-    total_available = s_set.shape[0]
-
-    results = []
+    # Identify the unique combinations of categorical columns
+    k_cat_combinations = k_sub[match_cats].drop_duplicates().sort_values(by=match_cats, ascending=[True] * len(match_cats))
+    
+    # Not all pixels may have matches
+    pairs = []
     matchless = []
-
-    s_tmp = np.zeros((s_set.shape[0],), dtype=np.float32)
-
-    for k_idx in range(k_subset.shape[0]):
-        k_row = k_subset[k_idx, :]
-
-        hard_matches = rows_all_true(s_set[:, :HARD_COLUMN_COUNT] == k_row[:HARD_COLUMN_COUNT]) & s_available
-        hard_matches = hard_matches.reshape(
-            -1,
-        )
-
-        if total_available > 0:
-            # Now calculate the distance between the k_row and all the hard matches we haven't already matched
-            s_tmp[hard_matches] = batch_mahalanobis_squared(
-                s_set[hard_matches, HARD_COLUMN_COUNT:], k_row[HARD_COLUMN_COUNT:], invcov
-            )
-            # Find the index of the minimum distance in s_tmp[hard_matches] but map it back to the index in s_set
-            if np.any(hard_matches):
-                min_dist_idx = np.argmin(s_tmp[hard_matches])
-                min_dist_idx = np.arange(s_tmp.shape[0])[hard_matches][min_dist_idx]
-
-                results.append((k_idx, min_dist_idx))
-                s_available[min_dist_idx] = False
-                total_available -= 1
-        else:
-            matchless.append(k_idx)
-
-    return (results, matchless)
-
-# optimised batch implementation of mahalanobis distance that returns a distance per row
-@jit(nopython=True, fastmath=True, error_model="numpy")
-def batch_mahalanobis_squared(rows, vector, invcov):
-    # calculate the difference between the vector and each row (broadcasted)
-    diff = rows - vector
-    # calculate the distance for each row in one batch
-    dists = (np.dot(diff, invcov) * diff).sum(axis=1)
-    return dists
-
+    
+    for i in range(0, k_cat_combinations.shape[0]):
+        # i = 6 # ith element of the unique combinations of the luc time series in k
+        # for in range()
+        k_cat_comb = k_cat_combinations.iloc[i]
+        k_cat_index = k_sub[match_cats] == k_cat_comb
+        k_cat = k_sub[(k_cat_index).all(axis=1)]
+        k_cat_pca = k_sub_pca[(k_cat_index).all(axis=1)]
+        
+        # Find the subset in km_pixels that matches this combination
+        m_cat_index = m_sub[match_cats] == k_cat_comb
+        m_cat = m_sub[(m_cat_index).all(axis=1)]
+        m_cat_pca = m_sub_pca[(m_cat_index).all(axis=1)]
+        
+        # If there is no suitable match for the pre-project luc time series
+        # Then it may be preferable to just take the luc state at t0
+        # m_luc_comb = m_pixels[(m_pixels[match_luc_years[1:3]] == K_luc_comb[1:3]).all(axis=1)]
+        # m_luc_comb = m_pixels[(m_pixels[match_luc_years[2:3]] == K_luc_comb[2:3]).all(axis=1)]
+        # For now if there are no matches return nothing
+        
+        if(m_cat.shape[0] < k_cat.shape[0] * 5):
+            matchless.append(k_cat)
+            continue
+        
+        matches_index = loop_match(m_cat_pca, k_cat_pca)
+        m_cat_matches = m_cat.iloc[matches_index]
+        
+        # Join the pairs into one dataframe:
+        k_cat = k_cat.reset_index(drop = True)
+        m_cat_matches = m_cat_matches.reset_index(drop = True)  
+        pairs_df = pd.concat([k_cat.add_prefix('k_'), m_cat_matches.add_prefix('s_')], axis=1)
+        # Append the resulting DataFrame to the list
+        pairs.append(pairs_df)
+    
+    return (pairs, matchless)
 
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
     start_year: int,
+    luc_match: bool,
     seed: int,
     output_folder: str,
     processes_count: int
 ) -> None:
+    logging.info("Loading K from %s", k_parquet_filename)
+    k_pixels = pd.read_parquet(k_parquet_filename)
+    logging.info("Loading M from %s", m_parquet_filename)
+    m_pixels = pd.read_parquet(m_parquet_filename)
+    # concat m and k
+    km_pixels = pd.concat([k_pixels.assign(trt='trt', ID=range(0, len(k_pixels))),
+                        m_pixels.assign(trt='ctrl', ID=range(0, len(m_pixels)))], ignore_index=True)
+    
+    # Extract only the continuous columns
+    km_pixels_distance = km_pixels[DISTANCE_COLUMNS]
+    # PCA transform and conversion to 32 bit ints
+    logging.info("Transforming continuous variables to PCA space")
+    km_pca = to_pca_int32(km_pixels_distance)
+    # Find clusters using Kmeans
+    logging.info("Starting cluster assignment using kmeans")
+    # Initialize the KMeans object
+    kmeans = faiss.Kmeans(d=km_pca.shape[1], k=NUM_CLUSTERS, niter=NUM_ITERATIONS, verbose=True)
+    # Perform clustering
+    kmeans.train(km_pca)
+    # Get cluster assignments
+    km_pixels['cluster'] = kmeans.index.search(km_pca, 1)[1].flatten()
+    
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
-
+    
     rng = np.random.default_rng(seed)
     iteration_seeds = zip(range(REPEAT_MATCH_FINDING), rng.integers(0, 1000000, REPEAT_MATCH_FINDING))
-
+    
     with Pool(processes=processes_count) as pool:
         pool.map(
             partial(
                 find_match_iteration,
-                k_parquet_filename,
-                m_parquet_filename,
+                km_pixels,
+                km_pca,
                 start_year,
+                luc_match,
                 output_folder
             ),
             iteration_seeds
@@ -347,6 +288,13 @@ def main():
         help="Year project started."
     )
     parser.add_argument(
+        "--luc_match",
+        type=bool,
+        required=True,
+        dest="luc_match",
+        help="Boolean determines whether matching should include LUCs."
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         required=True,
@@ -374,6 +322,7 @@ def main():
         args.k_filename,
         args.m_filename,
         args.start_year,
+        args.luc_match,
         args.seed,
         args.output_directory_path,
         args.processes_count
