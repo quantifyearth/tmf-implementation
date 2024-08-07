@@ -73,7 +73,6 @@ def build_layer_collection(
     #     RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
     #         glob.glob("*.tif", root_dir=ecoregions_directory_path)
     # ], name="ecoregions")
-    ecoregions = RasterLayer.layer_from_file(ecoregions_directory_path)
 
     elevation = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)) for filename in
@@ -88,7 +87,6 @@ def build_layer_collection(
     #     RasterLayer.layer_from_file(os.path.join(access_directory_path, filename)) for filename in
     #         glob.glob("*.tif", root_dir=access_directory_path)
     # ], name="access")
-    access = RasterLayer.layer_from_file(access_directory_path)
 
     countries = RasterLayer.layer_from_file(countries_raster_filename)
 
