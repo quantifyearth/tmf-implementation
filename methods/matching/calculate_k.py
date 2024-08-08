@@ -69,10 +69,10 @@ def build_layer_collection(
 
     # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
     # as part of import of the ecoregions data
-    # ecoregions = GroupLayer([
-    #     RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
-    #         glob.glob("*.tif", root_dir=ecoregions_directory_path)
-    # ], name="ecoregions")
+    ecoregions = GroupLayer([
+        RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
+            glob.glob("*.tif", root_dir=ecoregions_directory_path)
+    ], name="ecoregions")
 
     elevation = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(elevation_directory_path, filename)) for filename in
@@ -83,10 +83,10 @@ def build_layer_collection(
             glob.glob("slope*.tif", root_dir=slope_directory_path)
     ], name="slopes")
 
-    # access = GroupLayer([
-    #     RasterLayer.layer_from_file(os.path.join(access_directory_path, filename)) for filename in
-    #         glob.glob("*.tif", root_dir=access_directory_path)
-    # ], name="access")
+    access = GroupLayer([
+        RasterLayer.layer_from_file(os.path.join(access_directory_path, filename)) for filename in
+            glob.glob("*.tif", root_dir=access_directory_path)
+    ], name="access")
 
     countries = RasterLayer.layer_from_file(countries_raster_filename)
 
