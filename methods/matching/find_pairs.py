@@ -20,11 +20,15 @@ from methods.common.luc import luc_matching_columns
 # m_parquet_filename = '/maps/aew85/tmf_pipe_out/1201/tom_pairs/matches.parquet'
 # luc_match = True
 
+t0 = 2018
+k_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/k.parquet'
+m_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/matches.parquet'
+
 REPEAT_MATCH_FINDING = 100
 DEBUG = False
 
 K_SUB_PROPORTION = 0.01
-M_SUB_PROPORTION = 0.1
+M_SUB_PROPORTION = 1
 # Number of clusters
 NUM_CLUSTERS = 9
 # Number of iterations for K means fitting
@@ -97,9 +101,20 @@ def calculate_smd(group1, group2):
     smd = (mean1 - mean2) / pooled_std
     return smd, mean1, mean2, pooled_std
 
+def rename_luc_columns(df, start_year):
+
+    # Define the range of years based on the central start_year
+    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed
+    new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
+    
+    # Rename columns based on the new column names mapping
+    renamed_df = df.rename(columns=new_column_names)
+    
+    return renamed_df
+
 def find_match_iteration(
-    km_pixels: pd.DataFrame,
-    km_pca: np.ndarray,
+    k_pixels: pd.DataFrame,
+    m_pixels: pd.DataFrame,
     start_year: int,
     luc_match: bool,
     output_folder: str,
@@ -114,6 +129,35 @@ def find_match_iteration(
         match_cats = ["ecoregion", "country", "cluster"] + ["luc_-10", "luc_-5", "luc_0"]
     else:
         match_cats = ["ecoregion", "country", "cluster"]
+    
+    if(m_pixels.shape[0] > (k_pixels.shape[0])):
+        m_sub_size = int(k_pixels.shape[0]) # First down sample M as it is ~230 million points    
+        m_random_indices = np.random.choice(m_pixels.shape[0], size=m_sub_size, replace=False)
+        m_pixels = m_pixels.iloc[m_random_indices]
+    
+    # rename columns of each 
+    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
+    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10)
+        
+    # concat m and k
+    km_pixels = pd.concat([k_pixels_renamed.assign(trt='trt', ID=range(0, len(k_pixels))),
+                          m_pixels_renamed.assign(trt='ctrl', 
+                                                ID=range(0, len(m_pixels)))], 
+                                                ignore_index=True)
+    
+    # Extract only the continuous columns
+    km_pixels_distance = km_pixels[DISTANCE_COLUMNS]
+    # PCA transform and conversion to 32 bit ints
+    logging.info("Transforming continuous variables to PCA space")
+    km_pca = to_pca_int32(km_pixels_distance)
+    # Find clusters using Kmeans
+    logging.info("Starting cluster assignment using kmeans")
+    # Initialize the KMeans object
+    kmeans = faiss.Kmeans(d=km_pca.shape[1], k=NUM_CLUSTERS, niter=NUM_ITERATIONS, verbose=True)
+    # Perform clustering
+    kmeans.train(km_pca)
+    # Get cluster assignments
+    km_pixels['cluster'] = kmeans.index.search(km_pca, 1)[1].flatten()
     
     # Extract K and M pixels 
     k_pixels = km_pixels.loc[km_pixels['trt'] == 'trt']
@@ -210,17 +254,6 @@ def greedy_match(
     
     return (pairs, matchless)
 
-def rename_luc_columns(df, start_year):
-
-    # Define the range of years based on the central start_year
-    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed
-    new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
-    
-    # Rename columns based on the new column names mapping
-    renamed_df = df.rename(columns=new_column_names)
-    
-    return renamed_df
-
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
@@ -235,30 +268,6 @@ def find_pairs(
     logging.info("Loading M from %s", m_parquet_filename)
     m_pixels = pd.read_parquet(m_parquet_filename)
     
-    # rename columns of each 
-    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
-    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10)
-        
-    # concat m and k
-    km_pixels = pd.concat([k_pixels_renamed.assign(trt='trt', ID=range(0, len(k_pixels))),
-                          m_pixels_renamed.assign(trt='ctrl', 
-                                                ID=range(0, len(m_pixels)))], 
-                                                ignore_index=True)
-    
-    # Extract only the continuous columns
-    km_pixels_distance = km_pixels[DISTANCE_COLUMNS]
-    # PCA transform and conversion to 32 bit ints
-    logging.info("Transforming continuous variables to PCA space")
-    km_pca = to_pca_int32(km_pixels_distance)
-    # Find clusters using Kmeans
-    logging.info("Starting cluster assignment using kmeans")
-    # Initialize the KMeans object
-    kmeans = faiss.Kmeans(d=km_pca.shape[1], k=NUM_CLUSTERS, niter=NUM_ITERATIONS, verbose=True)
-    # Perform clustering
-    kmeans.train(km_pca)
-    # Get cluster assignments
-    km_pixels['cluster'] = kmeans.index.search(km_pca, 1)[1].flatten()
-    
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
     
@@ -269,8 +278,8 @@ def find_pairs(
         pool.map(
             partial(
                 find_match_iteration,
-                km_pixels,
-                km_pca,
+                k_pixels,
+                m_pixels,
                 start_year,
                 luc_match,
                 output_folder
