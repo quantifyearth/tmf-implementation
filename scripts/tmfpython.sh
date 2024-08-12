@@ -186,7 +186,7 @@ tmfpython3 -m methods.matching.find_pairs \
     --k "${output_dir}/${proj}/k.parquet" \
     --m "${output_dir}/${proj}/matches.parquet" \
     --start_year "$t0" \
-    --luc_match False \
+    --luc_match True \
     --output "${output_dir}/${proj}/pairs" \
     --seed 42 \
     -j 1
@@ -213,6 +213,7 @@ if [ "$current_branch" == "mwd-check-stopping-criteria" ]; then
     --output "${output_dir}/${proj}/additionality.csv" \
     --stopping "${output_dir}/${proj}/stopping.csv"
     echo "--Additionality and stopping criteria calculated.--"
+    else if [ "$ex_ante" == "true" ]; then
     else
     tmfpython3 -m methods.outputs.calculate_additionality \
     --project "${input_dir}/${proj}.geojson" \
@@ -226,14 +227,12 @@ fi
 
 # Run ex post evaluation
 if [ "$ex_post" == "true" ]; then
-evaluations_dir="~/evaluations"
 ep_output_file="${evaluations_dir}/${proj}_ex_post_evaluation.html"
 Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_post_evaluation_template.Rmd',output_file='${ep_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}',evaluations_dir='${evaluations_dir}'))"
 fi
 
 # Run ex-ante evaluation
 if [ "$ex_ante" == "true" ]; then
-evaluations_dir="~/evaluations"
 ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
 Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}'))"
 fi
