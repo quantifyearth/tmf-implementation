@@ -1,5 +1,5 @@
-numpy
-gdal[numpy]<3.7
+numpy<2
+gdal[numpy]
 requests
 pandas
 polars
@@ -8,8 +8,8 @@ scipy
 numba
 matplotlib
 geojson
-git+https://github.com/quantifyearth/yirgacheffe@743d26520c6438bd6e1f08e7822a54f965723405
-git+https://github.com/carboncredits/biomass-recovery@170630d50e42083c545643928747d67aa7245291
+git+https://github.com/quantifyearth/yirgacheffe@bd2e91c773a414f66340ebb8c13044a1b1a6045f
+git+https://github.com/carboncredits/biomass-recovery@9e54f80832a7eca915ebd13b03df9db2a08aee9d
 
 # developement
 mypy

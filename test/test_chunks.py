@@ -2,7 +2,7 @@ import json
 import pytest
 from osgeo import ogr, osr # type: ignore
 
-from methods.inputs.download_gedi_data import chunk_geometry # pylint: disable=E0401
+from methods.inputs.locate_gedi_data import chunk_geometry # pylint: disable=E0401
 
 def _build_polygon(lat: float, lng: float, radius: float) -> ogr.Geometry:
     origin_lat = lat + radius

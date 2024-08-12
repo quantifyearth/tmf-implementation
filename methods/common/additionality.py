@@ -1,7 +1,7 @@
 import glob
 import os
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, cast
 
 import numpy as np # type: ignore
 import pandas as pd # type: ignore
@@ -221,7 +221,8 @@ def generate_additionality(
         p_tot[year] = np.average(values)
 
     if partials_dir is not None:
-        figure, axis = plt.subplots(1, 3)
+        figure, untyped_axis = plt.subplots(1, 3)
+        axis = cast(List[plt.Axes], untyped_axis)
         figure.set_figheight(10)
         figure.set_figwidth(18)
 
