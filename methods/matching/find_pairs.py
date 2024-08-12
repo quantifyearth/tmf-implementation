@@ -11,19 +11,6 @@ import faiss
 
 from methods.common.luc import luc_matching_columns
 
-# TO DO: 
-# 1. Rename columns to luc10, luc5 and luc0 to align with the pipeline
-
-# to delete: 
-# start_year = 2012
-# k_parquet_filename = '/maps/tws36/tmf_pipe_out/1201/k_all.parquet'
-# m_parquet_filename = '/maps/aew85/tmf_pipe_out/1201/tom_pairs/matches.parquet'
-# luc_match = True
-
-t0 = 2018
-k_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/k.parquet'
-m_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/matches.parquet'
-
 REPEAT_MATCH_FINDING = 100
 DEBUG = False
 
