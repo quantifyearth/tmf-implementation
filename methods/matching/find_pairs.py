@@ -111,7 +111,7 @@ def find_match_iteration(
     match_years = [start_year + year for year in RELATIVE_MATCH_YEARS]
     # The categorical columns:
     if luc_match:
-        match_cats = ["ecoregion", "country", "cluster"] + ["luc_" + str(year) for year in match_years]
+        match_cats = ["ecoregion", "country", "cluster"] + ["luc_-10", "luc_-5", "luc_0"]
     else:
         match_cats = ["ecoregion", "country", "cluster"]
     
@@ -210,6 +210,17 @@ def greedy_match(
     
     return (pairs, matchless)
 
+def rename_luc_columns(df, start_year):
+
+    # Define the range of years based on the central start_year
+    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed
+    new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
+    
+    # Rename columns based on the new column names mapping
+    renamed_df = df.rename(columns=new_column_names)
+    
+    return renamed_df
+
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
@@ -223,9 +234,16 @@ def find_pairs(
     k_pixels = pd.read_parquet(k_parquet_filename)
     logging.info("Loading M from %s", m_parquet_filename)
     m_pixels = pd.read_parquet(m_parquet_filename)
+    
+    # rename columns of each 
+    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
+    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10)
+        
     # concat m and k
-    km_pixels = pd.concat([k_pixels.assign(trt='trt', ID=range(0, len(k_pixels))),
-                        m_pixels.assign(trt='ctrl', ID=range(0, len(m_pixels)))], ignore_index=True)
+    km_pixels = pd.concat([k_pixels_renamed.assign(trt='trt', ID=range(0, len(k_pixels))),
+                          m_pixels_renamed.assign(trt='ctrl', 
+                                                ID=range(0, len(m_pixels)))], 
+                                                ignore_index=True)
     
     # Extract only the continuous columns
     km_pixels_distance = km_pixels[DISTANCE_COLUMNS]

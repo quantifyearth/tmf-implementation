@@ -119,8 +119,8 @@ def worker(
     matching_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        [start_year, start_year - 5, start_year - 10],
-        [start_year, start_year - 5, start_year - 10],
+        [start_year - 10, start_year - 15, start_year - 20], # create time offset in matching set
+        [start_year - 10, start_year - 15, start_year - 20], # create time offset in matching set
         matching_zone_filename,
         jrc_directory_path,
         cpc_directory_path,

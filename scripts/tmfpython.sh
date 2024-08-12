@@ -181,7 +181,18 @@ tmfpython3 -m methods.matching.build_m_table \
 echo "--Set M created.--"
 
 #Matching: find pairs
+if [ "$current_branch" == "tws_cluster_find_pairs" ] -o [ "$current_branch" == "aew85_cluster_find_pairs" ]; then
 tmfpython3 -m methods.matching.find_pairs \
+    --k "${output_dir}/${proj}/k.parquet" \
+    --m "${output_dir}/${proj}/matches.parquet" \
+    --start_year "$t0" \
+    --luc_match False \
+    --output "${output_dir}/${proj}/pairs" \
+    --seed 42 \
+    -j 1
+    echo "--Pairs matched.--"
+    else
+    tmfpython3 -m methods.matching.find_pairs \
     --k "${output_dir}/${proj}/k.parquet" \
     --m "${output_dir}/${proj}/matches.parquet" \
     --start_year "$t0" \
@@ -189,6 +200,7 @@ tmfpython3 -m methods.matching.find_pairs \
     --seed 42 \
     -j 1
     echo "--Pairs matched.--"
+fi
 
 #Calculate additionality
 if [ "$current_branch" == "mwd-check-stopping-criteria" ]; then
@@ -223,5 +235,5 @@ fi
 if [ "$ex_ante" == "true" ]; then
 evaluations_dir="~/evaluations"
 ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}',evaluations_dir='${evaluations_dir}'))"
+Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}'))"
 fi
