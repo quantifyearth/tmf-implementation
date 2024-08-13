@@ -1,11 +1,12 @@
-from glob import glob
-import tempfile
-import os
-import subprocess
 import argparse
-import sys
-import math
 import logging
+import math
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from glob import glob
 
 import utm  # type: ignore
 from yirgacheffe.window import Area  # type: ignore
@@ -71,25 +72,31 @@ def bounding_box_of_utm(zone: int, letter: str, expansion: float) -> Area:
 def warp(
     utm_zone: int,
     elev_path: str,
-    reprojection_path: str,
-    slope_path: str,
     pixel_scale_x: float,
     pixel_scale_y: float,
     out_path: str,
 ):
-    warp_cmd = f"gdalwarp -t_srs '+proj=utm +zone={utm_zone} +datum=WGS84' {elev_path} {reprojection_path}"
-    slope = f"gdaldem slope {reprojection_path} {slope_path}"
-    warp_back = f"gdalwarp -tr {pixel_scale_x} {pixel_scale_y} -t_srs \
-                  '+proj=longlat +datum=WGS84' {slope_path} {out_path}"
-    res = subprocess.call(warp_cmd, shell=True)
-    if res != 0:
-        raise ValueError(f"Failed to run {warp_cmd} exited {res}")
-    res = subprocess.call(slope, shell=True, close_fds=True)
-    if res != 0:
-        raise ValueError(f"Failed to run {slope} exited {res}")
-    res = subprocess.call(warp_back, shell=True, close_fds=True)
-    if res != 0:
-        raise ValueError(f"Failed to run {warp_back} exited {res}")
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reprojection_path = os.path.join(tmpdir, "reprojection.tif")
+        slope_path = os.path.join(tmpdir, "sloped.tif")
+        final_reprojection_path = os.path.join(tmpdir, "final.tif")
+
+        warp_cmd = f"gdalwarp -t_srs '+proj=utm +zone={utm_zone} +datum=WGS84' {elev_path} {reprojection_path}"
+        slope = f"gdaldem slope {reprojection_path} {slope_path}"
+        warp_back = f"gdalwarp -tr {pixel_scale_x} {pixel_scale_y} -t_srs \
+                    '+proj=longlat +datum=WGS84' {slope_path} {final_reprojection_path}"
+
+        res = subprocess.call(warp_cmd, shell=True)
+        if res != 0:
+            raise ValueError(f"Failed to run {warp_cmd} exited {res}")
+        res = subprocess.call(slope, shell=True, close_fds=True)
+        if res != 0:
+            raise ValueError(f"Failed to run {slope} exited {res}")
+        res = subprocess.call(warp_back, shell=True, close_fds=True)
+        if res != 0:
+            raise ValueError(f"Failed to run {warp_back} exited {res}")
+
+        shutil.move(final_reprojection_path, out_path)
 
 
 def generate_slope(input_elevation_directory: str, output_slope_directory: str):
@@ -97,9 +104,13 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
     os.makedirs(output_slope_directory, exist_ok=True)
 
     for elevation_path in elev:
+        elev_path = os.path.join(input_elevation_directory, elevation_path)
+        out_path = os.path.join(output_slope_directory, "slope-" + elevation_path)
+        if os.path.exists(out_path):
+            logging.info("%s already exists, skipping.", out_path)
+            continue
+
         with tempfile.TemporaryDirectory() as tmpdir:
-            elev_path = os.path.join(input_elevation_directory, elevation_path)
-            out_path = os.path.join(output_slope_directory, "slope-" + elevation_path)
             elevation = RasterLayer.layer_from_file(elev_path)
 
             logging.info("Area of elevation tile %a", elevation.area)
@@ -113,13 +124,9 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
             # FAST PATH -- with only one UTM zone the reprojection back has no issues
             if lower_code == upper_code and lower_letter == upper_letter:
                 actual_utm_code = lower_code
-                reprojection_path = os.path.join(tmpdir, elevation_path)
-                slope_path = os.path.join(tmpdir, "slope-" + elevation_path)
                 warp(
                     actual_utm_code,
                     elev_path,
-                    reprojection_path,
-                    slope_path,
                     elevation.pixel_scale.xstep,
                     elevation.pixel_scale.ystep,
                     out_path,
@@ -161,14 +168,10 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                         del result
 
                         # Now warp into UTM, calculate slopes, and warp back
-                        reprojection_path = os.path.join(tmpdir, "reproject-" + utm_id)
-                        slope_path = os.path.join(tmpdir, "slope-" + utm_id)
                         slope_out_path = os.path.join(tmpdir, "out-slope-" + utm_id)
                         warp(
                             actual_utm_code,
                             utm_clip_path,
-                            reprojection_path,
-                            slope_path,
                             elevation.pixel_scale.xstep,
                             elevation.pixel_scale.ystep,
                             slope_out_path,
@@ -232,10 +235,14 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
                 intersection = RasterLayer.find_intersection([elevation, combined])
                 combined.set_window_for_intersection(intersection)
                 elevation.set_window_for_intersection(intersection)
+
+                assembled_path = os.path.join(tmpdir, "patched.tif")
                 result = RasterLayer.empty_raster_layer_like(
-                    elevation, filename=out_path
+                    elevation, filename=assembled_path
                 )
                 combined.save(result)
+
+                shutil.move(assembled_path, out_path)
 
 
 def main() -> None:
