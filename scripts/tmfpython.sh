@@ -182,46 +182,18 @@ echo "--Set M created.--"
 
 #Matching: find pairs
 tmfpython3 -m methods.matching.find_pairs \
-    --k "${output_dir}/${proj}/k.parquet" \
-    --m "${output_dir}/${proj}/matches.parquet" \
-    --start_year "$t0" \
-    --output "${output_dir}/${proj}/pairs" \
-    --seed 42 \
-    -j 1
-    echo "--Pairs matched.--"
-
-#Calculate additionality
-if [ "$current_branch" == "mwd-check-stopping-criteria" ]; then
-    tmfpython3 -m methods.outputs.calculate_additionality \
-    --project "${input_dir}/${proj}.geojson" \
-    --project_start "$t0" \
-    --evaluation_year "$eval_year" \
-    --density "${output_dir}/${proj}/carbon-density.csv" \
-    --matches "${output_dir}/${proj}/pairs" \
-    --output "${output_dir}/${proj}/additionality.csv" \
-    --stopping "${output_dir}/${proj}/stopping.csv"
-    echo "--Additionality and stopping criteria calculated.--"
-    else
-    tmfpython3 -m methods.outputs.calculate_additionality \
-    --project "${input_dir}/${proj}.geojson" \
-    --project_start "$t0" \
-    --evaluation_year "$eval_year" \
-    --density "${output_dir}/${proj}/carbon-density.csv" \
-    --matches "${output_dir}/${proj}/pairs" \
-    --output "${output_dir}/${proj}/additionality.csv"
-    echo "--Additionality calculated.--"
-fi
-
-# Run ex post evaluation
-if [ "$ex_post" == "true" ]; then
-evaluations_dir="~/evaluations"
-ep_output_file="${evaluations_dir}/${proj}_ex_post_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_post_evaluation_template.Rmd',output_file='${ep_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}',evaluations_dir='${evaluations_dir}'))"
-fi
+--k "${output_dir}/${proj}/k.parquet" \
+--m "${output_dir}/${proj}/matches.parquet" \
+--start_year "$t0" \
+--eval_year "$eval_year" \
+--luc_match True \
+--output "${output_dir}/${proj}/pairs" \
+--seed 42 \
+-j 1
+echo "--Pairs matched.--"
 
 # Run ex-ante evaluation
 if [ "$ex_ante" == "true" ]; then
-evaluations_dir="~/evaluations"
 ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}',evaluations_dir='${evaluations_dir}'))"
+Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}'))"
 fi

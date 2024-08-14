@@ -88,10 +88,11 @@ def calculate_smd(group1, group2):
     smd = (mean1 - mean2) / pooled_std
     return smd, mean1, mean2, pooled_std
 
-def rename_luc_columns(df, start_year):
+def rename_luc_columns(df, start_year, eval_year):
 
     # Define the range of years based on the central start_year
-    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed
+    no_years_post = (eval_year - start_year) + 1
+    years = range(start_year - 10, start_year + no_years_post)  # Adjust the range as needed
     new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
     
     # Rename columns based on the new column names mapping
@@ -103,6 +104,7 @@ def find_match_iteration(
     k_pixels: pd.DataFrame,
     m_pixels: pd.DataFrame,
     start_year: int,
+    eval_year: int,
     luc_match: bool,
     output_folder: str,
     idx_and_seed: tuple[int, int]
@@ -123,8 +125,8 @@ def find_match_iteration(
         m_pixels = m_pixels.iloc[m_random_indices]
     
     # rename columns of each 
-    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
-    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10)
+    k_pixels_renamed = rename_luc_columns(k_pixels, start_year, eval_year)
+    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10, eval_year)
         
     # concat m and k
     km_pixels = pd.concat([k_pixels_renamed.assign(trt='trt', ID=range(0, len(k_pixels))),
@@ -245,6 +247,7 @@ def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
     start_year: int,
+    eval_year: int,
     luc_match: bool,
     seed: int,
     output_folder: str,
@@ -268,6 +271,7 @@ def find_pairs(
                 k_pixels,
                 m_pixels,
                 start_year,
+                eval_year,
                 luc_match,
                 output_folder
             ),
@@ -300,6 +304,13 @@ def main():
         required=True,
         dest="start_year",
         help="Year project started."
+    )
+    parser.add_argument(
+        "--eval_year",
+        type=int,
+        required=True,
+        dest="eval_year",
+        help="Year of evaluation."
     )
     parser.add_argument(
         "--luc_match",
@@ -336,6 +347,7 @@ def main():
         args.k_filename,
         args.m_filename,
         args.start_year,
+        args.eval_year,
         args.luc_match,
         args.seed,
         args.output_directory_path,
