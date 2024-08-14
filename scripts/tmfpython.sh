@@ -36,15 +36,15 @@ function display_help() {
     echo "  -v <verbose>        Knit ex post evaluation as .Rmd? (true/false)"
     echo "  -h                  Display this help message"
     echo "Example:"
-    echo "  $0 -p 'gola' -t 2012 -e 2021 -r true -a true"
+    echo "  $0 -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out -p 1201 -t 2012"
 }
 
 # Parse arguments
 while getopts "i:o:p:t:e:v:h" flag
 do
     case "${flag}" in
-        p) input_dir=${OPTARG};;
-        t) output_dir=${OPTARG};;
+        i) input_dir=${OPTARG};;
+        o) output_dir=${OPTARG};;
         p) proj=${OPTARG};;
         t) t0=${OPTARG};;
         e) eval_year=${OPTARG};;
