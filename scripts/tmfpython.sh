@@ -1,16 +1,17 @@
 #!/bin/bash
 
-#run with command: scripts/tmfpython.sh -p 1113 -t 2010 ...
-#p: project ID 
+#run with command: scripts/tmfpython.sh -i 'maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out' -p 1113 -t 2010 ...
+#i: input dir - directory containing project shapefiles
+#o: output dir - directory containing pipeline outputs
+#p: project name/ID - must match name of shapefile
 #t: year of project start (t0)
 #e: evaluation year (default: 2022)
-#r: whether to run an ex-post evaluation and knit the results in an R notebook (true/false, default: false).
-#a: whether to run an ex-ante evaluation and knit the results in an R notebook (true/false, default: false).
+#v: verbose - whether to run an ex-ante evaluation and knit the results in an R notebook (true/false, default: false).
 
 #NB running evaluations requires the evaluations code
 
 # Check which branch is currently checked out
-current_branch=$(git rev-parse --abbrev-ref HEAD)
+#current_branch=$(git rev-parse --abbrev-ref HEAD)
 
 set -e
 
@@ -19,8 +20,7 @@ set -e
 input_dir="/maps/aew85/projects"
 output_dir="/maps/aew85/tmf_pipe_out"
 eval_year=2022
-ex_post=false
-ex_ante=false
+verbose=true
 
 #####################################
 
@@ -28,43 +28,45 @@ function display_help() {
     echo "Usage: $0 [options]"
     echo
     echo "Options:"
-    echo "  -p <project>        Project name"
+    echo "  -i <input_dir>      Input directory"
+    echo "  -o <output_dir>     Output directory"
+    echo "  -p <proj>           Project name"
     echo "  -t <t0>             Start year"
     echo "  -e <year>           Evaluation year"
-    echo "  -r <ex_post>        Knit ex post evaluation? (true/false)"
-    echo "  -a <ex_ante>        Knit ex ante evaluation? (true/false)"
+    echo "  -v <verbose>        Knit ex ante evaluation as .Rmd? (true/false)"
     echo "  -h                  Display this help message"
-    echo
     echo "Example:"
-    echo "  $0 -p 'gola' -t 2012 -e 2021 -r true -a true"
+    echo "  $0 -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out -p 1201 -t 2012"
 }
 
 # Parse arguments
-while getopts "p:t:e:r:a:h" flag
+while getopts "i:o:p:t:e:v:h" flag
 do
     case "${flag}" in
+        i) input_dir=${OPTARG};;
+        o) output_dir=${OPTARG};;
         p) proj=${OPTARG};;
         t) t0=${OPTARG};;
         e) eval_year=${OPTARG};;
-        r) ex_post=${OPTARG};;
-        a) ex_ante=${OPTARG};;
+        r) verbose=${OPTARG};;
         h) display_help; exit 0;;
         *) echo "Invalid option: -${OPTARG}" >&2; display_help; exit 1;;
     esac
 done
 
+echo "Input directory: $input_dir"
+echo "Output directory: $output_dir"
 echo "Project: $proj"
 echo "t0: $t0"
 echo "Evaluation year: $eval_year"
-echo "Ex-post evaluation: $ex_post"
-echo "Ex-ante evaluation: $ex_ante"
+echo "Ex-ante evaluation: $verbose"
 
 if [ $# -eq 0 ]; then
     display_help
     exit 1
 fi
 
-# Make project output directory
+# Make project output folder
 mkdir -p "${output_dir}/${proj}"
 echo "--Folder created.--"
 
@@ -181,7 +183,8 @@ tmfpython3 -m methods.matching.build_m_table \
 echo "--Set M created.--"
 
 #Matching: find pairs
-tmfpython3 -m methods.matching.find_pairs \
+. ./venv/bin/activate
+python3 -m methods.matching.find_pairs \
 --k "${output_dir}/${proj}/k.parquet" \
 --m "${output_dir}/${proj}/matches.parquet" \
 --start_year "$t0" \
@@ -191,9 +194,11 @@ tmfpython3 -m methods.matching.find_pairs \
 --seed 42 \
 -j 1
 echo "--Pairs matched.--"
+deactivate
 
 # Run ex-ante evaluation
-if [ "$ex_ante" == "true" ]; then
+if [ "$verbose" == "true" ]; then
+evaluations_dir="~/evaluations"
 ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}'))"
+Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}'))"
 fi
