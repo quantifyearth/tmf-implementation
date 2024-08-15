@@ -6,7 +6,7 @@
 #p: project name/ID - must match name of shapefile
 #t: year of project start (t0)
 #e: evaluation year (default: 2022)
-#v: verbose - whether to run an ex-post evaluation and knit the results in an R notebook (true/false, default: false).
+#r: report - whether to run an ex-post evaluation and knit the results in an R notebook (true/false, default: false).
 
 #NB running evaluations requires the evaluations code
 
@@ -20,7 +20,7 @@ set -e
 input_dir=""
 output_dir=""
 eval_year=2022
-verbose=false
+report=false
 
 #####################################
 
@@ -33,14 +33,14 @@ function display_help() {
     echo "  -p <proj>           Project name"
     echo "  -t <t0>             Start year"
     echo "  -e <year>           Evaluation year"
-    echo "  -v <verbose>        Knit ex post evaluation as .Rmd? (true/false)"
+    echo "  -r <report>         Knit ex post evaluation as .Rmd? (true/false)"
     echo "  -h                  Display this help message"
     echo "Example:"
     echo "  $0 -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out -p 1201 -t 2012"
 }
 
 # Parse arguments
-while getopts "i:o:p:t:e:v:h" flag
+while getopts "i:o:p:t:e:r:h" flag
 do
     case "${flag}" in
         i) input_dir=${OPTARG};;
@@ -48,7 +48,7 @@ do
         p) proj=${OPTARG};;
         t) t0=${OPTARG};;
         e) eval_year=${OPTARG};;
-        r) verbose=${OPTARG};;
+        r) report=${OPTARG};;
         a) ex_ante=${OPTARG};;
         h) display_help; exit 0;;
         *) echo "Invalid option: -${OPTARG}" >&2; display_help; exit 1;;
@@ -60,7 +60,7 @@ echo "Output directory: $output_dir"
 echo "Project: $proj"
 echo "t0: $t0"
 echo "Evaluation year: $eval_year"
-echo "Ex-post evaluation: $verbose"
+echo "Create report: $report"
 
 if [ $# -eq 0 ]; then
     display_help
@@ -203,9 +203,8 @@ tmfpython3 -m methods.outputs.calculate_additionality \
 --output "${output_dir}/${proj}/additionality.csv"
 echo "--Additionality calculated.--"
 
-# Run ex post evaluation
-if [ "$verbose" == "true" ]; then
-    evaluations_dir="~/evaluations"
-    ep_output_file="${evaluations_dir}/${proj}_ex_post_evaluation.html"
-    Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_post_evaluation_template.Rmd',output_file='${ep_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}'))"
+# Knit report file
+if [ "$report" == "true" ]; then
+    report_output_file="${output_dir}/${proj}_report.html"
+    Rscript -e "rmarkdown::render(input='./scripts/pipeline_results.Rmd',output_file='${report_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}'))"
 fi
