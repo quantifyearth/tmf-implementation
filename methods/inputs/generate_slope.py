@@ -214,7 +214,8 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
 
                     logging.info("Render order %s", slopes)
 
-                    with GroupLayer.layer_from_files([os.path.join(tmpdir, filename) for filename in slopes]) as combined:
+                    files = [os.path.join(tmpdir, filename) for filename in slopes]
+                    with GroupLayer.layer_from_files(files) as combined:
                         with RasterLayer.layer_from_file(elev_path) as elevation:
                             intersection = RasterLayer.find_intersection([elevation, combined])
                             combined.set_window_for_intersection(intersection)
