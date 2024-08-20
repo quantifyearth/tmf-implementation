@@ -8,7 +8,7 @@ scipy
 numba
 matplotlib
 geojson
-git+https://github.com/quantifyearth/yirgacheffe@bd2e91c773a414f66340ebb8c13044a1b1a6045f
+git+https://github.com/quantifyearth/yirgacheffe@cc89b4d8a0e97c1a11b730cd688a58b680023336
 git+https://github.com/carboncredits/biomass-recovery@9e54f80832a7eca915ebd13b03df9db2a08aee9d
 
 # developement
