@@ -111,138 +111,123 @@ def generate_slope(input_elevation_directory: str, output_slope_directory: str):
             continue
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            elevation = RasterLayer.layer_from_file(elev_path)
+            with RasterLayer.layer_from_file(elev_path) as elevation:
 
-            logging.info("Area of elevation tile %a", elevation.area)
-            _easting, _northing, lower_code, lower_letter = utm.from_latlon(
-                elevation.area.bottom, elevation.area.left
-            )
-            _easting, _northing, upper_code, upper_letter = utm.from_latlon(
-                elevation.area.top, elevation.area.right
-            )
-
-            # FAST PATH -- with only one UTM zone the reprojection back has no issues
-            if lower_code == upper_code and lower_letter == upper_letter:
-                actual_utm_code = lower_code
-                warp(
-                    actual_utm_code,
-                    elev_path,
-                    elevation.pixel_scale.xstep,
-                    elevation.pixel_scale.ystep,
-                    out_path,
+                logging.info("Area of elevation tile %a", elevation.area)
+                _easting, _northing, lower_code, lower_letter = utm.from_latlon(
+                    elevation.area.bottom, elevation.area.left
                 )
-            else:
-                # SLOW PATH -- in the slow path, we have to break the elevation raster into
-                # UTM sections and do the above to each before reprojecting back and recombining
+                _easting, _northing, upper_code, upper_letter = utm.from_latlon(
+                    elevation.area.top, elevation.area.right
+                )
 
-                # To capture the results here for later inspection just override the tmpdir variable
-                for actual_utm_code in range(lower_code, upper_code + 1):
-                    for utm_letter in crange(lower_letter, upper_letter):
-                        logging.debug("UTM(%s,%s)", actual_utm_code, utm_letter)
+                # FAST PATH -- with only one UTM zone the reprojection back has no issues
+                if lower_code == upper_code and lower_letter == upper_letter:
+                    actual_utm_code = lower_code
+                    warp(
+                        actual_utm_code,
+                        elev_path,
+                        elevation.pixel_scale.xstep,
+                        elevation.pixel_scale.ystep,
+                        out_path,
+                    )
+                else:
+                    # SLOW PATH -- in the slow path, we have to break the elevation raster into
+                    # UTM sections and do the above to each before reprojecting back and recombining
 
-                        # Note: we go a little bit around the UTM tiles and will crop them down to size later
-                        # this is to remove some aliasing effects.
-                        bbox = bounding_box_of_utm(actual_utm_code, utm_letter, UTM_EXPANSION_DEGREES)
+                    # To capture the results here for later inspection just override the tmpdir variable
+                    for actual_utm_code in range(lower_code, upper_code + 1):
+                        for utm_letter in crange(lower_letter, upper_letter):
+                            logging.debug("UTM(%s,%s)", actual_utm_code, utm_letter)
 
-                        # Crop the elevation tile to a UTM zone
-                        utm_layer = RasterLayer.empty_raster_layer_like(
-                            elevation, area=bbox
-                        )
-                        utm_id = f"{actual_utm_code}-{utm_letter}-{elevation_path}"
-                        utm_clip_path = os.path.join(tmpdir, utm_id)
-                        intersection = RasterLayer.find_intersection(
-                            [elevation, utm_layer]
-                        )
-                        result = RasterLayer.empty_raster_layer(
-                            intersection,
-                            elevation.pixel_scale,
-                            elevation.datatype,
-                            utm_clip_path,
-                            elevation.projection,
-                        )
-                        result.set_window_for_intersection(intersection)
-                        elevation.set_window_for_intersection(intersection)
-                        elevation.save(result)
+                            # Note: we go a little bit around the UTM tiles and will crop them down to size later
+                            # this is to remove some aliasing effects.
+                            bbox = bounding_box_of_utm(actual_utm_code, utm_letter, UTM_EXPANSION_DEGREES)
 
-                        # Flush elevation utm clip to disk
-                        del result
+                            # Crop the elevation tile to a UTM zone
+                            with RasterLayer.empty_raster_layer_like(elevation, area=bbox) as utm_layer:
+                                utm_id = f"{actual_utm_code}-{utm_letter}-{elevation_path}"
+                                utm_clip_path = os.path.join(tmpdir, utm_id)
+                                intersection = RasterLayer.find_intersection(
+                                    [elevation, utm_layer]
+                                )
+                            with RasterLayer.empty_raster_layer(
+                                intersection,
+                                elevation.pixel_scale,
+                                elevation.datatype,
+                                utm_clip_path,
+                                elevation.projection,
+                            ) as result:
+                                result.set_window_for_intersection(intersection)
+                                elevation.set_window_for_intersection(intersection)
+                                elevation.save(result)
 
-                        # Now warp into UTM, calculate slopes, and warp back
-                        slope_out_path = os.path.join(tmpdir, "out-slope-" + utm_id)
-                        warp(
-                            actual_utm_code,
-                            utm_clip_path,
-                            elevation.pixel_scale.xstep,
-                            elevation.pixel_scale.ystep,
-                            slope_out_path,
-                        )
-
-                        # We now recrop the out-slope back to the bounding box we assumed at the start
-                        bbox_no_expand = bounding_box_of_utm(
-                            actual_utm_code, utm_letter, 0.0
-                        )
-                        slope_tif = RasterLayer.layer_from_file(slope_out_path)
-                        grid = RasterLayer.empty_raster_layer_like(
-                            slope_tif, area=bbox_no_expand
-                        )
-                        output_final = f"final-slope-{actual_utm_code}-{utm_letter}-{elevation_path}"
-                        final_path = os.path.join(tmpdir, output_final)
-                        logging.debug("Slope underlying %s", slope_tif._underlying_area) # pylint: disable=W0212
-                        logging.debug("Grid underling %s", grid._underlying_area) # pylint: disable=W0212
-                        try:
-                            intersection = RasterLayer.find_intersection([slope_tif, grid])
-                        except ValueError:
-                            logging.debug(
-                                "UTM (%s, %s) didn't intersect actual area %s",
+                            # Now warp into UTM, calculate slopes, and warp back
+                            slope_out_path = os.path.join(tmpdir, "out-slope-" + utm_id)
+                            warp(
                                 actual_utm_code,
-                                utm_letter,
-                                grid._underlying_area # pylint: disable=W0212
+                                utm_clip_path,
+                                elevation.pixel_scale.xstep,
+                                elevation.pixel_scale.ystep,
+                                slope_out_path,
                             )
-                            continue
-                        slope_tif.set_window_for_intersection(intersection)
-                        final = RasterLayer.empty_raster_layer(
-                            intersection,
-                            slope_tif.pixel_scale,
-                            slope_tif.datatype,
-                            final_path,
-                            slope_tif.projection,
-                        )
-                        logging.debug("Final underlying %s", final._underlying_area) # pylint: disable=W0212
-                        final.set_window_for_intersection(intersection)
-                        slope_tif.save(final)
 
-                        # Flush
-                        del final
+                            # We now recrop the out-slope back to the bounding box we assumed at the start
+                            bbox_no_expand = bounding_box_of_utm(
+                                actual_utm_code, utm_letter, 0.0
+                            )
+                            with RasterLayer.layer_from_file(slope_out_path) as slope_tif:
+                                with RasterLayer.empty_raster_layer_like(slope_tif, area=bbox_no_expand) as grid:
+                                    output_final = f"final-slope-{actual_utm_code}-{utm_letter}-{elevation_path}"
+                                    final_path = os.path.join(tmpdir, output_final)
+                                    logging.debug("Slope underlying %s", slope_tif._underlying_area) # pylint: disable=W0212
+                                    logging.debug("Grid underling %s", grid._underlying_area) # pylint: disable=W0212
+                                    try:
+                                        intersection = RasterLayer.find_intersection([slope_tif, grid])
+                                    except ValueError:
+                                        logging.debug(
+                                            "UTM (%s, %s) didn't intersect actual area %s",
+                                            actual_utm_code,
+                                            utm_letter,
+                                            grid._underlying_area # pylint: disable=W0212
+                                        )
+                                        continue
+                                    slope_tif.set_window_for_intersection(intersection)
+                                    with RasterLayer.empty_raster_layer(
+                                        intersection,
+                                        slope_tif.pixel_scale,
+                                        slope_tif.datatype,
+                                        final_path,
+                                        slope_tif.projection,
+                                    ) as final:
+                                        logging.debug("Final underlying %s", final._underlying_area) # pylint: disable=W0212
+                                        final.set_window_for_intersection(intersection)
+                                        slope_tif.save(final)
 
-                # Now to recombine the UTM gridded slopes into the slope tile
-                slopes = glob("final-slope-*", root_dir=tmpdir)
-                assert len(slopes) > 0
+                    # Now to recombine the UTM gridded slopes into the slope tile
+                    slopes = glob("final-slope-*", root_dir=tmpdir)
+                    assert len(slopes) > 0
 
-                # This sets the order a little better for the union of the layers
-                slopes.sort()
-                slopes.reverse()
+                    # This sets the order a little better for the union of the layers
+                    slopes.sort()
+                    slopes.reverse()
 
-                logging.info("Render order %s", slopes)
+                    logging.info("Render order %s", slopes)
 
-                combined = GroupLayer(
-                    [
-                        RasterLayer.layer_from_file(os.path.join(tmpdir, filename))
-                        for filename in slopes
-                    ]
-                )
+                    files = [os.path.join(tmpdir, filename) for filename in slopes]
+                    with GroupLayer.layer_from_files(files) as combined:
+                        with RasterLayer.layer_from_file(elev_path) as elevation:
+                            intersection = RasterLayer.find_intersection([elevation, combined])
+                            combined.set_window_for_intersection(intersection)
+                            elevation.set_window_for_intersection(intersection)
 
-                elevation = RasterLayer.layer_from_file(elev_path)
-                intersection = RasterLayer.find_intersection([elevation, combined])
-                combined.set_window_for_intersection(intersection)
-                elevation.set_window_for_intersection(intersection)
+                            assembled_path = os.path.join(tmpdir, "patched.tif")
+                            with RasterLayer.empty_raster_layer_like(
+                                elevation, filename=assembled_path
+                            ) as result:
+                                combined.save(result)
 
-                assembled_path = os.path.join(tmpdir, "patched.tif")
-                result = RasterLayer.empty_raster_layer_like(
-                    elevation, filename=assembled_path
-                )
-                combined.save(result)
-
-                shutil.move(assembled_path, out_path)
+                        shutil.move(assembled_path, out_path)
 
 
 def main() -> None:
