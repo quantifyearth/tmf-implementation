@@ -20,6 +20,7 @@ params:
   carbon_density_path: null
   additionality_path: null
   verbose: false
+  branch: null
 ---
 
 ```{r include=FALSE}
@@ -825,3 +826,10 @@ Leakage and permanence are two factors that affect the long-term emissions reduc
 You can find out more about our plans to deal with leakage and permanence in our [explainer page](https://4c.cst.cam.ac.uk/about/additionality-leakage-and-permanence), and in [the full PACT methodology](https://www.cambridge.org/engage/api-gateway/coe/assets/orp/resource/item/647a14a14f8b1884b7b97b55/original/pact-tropical-moist-forest-accreditation-methodology.pdf).
 
 "}`
+
+---
+
+### Reproducibility
+
+This report was generated on `r format(Sys.Date(), "%B %d, %Y")` using the `r branch` of the [tmf-implementation code](https://github.com/quantifyearth/tmf-implementation).
+
