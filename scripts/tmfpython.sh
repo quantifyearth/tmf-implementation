@@ -11,7 +11,7 @@
 #NB running evaluations requires the evaluations code
 
 # Check which branch is currently checked out
-#current_branch=$(git rev-parse --abbrev-ref HEAD)
+branch=$(git rev-parse --abbrev-ref HEAD)
 
 set -e
 
@@ -206,5 +206,5 @@ echo "--Additionality calculated.--"
 # Knit report file
 if [ "$report" == "true" ]; then
     report_output_file="${output_dir}/${proj}_report.html"
-    Rscript -e "rmarkdown::render(input='./scripts/pipeline_results.Rmd',output_file='${report_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}'))"
+    Rscript -e "rmarkdown::render(input='./scripts/pipeline_results.Rmd',output_file='${report_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}))"
 fi
