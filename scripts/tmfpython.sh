@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#run with command: scripts/tmfpython.sh -i 'maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out' -p 1113 -t 2010 ...
+#run with command: scripts/tmfpython.sh -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out' -p 1113 -t 2010 ...
 #i: input dir - directory containing project shapefiles
 #o: output dir - directory containing pipeline outputs
 #p: project name/ID - must match name of shapefile
@@ -11,14 +11,14 @@
 #NB running evaluations requires the evaluations code
 
 # Check which branch is currently checked out
-#current_branch=$(git rev-parse --abbrev-ref HEAD)
+branch=$(git rev-parse --abbrev-ref HEAD)
 
 set -e
 
 ############ DEFAULTS ###############
 
-input_dir="/maps/aew85/projects"
-output_dir="/maps/aew85/tmf_pipe_out"
+input_dir=""
+output_dir=""
 eval_year=2022
 verbose=true
 
@@ -200,5 +200,5 @@ deactivate
 if [ "$verbose" == "true" ]; then
 evaluations_dir="~/evaluations"
 ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',eval_year='${eval_year}',input_dir='${input_dir}',output_dir='${output_dir}'))"
+Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
 fi
