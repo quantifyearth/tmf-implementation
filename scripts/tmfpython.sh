@@ -8,8 +8,6 @@
 #e: evaluation year (default: 2022)
 #v: verbose - whether to run an ex-ante evaluation and knit the results in an R notebook (true/false, default: false).
 
-#NB running evaluations requires the evaluations code
-
 # Check which branch is currently checked out
 branch=$(git rev-parse --abbrev-ref HEAD)
 
@@ -198,7 +196,6 @@ deactivate
 
 # Run ex-ante evaluation
 if [ "$verbose" == "true" ]; then
-evaluations_dir="~/evaluations"
-ea_output_file="${evaluations_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
+ea_output_file="${output_dir}/${proj}_ex_ante_evaluation.html"
+Rscript -e "rmarkdown::render(input='scripts/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
 fi
