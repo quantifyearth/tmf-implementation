@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#run with command: scripts/tmfpython.sh -i 'maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out' -p 1113 -t 2010 ...
+#run with command: scripts/tmfpython.sh -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out' -p 1113 -t 2010 ...
 #i: input dir - directory containing project shapefiles
 #o: output dir - directory containing pipeline outputs
 #p: project name/ID - must match name of shapefile
