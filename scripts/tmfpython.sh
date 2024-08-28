@@ -197,5 +197,5 @@ deactivate
 # Run ex-ante evaluation
 if [ "$verbose" == "true" ]; then
 ea_output_file="${output_dir}/${proj}_ex_ante_evaluation.html"
-Rscript -e "rmarkdown::render(input='scripts/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
+Rscript -e "rmarkdown::render(input='evaluations/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
 fi
