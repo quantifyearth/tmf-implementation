@@ -6,7 +6,7 @@
 #p: project name/ID - must match name of shapefile
 #t: year of project start (t0)
 #e: evaluation year (default: 2022)
-#v: verbose - whether to run an ex-ante evaluation and knit the results in an R notebook (true/false, default: false).
+#v: report - whether to run an ex-ante evaluation and knit the results in an R notebook (true/false, default: true).
 
 # Check which branch is currently checked out
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -18,7 +18,7 @@ set -e
 input_dir=""
 output_dir=""
 eval_year=2022
-verbose=true
+report=true
 
 #####################################
 
@@ -31,7 +31,7 @@ function display_help() {
     echo "  -p <proj>           Project name"
     echo "  -t <t0>             Start year"
     echo "  -e <year>           Evaluation year"
-    echo "  -v <verbose>        Knit ex ante evaluation as .Rmd? (true/false)"
+    echo "  -r <report>        Knit ex ante evaluation as .Rmd? (true/false)"
     echo "  -h                  Display this help message"
     echo "Example:"
     echo "  $0 -i '/maps/aew85/projects' -o '/maps/aew85/tmf_pipe_out -p 1201 -t 2012"
@@ -46,7 +46,7 @@ do
         p) proj=${OPTARG};;
         t) t0=${OPTARG};;
         e) eval_year=${OPTARG};;
-        r) verbose=${OPTARG};;
+        r) report=${OPTARG};;
         h) display_help; exit 0;;
         *) echo "Invalid option: -${OPTARG}" >&2; display_help; exit 1;;
     esac
@@ -57,7 +57,7 @@ echo "Output directory: $output_dir"
 echo "Project: $proj"
 echo "t0: $t0"
 echo "Evaluation year: $eval_year"
-echo "Ex-ante evaluation: $verbose"
+echo "Ex-ante evaluation: $report"
 
 if [ $# -eq 0 ]; then
     display_help
@@ -195,7 +195,7 @@ echo "--Pairs matched.--"
 deactivate
 
 # Run ex-ante evaluation
-if [ "$verbose" == "true" ]; then
+if [ "$report" == "true" ]; then
 ea_output_file="${output_dir}/${proj}_ex_ante_evaluation.html"
 Rscript -e "rmarkdown::render(input='evaluations/ex_ante_evaluation_template.Rmd',output_file='${ea_output_file}',params=list(proj='${proj}',t0='${t0}',input_dir='${input_dir}',output_dir='${output_dir}',branch='${branch}'))"
 fi
