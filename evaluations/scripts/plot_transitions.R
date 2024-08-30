@@ -56,6 +56,7 @@ plot_transitions <- function(data,t0,period_length,shapefile){
     geom_point(alpha=0.5,size=0.5)+
     scale_colour_manual(values=c('yellow','orange','red','green'),name='Transition',labels=c('Undisturbed to degraded','Degraded to deforested','Undisturbed to deforested','Undisturbed to reforested'))+
     annotation_scale(text_cex = 1.3)+
+    coord_sf()+
     theme_void()
   
   return(plot)

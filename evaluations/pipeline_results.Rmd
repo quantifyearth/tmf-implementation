@@ -10,7 +10,7 @@ output:
 params:
   proj: null
   t0: null
-  eval_year: null
+  eval_year: 2022
   input_dir: null
   output_dir: null
   fullname: null
@@ -19,7 +19,6 @@ params:
   pairs_path: null
   carbon_density_path: null
   additionality_path: null
-  verbose: false
   branch: null
 ---
 
@@ -27,12 +26,11 @@ params:
 
 # TO KNIT THIS NOTEBOOK, RUN THE FOLLOWING LINE IN A POWERSHELL TERMINAL:
 
-# Rscript -e "rmarkdown::render(input='~/evaluations/R/pipeline_results.Rmd', output_file='~/evaluations/R/example_project.html', params=list(proj='example_project', t0=2010, ...))"
+# Rscript -e "rmarkdown::render(input='~/evaluations/R/ex_post_evaluation_template.Rmd', output_file='~/evaluations/R/example_project.html', params=list(proj='example_project', t0=2010, ...))"
 
-# Mandatory args: proj, t0, eval year
-# Optional args: input dir, output dir, fullname, country_path, shapefile path, pairs_path, carbon density path, verbose
-# You must either specify input dir and output dir OR provide absolute paths to each of the objects required (pairs, shapefile, carbon density, additionality, country list)
-# Verbose option includes additional descriptive text. Defaults to false.
+# mandatory args: proj, t0, eval year
+# optional args: input dir, output dir, fullname, country_path, shapefile path, pairs_path, carbon density path
+# You must either specify input dir and output dir OR provide absolute paths to each of the objects required
 
 ```
 
@@ -63,7 +61,7 @@ library(here)
 project_name <- params$proj
 start_year <- as.numeric(params$t0)
 evaluation_year <- as.numeric(params$eval_year)
-verbose <- params$verbose
+branch <- params$branch
 
 ```
 
@@ -84,14 +82,11 @@ if (!is.null(params$output_dir)) {
   data_path <- paste0(params$output_dir,'/',project_name)
 }
 
-```
+# get path to pairs
 
-```{r shapefile_path, echo=FALSE, message=FALSE}
-
-# add error message for shapefile
-
-if (is.null(params$input_dir) && is.null(params$shapefile)) {
-    warning("Error: insufficient information to read shapefile. To map the shapefile, you must provide either input_dir OR shapefile_path in params.")}
+if (!is.null(params$pairs_path)) {
+  pairs_path <- params$pairs_path
+} else { pairs_path <- file.path(data_path,'pairs') }
 
 # read shapefile
 
@@ -101,83 +96,39 @@ if (!is.null(params$input_dir)) {
 
 if (!is.null(params$shapefile_path)) {
   shapefile_path <- params$shapefile_path
-} else if(exists(input_dir)) { shapefile_path <- paste0(input_dir,'/',project_name,'.geojson') }
-if(exists(shapefile_path)) {shapefile <- read_sf(shapefile_path)}
-
-```
-
-```{r pairs_path, echo=FALSE, message=FALSE}
-
-# add error message for pairs
-
-if (is.null(params$output_dir) && is.null(params$pairs_path)) {
-    warning("Error: insufficient information to read pairs. To analyse pairs, you must provide either output_dir OR pairs_path in params.")}
-
-# get path to pairs
-
-if (!is.null(params$pairs_path)) {
-  pairs_path <- params$pairs_path
-} else if(exists(data_path)) {pairs_path <- file.path(data_path,'pairs') }
-
-```
-
-```{r carbon_density_path, echo=FALSE, message=FALSE}
-
-# add error message for carbon density
-
-if (is.null(params$output_dir) && is.null(params$carbon_density_path)) {
-    }
+} else { shapefile_path <- paste0(input_dir,'/',project_name,'.geojson') }
+shapefile <- read_sf(shapefile_path)
 
 # read carbon density
 
 if (!is.null(params$carbon_density_path)) {
   carbon_density_path <- params$carbon_density_path
-} else if(exists(data_path)) {carbon_density_path <- list.files(data_path,pattern='carbon',full.names=T)[1] }
-
-if(exists(carbon_density_path)) {
-    carbon_density <- read.csv(carbon_density_path)
-    } else {
-        warning("Error: insufficient information to read carbon density. To print carbon density information, you must provide either output_dir OR carbon_density_path in params.")}
-
-```
-
-```{r country_path, echo=FALSE, message=FALSE}
-
-# add error message for country
-
-if (is.null(params$output_dir) && is.null(params$country_path)) {
-    warning("Error: insufficient information to read country. To print country information, must provide either output_dir OR country_path in params.")}
+} else { carbon_density_path <- list.files(data_path,pattern='carbon',full.names=T)[1] }
+carbon_density <- read.csv(carbon_density_path)
 
 # read country path
 
 if (!is.null(params$country_path)) {
   country_path <- params$country_path
-} else if(exists(data_path)) {country_path <- list.files(path = data_path, pattern = "country-list", full.names = TRUE)[1]}
+} else { country_path <- list.files(path = data_path, pattern = "country-list", full.names = TRUE)}
 
-```
-
-```{r additionality_path, echo=FALSE, message=FALSE}
-
-# add error message for additionality
-
-if (is.null(params$output_dir) && is.null(params$additionality_path)) {
-    warning("Error: insufficient information to read additionality. To print additionality information, you must provide either output_dir OR additionality_path in params.")}
-
-if (!is.null(params$additionality_path)) {
-  additionality_path <- params$additionality_path
-} else if(exists(data_path)) {additionality_path <- list.files(path = data_path, pattern = "additionality", full.names = TRUE)[1]}
-if(exists(additionality_path)) {additionality <- read.csv(additionality_path)}
 
 ```
 
 ```{r read_pairs, echo=FALSE}
+
+# DEPENDING ON THE STRUCTURE OF THE OUTPUT DATA, THIS SECTION MAY NEED EDITING
+
+# reading in the pairs
+
+path_to_pairs <- file.path(data_path,'pairs')
   
 # get filenames and filter for matched points
 
-files_full_raw <- list.files(pairs_path,
+files_full_raw <- list.files(path_to_pairs,
                           pattern='*.parquet',full.names=T,recursive=F)
 files_full <- files_full_raw[!grepl('matchless',files_full_raw)]
-files_short_raw <- list.files(path=pairs_path,
+files_short_raw <- list.files(path=path_to_pairs,
                           pattern='*.parquet',full.names=F,recursive=F)
 files_short <- files_short_raw[!grepl('matchless',files_short_raw)]
 
@@ -224,42 +175,46 @@ data$type <- type
 
 ```
 
+```{r read_additionality, echo = FALSE}
+
+additionality <- read.csv(list.files(path = data_path, pattern = "additionality", full.names = TRUE))
+
+```
+
+
 ```{r get_shapefile_area, echo=FALSE}
-
-if(exists(shapefile)){
-    project_area_ha <- as.numeric(sum(st_area(st_make_valid(shapefile)))/10000)
-}
   
-
+project_area_ha <- as.numeric(sum(st_area(st_make_valid(shapefile)))/10000)
 
 ```
 
 ```{r get_country_names}
 
-if(exists(country_path)){
+# define function for extracting country names 
 
-    # define function for extracting country names 
+if (!is.null(params$country)) {
+  country_vec <- c(params$country)
+} else {
 
-    get_country_names <- function(country_codes_path) {
-        codes <- as.character(fromJSON(country_codes_path))
-        country_names <- countrycode(codes, 'iso2c', 'country.name')
-        country_names[country_names == 'Congo - Kinshasa'] <- 'Democratic Republic of the Congo'
-        return(country_names)
-    }
+  get_country_names <- function(country_codes_path) {
+    codes <- as.character(fromJSON(country_codes_path))
+    country_names <- countrycode(codes, 'iso2c', 'country.name')
+    country_names[country_names == 'Congo - Kinshasa'] <- 'Democratic Republic of the Congo'
+    return(country_names)
+  }
 
-    # read in country json and get names
-    country_vec <- get_country_names(country_path)
-
-    # define function for printing the country names if there are multiple
-
-    if (length(country_vec) > 1) {
-        country_string <- paste(country_vec[-length(country_vec)], collapse = ", ")
-        country_string <- paste(country_string, "and", country_vec[length(country_vec)])
-        } else {
-        country_string <- country_vec[1]
-    }
-
+  # read in country json and get names
+  country_vec <- get_country_names(list.files(path = data_path, pattern = "country-list", full.names = TRUE))
 }
+
+  # define function for printing the country names if there are multiple
+
+  if (length(country_vec) > 1) {
+    country_string <- paste(country_vec[-length(country_vec)], collapse = ", ")
+    country_string <- paste(country_string, "and", country_vec[length(country_vec)])
+  } else {
+    country_string <- country_vec[1]
+  }
 
 
 ```
@@ -268,7 +223,7 @@ if(exists(country_path)){
 
 # About the project
 
-`r project_name %>% str_replace_all("_", " ") %>% str_to_title()` is located in `r if(exists("country_string")) country_string`. The project started in `r start_year` and has an area of `if (exists("project_area_ha")) r format(project_area_ha, big.mark = ",", scientific = FALSE, digits = 3)` hectares.
+`r project_name %>% str_replace_all("_", " ") %>% str_to_title()` is located in `r country_string`. The project started in `r start_year` and has an area of `r format(project_area_ha, big.mark = ",", scientific = FALSE, digits = 3)` hectares.
 
 ```{r echo=FALSE}
 
@@ -284,8 +239,6 @@ if(exists(country_path)){
 
 # Introduction to the 4C methodology
 
-`r if(verbose==true){"
-
 The 4C method for calculating the additionality of a project is based on pixel matching. This approach allows us to identify places which are similar to the project but are not protected. We can then measure deforestation in these places and use this as our counterfactual scenario (what would have happened in the absence of the project) against which we measure the impact that the project has had.
 
 More information about 4C's approach can be found below.
@@ -298,10 +251,6 @@ More information about 4C's approach can be found below.
 
 [The full PACT methodology](https://www.cambridge.org/engage/coe/article-details/657c8b819138d23161bb055f)
 
-"}`
-
-
-
 \
 
 # Additionality summary
@@ -312,18 +261,14 @@ The graph below shows the annual trend in additionality from 10 years before the
 
 ```{r additionality_summary, echo=FALSE}
 
-if(exists(additionality)) {
-    additionality %>% ggplot(aes(x = year, y = additionality)) +
-    geom_vline(xintercept = start_year, alpha = 0.4) +
-    geom_hline(yintercept = 0, alpha = 0.4, linetype = 'dashed') +
-    #annotate(geom='text',x=start_year,y=10000,label='Project start',size=5,colour='grey50')+
-    geom_line() +
-    xlab('Year') +
-    ylab(expression(paste('Additionality (Mg ',  CO[2], "e)", sep = '')))+
-    theme_classic()
-} else {print("Additionality information not available")}
-
-
+additionality %>% ggplot(aes(x = year, y = additionality)) +
+  geom_vline(xintercept = start_year, alpha = 0.4) +
+  geom_hline(yintercept = 0, alpha = 0.4, linetype = 'dashed') +
+  #annotate(geom='text',x=start_year,y=10000,label='Project start',size=5,colour='grey50')+
+  geom_line() +
+  xlab('Year') +
+  ylab(expression(paste('Additionality (Mg ',  CO[2], "e)", sep = '')))+
+  theme_classic()
 
 ```
 
@@ -335,9 +280,7 @@ Raw values are also presented below.
 
 ```{r echo=FALSE}
 
-if(exists(additionality)) {
-    additionality %>% rename(Additionality = additionality, Year = year)
-} else {print("Additionality information not available")}
+additionality %>% rename(Additionality = additionality, Year = year)
 
 ```
 
@@ -361,54 +304,47 @@ Below we show the location of the counterfactual matching points (shown in blue)
 
 ```{r match_locations, warning=FALSE, echo=FALSE, message=FALSE}
 
-if(exists(shapefile) & exists(country_vec) & exists(data)) {
+# downsample no. of points by 90%
 
-    # downsample by 90%
+if(nrow(data) > 20000){
+  data_forplot <- data %>% sample_frac(0.1)
+} else {
+  data_forplot <- data
+}
 
-    if(nrow(data) > 20000){
-    data_forplot <- data %>% sample_frac(0.1)
-    } else {
-    data_forplot <- data
-    }
+# plot location of matching points
 
-    # plot location of matching points
+country_map <- ne_countries(country = country_vec, returnclass = "sf", scale= "large")
 
-    country_map <- ne_countries(country = country_vec, returnclass = "sf", scale= "large")
+# transform crs
 
-    # transform crs
+shapefile <- st_transform(shapefile, st_crs(country_map))
 
-    shapefile <- st_transform(shapefile, st_crs(country_map))
+ggplot(data=country_map) + 
+  geom_sf(colour=NA,fill='grey80')+
+  geom_point(data=data_forplot,mapping=aes(x=lng,y=lat,colour=type),alpha=0.5,size=0.5) + 
+  scale_color_manual(values=c('blue','red'))+
+  coord_sf()+
+  theme_void()+
+  annotation_scale(text_cex=1.5,location='tl')+
+  theme(legend.title = element_blank(),
+        text=element_text(size=20))
 
-    ggplot(data=country_map) + 
-    geom_sf(colour='black',fill='grey90',linewidth=1.2)+
-    geom_point(data=data_forplot,mapping=aes(x=lng,y=lat,colour=type),alpha=0.5) + 
-    geom_sf(data=shapefile,fill='red',colour=NA,inherit.aes=F)+
-    scale_color_manual(values=c('blue','red'))+
-    coord_sf()+
-    theme_void()+
-    annotation_scale(text_cex=1.5,location='tl')+
-    theme(legend.title = element_blank(),
-            text=element_text(size=20))
+xmin <- filter(data, type=='Project') %>% select(lng) %>% min()
+xmax <- filter(data, type=='Project') %>% select(lng) %>% max()
+ymin <- filter(data, type=='Project') %>% select(lat) %>% min()
+ymax <- filter(data, type=='Project') %>% select(lat) %>% max()
 
-    xmin <- filter(data, type=='Project') %>% select(lng) %>% min()
-    xmax <- filter(data, type=='Project') %>% select(lng) %>% max()
-    ymin <- filter(data, type=='Project') %>% select(lat) %>% min()
-    ymax <- filter(data, type=='Project') %>% select(lat) %>% max()
-
-    ggplot(data=country_map) + 
-    geom_sf(colour='black',fill='grey90',linewidth=1.2)+
-    geom_point(data=data_forplot,mapping=aes(x=lng,y=lat,colour=type),alpha=0.5) + 
-    geom_sf(data=shapefile,fill='red',colour=NA,inherit.aes=F)+
-    scale_color_manual(values=c('blue','red'))+
-    coord_sf(xlim=c(xmin-0.5,xmax+0.5),ylim=c(ymin-0.5,ymax+0.5))+
-    theme_void()+
-    annotation_scale(text_cex=1.5,location='tl')+
-    theme(legend.title = element_blank(),
-            text=element_text(size=16),
-            legend.position='none')
-
-} else {print("Insufficient information available to map points")}
-
+ggplot(data=country_map) + 
+  geom_sf(colour=NA,fill='grey80')+
+  geom_point(data=data_forplot,mapping=aes(x=lng,y=lat,colour=type),alpha=0.5,size=0.5) + 
+  scale_color_manual(values=c('blue','red'))+
+  coord_sf(xlim=c(xmin-0.5,xmax+0.5),ylim=c(ymin-0.5,ymax+0.5))+
+  theme_void()+
+  annotation_scale(text_cex=1.5,location='tl')+
+  theme(legend.title = element_blank(),
+        text=element_text(size=16),
+        legend.position='none')
 
 ```
 
@@ -448,17 +384,11 @@ More information about the datasets we use can be found below:
 
 ```{r match_quality, warning=FALSE,message=FALSE, echo=FALSE}
 
-if(exists(data)) {
+# plot matches
 
-    # plot matches
+source(file.path(script_path,'plot_matchingvars.R'))
 
-    source(file.path(script_path,'plot_matchingvars.R'))
-
-    plot_matching_variables(data)
-
-} else {print("Insufficient information available to evaluate match quality")}
-
-
+plot_matching_variables(data)
 
 ```
 
@@ -474,48 +404,45 @@ In the below plot, the blue points indicate the SMD value (i.e. the amount of di
 
 ```{r smd}
 
-if(exists(data)) {
+source(file.path(script_path,'std_mean_diff.R'))
 
-    source(file.path(script_path,'std_mean_diff.R'))
+results <- std_mean_diff(path_to_pairs)
 
-    results <- std_mean_diff(pairs_path)
+# changing sign for interpretation
 
-    # changing sign for interpretation
+results$smd <- (-1)*results$smd
 
-    results$smd <- (-1)*results$smd
+# changing order of variables
 
-    # changing order of variables
+variables <- c('cpc10_d','cpc5_d','cpc0_d',
+                 'cpc10_u','cpc5_u','cpc0_u',
+                 'access','slope','elevation')
 
-    variables <- c('cpc10_d','cpc5_d','cpc0_d',
-                    'cpc10_u','cpc5_u','cpc0_u',
-                    'access','slope','elevation')
+# plotting
 
-    # plotting
+ ggplot(results,aes(x=smd,y=variable))+
+  #geom_boxplot(outlier.shape=NA,colour='blue')+
+  geom_point(colour='blue',fill='blue',alpha=0.3,size=4)+
+  geom_vline(xintercept=0)+
+  geom_vline(xintercept=0.25,lty=2,colour='grey30')+
+  geom_vline(xintercept=-0.25,lty=2,colour='grey30')+
+  scale_y_discrete(labels=c(bquote(Deforestation~t[-10]~("%")),
+                            bquote(Deforestation~t[-5]~("%")),
+                            bquote(Deforestation~t[0]~("%")),
+                            bquote(Forest~cover~t[-10]~("%")),
+                            bquote(Forest~cover~t[-5]~("%")),
+                            bquote(Forest~cover~t[0]~("%")),
+                            'Inaccessibility (mins)',paste0('Slope (',intToUtf8(176),')'),'Elevation (m)'))+
+  xlab('Standardised mean difference')+
+  xlim(-1,1)+
+  theme_classic()+
+  theme(axis.title.y=element_blank(),
+        legend.title=element_blank(),
+        legend.box.background=element_rect(),
+        legend.position='none',
+        text=element_text(size=20),
+        axis.text.y=element_text(size=20))
 
-    ggplot(results,aes(x=smd,y=variable))+
-    #geom_boxplot(outlier.shape=NA,colour='blue')+
-    geom_point(colour='blue',fill='blue',alpha=0.3,size=4)+
-    geom_vline(xintercept=0)+
-    geom_vline(xintercept=0.25,lty=2,colour='grey30')+
-    geom_vline(xintercept=-0.25,lty=2,colour='grey30')+
-    scale_y_discrete(labels=c(bquote(Deforestation~t[-10]~("%")),
-                                bquote(Deforestation~t[-5]~("%")),
-                                bquote(Deforestation~t[0]~("%")),
-                                bquote(Forest~cover~t[-10]~("%")),
-                                bquote(Forest~cover~t[-5]~("%")),
-                                bquote(Forest~cover~t[0]~("%")),
-                                'Inaccessibility (mins)',paste0('Slope (',intToUtf8(176),')'),'Elevation (m)'))+
-    xlab('Standardised mean difference')+
-    xlim(-1,1)+
-    theme_classic()+
-    theme(axis.title.y=element_blank(),
-            legend.title=element_blank(),
-            legend.box.background=element_rect(),
-            legend.position='none',
-            text=element_text(size=20),
-            axis.text.y=element_text(size=20))
-
-} else {print("Insufficient information available to evaluate match quality")}
 
 ```
 
@@ -535,7 +462,7 @@ Now focusing on deforestation within the project, we can examine the spatial dis
 
 \
 
-These transitions are shown in the plot below for the `r evaluation_year-start_year`-year period between `r start_year` and `r evaluation_year`. They are overlaid on the project area, shown in grey. If a transition is not shown, it did not occur in the period examined.
+These transitions are shown in the plot below for the `r evaluation_year-start_year`-year period between `r start_year` and `r evaluation_year`. They are overlaid on the project area, which is shown in grey. If a transition is not shown, it did not occur in the period examined.
 
 Data from [JRC tropical moist forest dataset](https://forobs.jrc.ec.europa.eu/TMF).
 
@@ -543,16 +470,11 @@ Data from [JRC tropical moist forest dataset](https://forobs.jrc.ec.europa.eu/TM
 
 ```{r deforestation_spatial_distribution, echo=FALSE, warning=FALSE}
 
+# plot deforestation within project
 
-if(exists(data)) {
+source(file.path(script_path,'plot_transitions.R'))
 
-    # plot deforestation within project
-
-    source(file.path(script_path,'plot_transitions.R'))
-
-    plot_transitions(data=data,t0=start_year,period_length=evaluation_year-start_year,shapefile=shapefile)
-
-} else {print("Insufficient information available to evaluate deforestation")}
+plot_transitions(data=data,t0=start_year,period_length=evaluation_year-start_year,shapefile=shapefile)
 
 
 ```
@@ -567,16 +489,14 @@ Here we compare various deforestation processes between the project and counterf
 
 ```{r proportions_undisturbed_degraded, echo=FALSE}
 
-if(exists(data)) {
+# obtaining the area of undisturbed and degraded forest at t0, for use later
 
-    # obtaining the area of undisturbed and degraded forest at t0, for use later
+source(file.path(script_path,'def_rate.R'))
 
-    source(file.path(script_path,'def_rate.R'))
+proj_data <- data  %>% filter(type=='Project')
 
-    prop_und <- get_prop_class(data=data,t0=start_year-10,class=1,type_value='Project')
-    prop_deg <- get_prop_class(data=data,t0=start_year-10,class=2,type_value='Project')
-
-} else {print("Insufficient information available to evaluate deforestation")}
+prop_und <- get_prop_class(data=proj_data,t0=start_year-10,class=1)
+prop_deg <- get_prop_class(data=proj_data,t0=start_year-10,class=2)
 
 ```
 
@@ -586,16 +506,11 @@ First we can calculate the average annual rate at which undisturbed forest is lo
 
 ```{r rate_of_forest_loss_percent, echo=FALSE}
 
-if(exists(data)) {
+source(file.path(script_path,'def_rate.R'))
+  
+df <- def_rate(data=data,t0=start_year,period_length=evaluation_year-start_year)
 
-    source(file.path(script_path,'def_rate.R'))
-    
-    df <- def_rate(data=data,t0=start_year,period_length=evaluation_year-start_year)
-
-    df %>% t() %>% data.frame() %>% rename('Rate of forest loss (%/year)' = 1)
-
-} else {print("Insufficient information available to evaluate deforestation")}
-
+df %>% t() %>% data.frame() %>% rename('Rate of forest loss (%/year)' = 1)
 
 ```
 
@@ -618,15 +533,11 @@ The rate of forest loss can be broken down into more specific processes, present
 
 ```{r separate_deforestation_processes_percent, echo=FALSE}
 
-if(exists(data)) {
+source(file.path(script_path,'def_rate.R'))
+  
+df_sep <- def_rate_seperate(data=data,t0=start_year,period_length=evaluation_year-start_year)
 
-    source(file.path(script_path,'def_rate.R'))
-    
-    df_sep <- def_rate_seperate(data=data,t0=start_year,period_length=evaluation_year-start_year)
-
-    df_sep
-
-} else {print("Insufficient information available to evaluate deforestation")}
+df_sep
 
 ```
 
@@ -656,17 +567,13 @@ The rates of overall forest loss and individual deforestation processes are show
 
 ```{r rate_of_forest_loss_ha, echo=FALSE}
 
-if(exists(data)) {
+df_ha <- df
 
-    df_ha <- df
+df_ha[1,1:2] <- (df_ha[1,1:2]/100)*project_area_ha*prop_und
 
-    df_ha[1,1:2] <- (df_ha[1,1:2]/100)*project_area_ha*prop_und
+colnames(df_ha) <- c('Project','Counterfactual')
 
-    colnames(df_ha) <- c('Project','Counterfactual')
-
-    df_ha %>% t() %>% data.frame() %>% rename('Rate of forest loss (ha/year)' = 1)
-
-} else {print("Insufficient information available to evaluate deforestation")}
+df_ha %>% t() %>% data.frame() %>% rename('Rate of forest loss (ha/year)' = 1)
 
 ```
 
@@ -676,19 +583,16 @@ if(exists(data)) {
 
 ```{r separate_deforestation_processes_ha, echo=FALSE}
 
-if(exists(data)) {
+source(file.path(script_path,'def_rate.R'))
 
-    source(file.path(script_path,'def_rate.R'))
+df_sep_ha <- df_sep
 
-    df_sep_ha <- df_sep
+df_sep_ha[df_sep_ha$`Forest type`=='Undisturbed forest',4] <- (df_sep_ha[df_sep_ha$`Forest type`=='Undisturbed forest',4]/100)*project_area_ha*prop_und
 
-    df_sep_ha[df_sep_ha$`Forest type`=='Undisturbed forest',4] <- (df_sep_ha[df_sep_ha$`Forest type`=='Undisturbed forest',4]/100)*project_area_ha*prop_und
+df_sep_ha[df_sep_ha$`Forest type`=='Disturbed forest',4] <- (df_sep_ha[df_sep_ha$`Forest type`=='Disturbed forest',4]/100)*project_area_ha*prop_deg
 
-    df_sep_ha[df_sep_ha$`Forest type`=='Disturbed forest',4] <- (df_sep_ha[df_sep_ha$`Forest type`=='Disturbed forest',4]/100)*project_area_ha*prop_deg
+df_sep_ha %>% rename('Rate (ha/year)' = 4)
 
-    df_sep_ha %>% rename('Rate (ha/year)' = 4)
-
-} else {print("Insufficient information available to evaluate deforestation")}
 
 ```
 
@@ -702,26 +606,22 @@ In the below plots, the vertical grey dashed line represents the start year of t
 
 ```{r luc_timeseries_all, echo=FALSE}
 
-if(exists(data)) {
+source(file.path(script_path,'land_cover_timeseries.R'))
 
-    source(file.path(script_path,'land_cover_timeseries.R'))
+df <- get_luc_timeseries(data,t0=start_year,tend=evaluation_year)
 
-    df <- get_luc_timeseries(data,t0=start_year,tend=evaluation_year)
-
-    df %>% mutate(
-    luc = as.factor(luc),
-    year = as.numeric(year)) %>% 
-    ggplot(aes(x=year,y=percentage,colour=luc,lty=type))+
-    geom_line(linewidth=1.5,alpha=0.5)+
-    geom_vline(xintercept=start_year,lty=2,colour='grey30')+
-    scale_colour_manual(values=c('darkgreen','gold2','orange3','steelblue2'),
-                        name='Land Use Class',labels=c('Undisturbed forest','Degraded forest','Deforested land','Regrowth'))+
-    scale_linetype_manual(name='Location',values=c('solid','dotted'),breaks=c('Project','Counterfactual'))+
-    xlab('Year')+
-    ylab('% cover')+
-    theme_classic()
-
-} else {print("Insufficient information available to evaluate deforestation")}
+df %>% mutate(
+  luc = as.factor(luc),
+  year = as.numeric(year)) %>% 
+  ggplot(aes(x=year,y=percentage,colour=luc,lty=type))+
+  geom_line(linewidth=1.5,alpha=0.5)+
+  geom_vline(xintercept=start_year,lty=2,colour='grey30')+
+  scale_colour_manual(values=c('darkgreen','gold2','orange3','steelblue2'),
+                      name='Land Use Class',labels=c('Undisturbed forest','Degraded forest','Deforested land','Regrowth'))+
+  scale_linetype_manual(name='Location',values=c('solid','dotted'),breaks=c('Project','Counterfactual'))+
+  xlab('Year')+
+  ylab('% cover')+
+  theme_classic()
 
 ```
 
@@ -738,36 +638,33 @@ Here the trajectories are shown in red (project) and blue (counterfactual). They
 
 ```{r luc_timeseries, echo=FALSE}
 
-if(exists(data)) {
+source(file.path(script_path,'land_cover_timeseries.R'))
 
-    source(file.path(script_path,'land_cover_timeseries.R'))
+# caching result of land cover time series
+result <- luc_class1_uncertainty(data=data, t0=start_year, tend=evaluation_year)
 
-    # caching result of land cover time series
-    result <- luc_class1_uncertainty(data=data, t0=start_year, tend=evaluation_year)
+# calculating stats + plotting
 
-    # calculating stats + plotting
+result %>%
+  group_by(type,year) %>%
+  summarise(mean=mean(percent_class1),
+            se = sd(percent_class1) / sqrt(n()), # Standard error
+            t_critical = qt(0.975, df = n() - 1), # Critical t-value for 95% CI
+            ci_lower = mean - t_critical * se,
+            ci_upper = mean + t_critical * se,
+            .groups = 'drop') %>% 
+  ggplot(aes(x = year, y = mean, color = type)) +
+  geom_line(size = 1) + # Line for the mean
+  geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper, fill = type), alpha = 0.2) + # Confidence interval ribbon
+  labs(
+       x = "Year",
+       y = "% undisturbed forest") +
+  theme_classic() +
+  geom_vline(xintercept=start_year,lty=2,colour='grey30')+
+  scale_color_manual(values = c("Project" = "red", "Counterfactual" = "blue")) + 
+  scale_fill_manual(values = c("Project" = "red", "Counterfactual" = "blue")) +
+  theme(legend.title = element_blank())
 
-    result %>%
-    group_by(type,year) %>%
-    summarise(mean=mean(percent_class1),
-                se = sd(percent_class1) / sqrt(n()), # Standard error
-                t_critical = qt(0.975, df = n() - 1), # Critical t-value for 95% CI
-                ci_lower = mean - t_critical * se,
-                ci_upper = mean + t_critical * se,
-                .groups = 'drop') %>% 
-    ggplot(aes(x = year, y = mean, color = type)) +
-    geom_line(size = 1) + # Line for the mean
-    geom_ribbon(aes(ymin = ci_lower, ymax = ci_upper, fill = type), alpha = 0.2) + # Confidence interval ribbon
-    labs(
-        x = "Year",
-        y = "% undisturbed forest") +
-    theme_classic() +
-    geom_vline(xintercept=start_year,lty=2,colour='grey30')+
-    scale_color_manual(values = c("Project" = "red", "Counterfactual" = "blue")) + 
-    scale_fill_manual(values = c("Project" = "red", "Counterfactual" = "blue")) +
-    theme(legend.title = element_blank())
-
-} else {print("Insufficient information available to evaluate deforestation")}
 
 ```
 
@@ -783,24 +680,22 @@ More information on GEDI data is available [here](https://www.earthdata.nasa.gov
 
 ```{r carbon_density, echo=FALSE}
 
-if(exists(carbon_density)) {
+carbon_density <- read.csv(list.files(data_path,pattern='carbon',full.names=T)[1])
 
-    carbon_density <- carbon_density %>% mutate(
-    land.use.class = case_when(
-        land.use.class == 1 ~ 'Undisturbed',
-        land.use.class == 2 ~ 'Degraded',
-        land.use.class == 3 ~ 'Deforested',
-        land.use.class == 4 ~ 'Reforested',
-        land.use.class == 5 ~ 'Water',
-        land.use.class == 6 ~ 'Other')
-    )
+carbon_density <- carbon_density %>% mutate(
+  land.use.class = case_when(
+    land.use.class == 1 ~ 'Undisturbed',
+    land.use.class == 2 ~ 'Degraded',
+    land.use.class == 3 ~ 'Deforested',
+    land.use.class == 4 ~ 'Reforested',
+    land.use.class == 5 ~ 'Water',
+    land.use.class == 6 ~ 'Other')
+  )
 
 
-    colnames(carbon_density) <- c('Land Use Class', 'Carbon Density (Mg/Ha)')
+colnames(carbon_density) <- c('Land Use Class', 'Carbon Density (Mg/Ha)')
 
-    carbon_density
-
-} else {print("Carbon density not available")}
+carbon_density
 
 ```
 
@@ -809,8 +704,6 @@ if(exists(carbon_density)) {
 The additionality summary presented at the top of this document is based on the difference in the carbon loss estimates between the project and the counterfactual scenario.
 
 \
-
-`r if(verbose==true){"
 
 
 # Statement on leakage and permanence
@@ -825,11 +718,8 @@ Leakage and permanence are two factors that affect the long-term emissions reduc
 
 You can find out more about our plans to deal with leakage and permanence in our [explainer page](https://4c.cst.cam.ac.uk/about/additionality-leakage-and-permanence), and in [the full PACT methodology](https://www.cambridge.org/engage/api-gateway/coe/assets/orp/resource/item/647a14a14f8b1884b7b97b55/original/pact-tropical-moist-forest-accreditation-methodology.pdf).
 
-"}`
-
 ---
 
 ### Reproducibility
 
-This report was generated on `r format(Sys.Date(), "%B %d, %Y")` using the `r branch` of the [tmf-implementation code](https://github.com/quantifyearth/tmf-implementation).
-
+This report was generated on `r format(Sys.Date(), "%B %d, %Y")` using the branch `r branch` of the [tmf-implementation code](https://github.com/quantifyearth/tmf-implementation).
