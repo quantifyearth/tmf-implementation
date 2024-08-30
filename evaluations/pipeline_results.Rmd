@@ -33,6 +33,7 @@ params:
 # Optional args: input dir, output dir, fullname, country_path, shapefile path, pairs_path, carbon density path, verbose
 # You must either specify input dir and output dir OR provide absolute paths to each of the objects required (pairs, shapefile, carbon density, additionality, country list)
 # Verbose option includes additional descriptive text. Defaults to false.
+# Include name of pipeline branch with branch parameter for reproducibility.
 
 ```
 
