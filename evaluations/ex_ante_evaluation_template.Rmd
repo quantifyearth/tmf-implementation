@@ -733,7 +733,7 @@ Note that, in calculating carbon stock changes, we assume the following:
 
 - Belowground biomass (BGB) is 20% of AGB (based on Cairns et al. 1997)
 
-- Deadwod biomass is 11% of AGB (based on IPCC 2003)
+- Deadwood biomass is 11% of AGB (based on IPCC 2003)
 
 - Emitted carbon dioxide is 47% of total biomass (based on Martin and Thomas 2011)
 
@@ -741,8 +741,8 @@ Note that, in calculating carbon stock changes, we assume the following:
 \
 ```{r additionality_forecast}
 
-baseline_stocks <- data.frame(matrix(nrow=2*nrow(carbon_density),ncol=8))
-colnames(baseline_stocks) <- c('time','luc','agb','bgb','dwb','total_c','area','total_byarea')
+baseline_stocks <- data.frame(matrix(nrow=2*nrow(carbon_density),ncol=9))
+colnames(baseline_stocks) <- c('time','luc','agb','bgb','dwb','total','total_c','area','total_byarea')
 luc_counter <- 1
 row_counter <- 1
 
@@ -761,7 +761,7 @@ for(i in carbon_density$land.use.class){
     bgb <- agb*0.2
     dw <- agb*0.11
     total <- agb + bgb + dw
-    #total_co2 <- total*0.47 # we're doing this step later
+    total_c <- total*0.47
 
     # get area of class i
 
@@ -772,7 +772,7 @@ for(i in carbon_density$land.use.class){
 
     # multiply total by area
     
-    total_byarea <- total*area_of_forest
+    total_byarea <- total_c*area_of_forest
 
     # adding to df
 
@@ -782,8 +782,9 @@ for(i in carbon_density$land.use.class){
     baseline_stocks[row_counter,4] <- bgb
     baseline_stocks[row_counter,5] <- dw
     baseline_stocks[row_counter,6] <- total
-    baseline_stocks[row_counter,7] <- area_of_forest
-    baseline_stocks[row_counter,8] <- total_byarea
+    baseline_stocks[row_counter,7] <- total_c
+    baseline_stocks[row_counter,8] <- area_of_forest
+    baseline_stocks[row_counter,9] <- total_byarea
 
     row_counter <- row_counter+1
 
@@ -803,11 +804,11 @@ baseline_stocks_format <- baseline_stocks_format[2:6]
 
 colnames(baseline_stocks_format) <- c(
                                  'Land use class',
-                                 'AGB density (t C / ha)',
-                                 'BGB density (t C / ha)',
-                                 'Deadwood biomass density (t C / ha)', 
-                                 'Total biomass density (t C / ha)', 
-                                 'Total biomass (t C)')
+                                 'AGB (t / ha)',
+                                 'BGB (t / ha)',
+                                 'Deadwood biomass (t / ha)', 
+                                 'Total biomass (t / ha)', 
+                                 'Total carbon (t / ha)')
 
 
 # renaming classes
@@ -846,7 +847,7 @@ First we present the carbon stock changes observed in the matched points during 
 
 ```{r results}
 
-baseline_stock_changes <- baseline_stocks[c(1:2,7:8)]
+baseline_stock_changes <- baseline_stocks[c(1:2,8:9)]
 
 # reshape
 
@@ -882,7 +883,7 @@ baseline_stock_changes <- bind_rows(reshaped_data, total_row)
 # add in conversion to CO2
 
 baseline_stock_changes <- baseline_stock_changes  %>% 
-    mutate(co2_diff = 0.47*c_diff)
+    mutate(co2_diff = (44/12)*c_diff)
 
 # formatting bits
 
@@ -937,6 +938,7 @@ filtered_data %>%
   row_spec(last_row_index, bold = TRUE) 
 
 ```
+
 
 ```{r results_summary}
 
