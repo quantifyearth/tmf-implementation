@@ -1,40 +1,47 @@
+import argparse
 import datetime as dt
 import json
 import os
 import sys
 import tempfile
 
-import geopandas as gpd # type: ignore
+import geopandas as gpd  # type: ignore
 import pandas as pd
 import dotenv
 from biomassrecovery.data.gedi_cmr_query import query  # type: ignore
-from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape # type: ignore
+from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape  # type: ignore
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
 
 from methods.common import DownloadError
 
-# This is defined in biomassrecovery.environment too, but that file
-# is full of side-effects, so just import directly here.
+# load environment variables from .env file for Earthdata credentials
 dotenv.load_dotenv()
 EARTHDATA_USER = os.getenv("EARTHDATA_USER")
 EARTHDATA_PASSWORD = os.getenv("EARTHDATA_PASSWORD")
 
 
+# function to chunk large geometries into smaller pieces for easier processing
 def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
+    # set up the spatial reference (coordinate system) for the output
     output_spatial_ref = osr.SpatialReference()
-    output_spatial_ref.ImportFromEPSG(4326) # aka WSG84
+    output_spatial_ref.ImportFromEPSG(4326)  # WGS84 (standard for geographic coordinates)
 
-    destination_data_source = ogr.GetDriverByName('Memory').CreateDataSource('random name here')
-    working_layer = destination_data_source.CreateLayer("buffer", output_spatial_ref, geom_type=ogr.wkbMultiPolygon)
+    # create an in-memory layer to store the chunked geometries
+    destination_data_source = ogr.GetDriverByName('Memory').CreateDataSource('in_memory')
+    working_layer = destination_data_source.CreateLayer(
+        "buffer", output_spatial_ref, geom_type=ogr.wkbMultiPolygon
+    )
     feature_definition = working_layer.GetLayerDefn()
 
+    # process each feature (geometry) from the source layer
     input_feature = source.GetNextFeature()
     while input_feature:
         geometry = input_feature.GetGeometryRef()
         min_lng, max_lng, min_lat, max_lat = geometry.GetEnvelope()
 
         origin_lat = min_lat
+        # loop over latitude and longitude to create smaller polygon chunks
         while origin_lat < max_lat:
             far_lat = origin_lat + max_degrees
 
@@ -42,6 +49,7 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
             while origin_lng < max_lng:
                 far_lng = origin_lng + max_degrees
 
+                # create a new chunk based on the bounding box of coordinates
                 frame = {
                     'type': 'POLYGON',
                     'coordinates': [
@@ -56,6 +64,8 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
                 }
                 chunk = ogr.CreateGeometryFromJson(json.dumps(frame))
                 intersection = geometry.Intersection(chunk)
+
+                # only keep chunks that overlap with the original geometry
                 if not intersection.IsEmpty():
                     new_feature = ogr.Feature(feature_definition)
                     new_feature.SetGeometry(intersection)
@@ -67,32 +77,43 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 
     return destination_data_source
 
-def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
+
+# function to fetch GEDI data based on the boundary file and save it to directories
+def gedi_fetch(
+    boundary_file: str,
+    gedi_data_dir: str,
+    output_txt_dir: str,
+    start_year: int,
+    end_year: int
+) -> None:
+    # open the boundary file (GeoJSON, shapefile, etc.)
     boundary_dataset = ogr.Open(boundary_file)
     if boundary_dataset is None:
-        raise ValueError("Failed top open boundry file")
+        raise ValueError("Failed to open boundary file")
+
+    # create directories if they don't already exist
     os.makedirs(gedi_data_dir, exist_ok=True)
+    os.makedirs(output_txt_dir, exist_ok=True)
 
     boundary_layer = boundary_dataset.GetLayer()
+
+    # chunk the boundary geometries for easier processing
     chunked_dataset = chunk_geometry(boundary_layer, 0.4)
     chunked_layer = chunked_dataset.GetLayer()
 
     granule_metadatas = []
     chunk = chunked_layer.GetNextFeature()
-    # I had wanted to use the in-memory file system[0] that allegedly both GDAL and Geopandas support to do
-    # this, but for some reason despite seeing other use it in examples[1], it isn't working for me, and so
-    # I'm bouncing everything via the file system ¯\_(ツ)_/¯
-    # [0] https://gdal.org/user/virtual_file_systems.html#vsimem-in-memory-files
-    # [1] https://gis.stackexchange.com/questions/440820/loading-a-ogr-data-object-into-a-geodataframe
+
+    # use a temporary directory to store intermediary GeoJSON files
     with tempfile.TemporaryDirectory() as tmpdir:
         chunk_path = os.path.join(tmpdir, 'chunk.geojson')
         while chunk:
-            # The biomassrecovery code works in geopanddas shapes, so we need to
-            # cover this feature to a geopandas object
+            # get the geometry from the chunk and write it to a GeoJSON file
             geometry = chunk.GetGeometryRef()
 
+            # set up the output spatial reference for GeoJSON
             output_spatial_ref = osr.SpatialReference()
-            output_spatial_ref.ImportFromEPSG(4326) # aka WSG84
+            output_spatial_ref.ImportFromEPSG(4326)  # WGS84 (global coordinate system)
             destination_data_source = ogr.GetDriverByName('GeoJSON').CreateDataSource(chunk_path)
             working_layer = destination_data_source.CreateLayer(
                 "buffer",
@@ -103,48 +124,106 @@ def gedi_fetch(boundary_file: str, gedi_data_dir: str) -> None:
             new_feature = ogr.Feature(feature_definition)
             new_feature.SetGeometry(geometry)
             working_layer.CreateFeature(new_feature)
-            del destination_data_source # aka destination_data_source.Close()
+            del destination_data_source  # close the GeoJSON file
 
+            # read the GeoJSON as a GeoPandas dataframe for further processing
             shape = gpd.read_file(chunk_path)
 
-            # We set max_coords rather low (the upper bound is less than 5000) as some of
-            # our geometries are causing issues with being too precise and the coordinates
-            # not all being > 1m apart. Checking this for every geometry is a bit hard, so
-            # instead we approximate it by setting the bar for simplification much lower.
+            # simplify the shape to avoid excessive precision issues in coordinates
             shape = check_and_format_shape(shape, simplify=True, max_coords=200)
+
+            # query the GEDI data for this shape and specified time range
             result = query(
                 product=GediProduct.L4A,
-                date_range=(dt.datetime(2020, 1, 1, 0, 0), dt.datetime(2021, 1, 1, 0, 0)),
+                date_range=(dt.datetime(start_year, 1, 1), dt.datetime(end_year, 1, 1)),
                 spatial=shape
             )
             granule_metadatas.append(result)
 
+            # move to the next chunk
             chunk = chunked_layer.GetNextFeature()
 
+    # concatenate all metadata into a single dataframe and remove duplicates
     granule_metadata = pd.concat(granule_metadatas).drop_duplicates(subset="granule_name")
 
+    # write the granule names to a text file in the specified directory
+    granule_names = granule_metadata["granule_name"].tolist()
+    output_txt_path = os.path.join(output_txt_dir, "gedi_names.txt")
+    with open(output_txt_path, "w") as txt_file:
+        for name in granule_names:
+            txt_file.write(f"{name}\n")
+
+    # save each granule's metadata as a JSON file in the specified GEDI data directory
     for _, row in granule_metadata.iterrows():
         basename, _ = os.path.splitext(row.granule_name)
         with open(os.path.join(gedi_data_dir, f"{basename}.json"), "w", encoding='utf-8') as f:
-            f.write(json.dumps(
+            json.dump(
                 {
                     "name": row.granule_name,
                     "url": row.granule_url
-                }
-            ))
+                },
+                f
+            )
 
+
+# main function to handle input arguments and call the data-fetching function
 def main() -> None:
-    try:
-        boundary_file = sys.argv[1]
-        gedi_data_dir = sys.argv[2]
-    except IndexError:
-        print(f"Usage: {sys.argv[0]} BUFFER_BOUNDRY_FILE GEDI_DATA_DIRECTORY")
-        sys.exit(1)
-    except DownloadError as exc:
-        print(f"Failed to download: {exc.msg}")
-        sys.exit(1)
+    # set up argument parsing
+    parser = argparse.ArgumentParser(
+        description="Fetch GEDI data for the given boundary and save metadata as JSON and text files."
+    )
 
-    gedi_fetch(boundary_file, gedi_data_dir)
+    # add argument for the GEDI data directory where JSONs will be stored
+    parser.add_argument(
+        "--gedi-dir",
+        type=str,
+        required=True,
+        help="Directory to store the GEDI JSON data files"
+    )
+
+    # add argument for the boundary file (e.g., GeoJSON, shapefile)
+    parser.add_argument(
+        "--buffer",
+        type=str,
+        required=True,
+        help="Path to the buffer boundary file"
+    )
+
+    # add argument for the output folder to store the text file with granule names
+    parser.add_argument(
+        "--output-folder",
+        type=str,
+        required=True,
+        help="Output folder where the text file with granule names will be saved"
+    )
+
+    # add arguments for the start year and end year
+    parser.add_argument(
+        "--start-year",
+        type=int,
+        required=True,
+        help="Start year for querying GEDI data (inclusive)"
+    )
+
+    parser.add_argument(
+        "--end-year",
+        type=int,
+        required=True,
+        help="End year for querying GEDI data (inclusive)"
+    )
+
+    args = parser.parse_args()  # parse the arguments from the command line
+
+    # fetch GEDI data based on input parameters
+    gedi_fetch(
+        boundary_file=args.buffer,
+        gedi_data_dir=args.gedi_dir,
+        output_txt_dir=args.output_folder,
+        start_year=args.start_year,
+        end_year=args.end_year
+    )
+
 
 if __name__ == "__main__":
+    # run the main function if this script is executed
     main()
