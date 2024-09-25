@@ -75,8 +75,8 @@ if __name__ == "__main__":
 
     # Density may have left some LUCs out like water
     for _, row in density_df.iterrows():
-        luc = row["land use class"]
-        density[int(luc) - 1] = row["carbon density"]
+        luc = row["luc"]
+        density[int(luc) - 1] = row["carbon_density_median"]
 
     project_gpd = gpd.read_file(args.project_boundary_file)
     project_area_msq = area_for_geometry(project_gpd)

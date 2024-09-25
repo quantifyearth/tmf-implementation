@@ -4,6 +4,10 @@ requests
 pandas
 polars
 geopandas
+scikit-learn
+faiss-cpu
+pyarrow
+fastparquet
 scipy
 numba
 matplotlib
