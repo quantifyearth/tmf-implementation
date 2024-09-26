@@ -127,7 +127,7 @@ echo GEDI downloaded: `expr $tgediload - $tgediloc` seconds. | tee -a "$name_out
 --granules /maps/4C/gedi/granule/ \
 --buffer "${output_dir}/${proj}/buffer.geojson" \
 --csv "${output_dir}/${proj}/gedi_names.csv" \
---output  "${output_dir}/${proj}/gedi.geojson"
+--output  "${output_dir}/${proj}/gedi.geojson" \
 2>&1 | tee -a "$name_out".txt
 echo "--GEDI data filtered.--" | tee -a "$name_out".txt
 tgedifilt=`date +%s`
