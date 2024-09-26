@@ -80,10 +80,13 @@ tmfpython3 -m methods.inputs.generate_leakage --project "${input_dir}/${proj}.ge
 echo "--Leakage created.--"
 
 # Get GEDI data
-tmfpython3 -m methods.inputs.locate_gedi_data "${output_dir}/${proj}/buffer.geojson" /maps/4C/gedi/granule/info/
+tmfpython3 -m methods.inputs.locate_gedi_data --granules /maps/4C/gedi/granule/info/ \
+                                           --buffer "${output_dir}/${proj}/buffer.geojson" \
+                                           --output "${output_dir}/${proj}/gedi_names.csv"
 tmfpython3 -m methods.inputs.download_gedi_data /maps/4C/gedi/granule/info/* /maps/4C/gedi/granule/
-tmfpython3 -m methods.inputs.filter_gedi_data --buffer "${output_dir}/${proj}/buffer.geojson" \
-                                        --granules /maps/4C/gedi/granule/ \
+tmfpython3 -m methods.inputs.filter_gedi_data --granules /maps/4C/gedi/granule/ \
+                                        --buffer "${output_dir}/${proj}/buffer.geojson" \
+                                        --csv "${output_dir}/${proj}/gedi_names.csv" \
                                         --output  "${output_dir}/${proj}/gedi.geojson"
 tmfpython3 -m methods.inputs.generate_carbon_density --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
                                                 --gedi "${output_dir}/${proj}/gedi.geojson" \
@@ -194,7 +197,6 @@ tmfpython3 -m methods.matching.find_pairs \
 echo "--Pairs matched.--"
 
 #Calculate additionality
-tmfpython3 -m methods.outputs.calculate_additionality \
 --project "${input_dir}/${proj}.geojson" \
 --project_start "$t0" \
 --evaluation_year "$eval_year" \
