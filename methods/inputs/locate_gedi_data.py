@@ -2,9 +2,7 @@ import argparse
 import datetime as dt
 import json
 import os
-import sys
 import tempfile
-
 import geopandas as gpd  # type: ignore
 import pandas as pd
 import dotenv
@@ -12,8 +10,6 @@ from biomassrecovery.data.gedi_cmr_query import query  # type: ignore
 from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape  # type: ignore
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
-
-from methods.common import DownloadError
 
 # load environment variables from .env file for Earthdata credentials
 dotenv.load_dotenv()
@@ -82,7 +78,7 @@ def chunk_geometry(source: ogr.Layer, max_degrees: float) -> ogr.DataSource:
 def gedi_fetch(
     boundary_file: str,
     gedi_data_dir: str,
-    output_txt_dir: str,
+    output_csv: str,
     start_year: int,
     end_year: int
 ) -> None:
@@ -92,8 +88,9 @@ def gedi_fetch(
         raise ValueError("Failed to open boundary file")
 
     # create directories if they don't already exist
+    output_dir = os.path.dirname(output_csv)
     os.makedirs(gedi_data_dir, exist_ok=True)
-    os.makedirs(output_txt_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
     boundary_layer = boundary_dataset.GetLayer()
 
@@ -146,12 +143,8 @@ def gedi_fetch(
     # concatenate all metadata into a single dataframe and remove duplicates
     granule_metadata = pd.concat(granule_metadatas).drop_duplicates(subset="granule_name")
 
-    # write the granule names to a text file in the specified directory
-    granule_names = granule_metadata["granule_name"].tolist()
-    output_txt_path = os.path.join(output_txt_dir, "gedi_names.txt")
-    with open(output_txt_path, "w") as txt_file:
-        for name in granule_names:
-            txt_file.write(f"{name}\n")
+    # write the granule names to a .csv file as the output
+    granule_metadata.to_csv(output_csv, index=False)
 
     # save each granule's metadata as a JSON file in the specified GEDI data directory
     for _, row in granule_metadata.iterrows():
@@ -175,9 +168,10 @@ def main() -> None:
 
     # add argument for the GEDI data directory where JSONs will be stored
     parser.add_argument(
-        "--gedi-dir",
+        "--granules",
         type=str,
         required=True,
+        dest="gedi_dir",
         help="Directory to store the GEDI JSON data files"
     )
 
@@ -191,25 +185,10 @@ def main() -> None:
 
     # add argument for the output folder to store the text file with granule names
     parser.add_argument(
-        "--output-folder",
+        "--output",
         type=str,
         required=True,
-        help="Output folder where the text file with granule names will be saved"
-    )
-
-    # add arguments for the start year and end year
-    parser.add_argument(
-        "--start-year",
-        type=int,
-        required=True,
-        help="Start year for querying GEDI data (inclusive)"
-    )
-
-    parser.add_argument(
-        "--end-year",
-        type=int,
-        required=True,
-        help="End year for querying GEDI data (inclusive)"
+        help="Output .csv file with granule names will be saved"
     )
 
     args = parser.parse_args()  # parse the arguments from the command line
@@ -218,9 +197,9 @@ def main() -> None:
     gedi_fetch(
         boundary_file=args.buffer,
         gedi_data_dir=args.gedi_dir,
-        output_txt_dir=args.output_folder,
-        start_year=args.start_year,
-        end_year=args.end_year
+        output_csv=args.output,
+        start_year=2020,
+        end_year=2021,
     )
 
 
