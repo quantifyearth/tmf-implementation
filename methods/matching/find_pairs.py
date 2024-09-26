@@ -173,10 +173,20 @@ def find_match_iteration(
         match_cats
     )
     
+    logging.info("len(pairs): %s, len(matchless): %s", len(pairs), len(matchless))
+    if len(pairs) > 0:
+        combined_pairs = pd.concat(pairs, ignore_index=True)
+    else:
+        combined_pairs = pd.DataFrame()  # or handle accordingly
+    if len(matchless) > 0:
+        combined_matchless = pd.concat(matchless, ignore_index=True)
+    else:
+        combined_matchless = pd.DataFrame()  # or handle accordingly
+    
     # Combine all the pairs DataFrames in the list into a single DataFrame
-    combined_pairs = pd.concat(pairs, ignore_index=True)
+    #combined_pairs = pd.concat(pairs, ignore_index=True)
     # Combine all the matchess DataFrames in the list into a single DataFrame
-    combined_matchless = pd.concat(matchless, ignore_index=True)
+    #combined_matchless = pd.concat(matchless, ignore_index=True)
     logging.info("Finished greedy matching...")
     
     logging.info("Starting storing matches...")
