@@ -61,11 +61,9 @@ start=`date +%s`
 d=`date +%Y_%m_%d`
 name_time=out_"$proj"_"$luc_match"_"$d"_time
 name_out=out_"$proj"_"$luc_match"_"$d"_out
-name_memory=out_"$proj"_"$luc_match"_"$d"_memory
 
 touch "$name_time".txt
 touch "$name_out".txt
-touch "$name_memory".txt
 
 if [ "$luc_match" == "True" ]; then
 output_dir="/maps/epr26/tmf_pipe_out_luc_t"
@@ -95,7 +93,7 @@ echo "--Folder created.--" | tee -a "$name_out".txt
 /bin/time -f "\nMemory used by generate_boundary: %M KB" tmfpython3 -m methods.inputs.generate_boundary \
 --project "${input_dir}/${proj}.geojson" \
 --output "${output_dir}/${proj}/buffer.geojson" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Buffer created.--" | tee -a "$name_out".txt
 tbuffer=`date +%s`
 echo Buffer: `expr $tbuffer - $start` seconds. | tee -a "$name_time".txt
@@ -104,27 +102,24 @@ echo Buffer: `expr $tbuffer - $start` seconds. | tee -a "$name_time".txt
 /bin/time -f "\nMemory used by generate_leakage: %M KB" tmfpython3 -m methods.inputs.generate_leakage \
 --project "${input_dir}/${proj}.geojson" \
 --output "${output_dir}/${proj}/leakage.geojson" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Leakage created.--" | tee -a "$name_out".txt
 tleakage=`date +%s`
 echo Leakage: `expr $tleakage - $tbuffer` seconds. | tee -a "$name_time".txt
 
 # Get GEDI data
 /bin/time -f "\nMemory used by locate_gedi_data: %M KB" tmfpython3 -m methods.inputs.locate_gedi_data \
---gedi-dir /maps/4C/gedi/granule/info/ \
+--granules /maps/4C/gedi/granule/info/ \
 --buffer "${output_dir}/${proj}/buffer.geojson" \
---output-folder "${output_dir}/${proj}/" \
---start-year 2020 \
---end-year 2021 \
-#"${output_dir}/${proj}/buffer.geojson" /maps/4C/gedi/granule/info/ \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+--output "${output_dir}/${proj}/gedi_names.csv" \
+2>&1 | tee -a "$name_out".txt
 echo "--GEDI data located.--" | tee -a "$name_out".txt
 tgediloc=`date +%s`
 echo GEDI located: `expr $tgediloc - $tleakage` seconds. | tee -a "$name_time".txt
 
 /bin/time -f "\nMemory used by download_gedi_data: %M KB" tmfpython3 -m methods.inputs.download_gedi_data \
 /maps/4C/gedi/granule/info/* /maps/4C/gedi/granule/ \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--GEDI data downloaded.--" | tee -a "$name_out".txt
 tgediload=`date +%s`
 echo GEDI downloaded: `expr $tgediload - $tgediloc` seconds. | tee -a "$name_time".txt
@@ -132,9 +127,9 @@ echo GEDI downloaded: `expr $tgediload - $tgediloc` seconds. | tee -a "$name_tim
 /bin/time -f "\nMemory used by filter_gedi_data: %M KB" tmfpython3 -m methods.inputs.filter_gedi_data \
 --granules /maps/4C/gedi/granule/ \
 --buffer "${output_dir}/${proj}/buffer.geojson" \
---granule-list "${output_dir}/${proj}/gedi_names.txt" \
---output  "${output_dir}/${proj}/gedi.geojson" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+--csv "${output_dir}/${proj}/gedi_names.csv" \
+--output  "${output_dir}/${proj}/gedi.geojson"
+2>&1 | tee -a "$name_out".txt
 echo "--GEDI data filtered.--" | tee -a "$name_out".txt
 tgedifilt=`date +%s`
 echo GEDI filtered: `expr $tgedifilt - $tgediload` seconds. | tee -a "$name_time".txt
@@ -144,7 +139,7 @@ echo GEDI filtered: `expr $tgedifilt - $tgediload` seconds. | tee -a "$name_time
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --gedi "${output_dir}/${proj}/gedi.geojson" \
 --output "${output_dir}/${proj}/carbon-density.csv" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Carbon density calculated.--" | tee -a "$name_out".txt
 tcarbon=`date +%s`
 echo Carbon density: `expr $tcarbon - $tgedifilt` seconds. | tee -a "$name_time".txt
@@ -154,7 +149,7 @@ echo Carbon density: `expr $tcarbon - $tgedifilt` seconds. | tee -a "$name_time"
 --leakage "${output_dir}/${proj}/leakage.geojson" \
 --countries /maps/4C/osm_boundaries.geojson \
 --output "${output_dir}/${proj}/country-list.json" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Country list created.--" | tee -a "$name_out".txt
 tcountrylist=`date +%s`
 echo Country list: `expr $tcountrylist - $tcarbon` seconds. | tee -a "$name_time".txt
@@ -167,7 +162,7 @@ echo Country list: `expr $tcountrylist - $tcarbon` seconds. | tee -a "$name_time
 --ecoregions /maps/4C/ecoregions/ecoregions.geojson \
 --projects /maps/mwd24/tmf-data/projects \
 --output "${output_dir}/${proj}/matching-area.geojson" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Matching area created.--" | tee -a "$name_out".txt
 tmatcharea=`date +%s`
 echo Matching area: `expr $tmatcharea - $tcountrylist` seconds. | tee -a "$name_time".txt
@@ -178,7 +173,7 @@ echo Matching area: `expr $tmatcharea - $tcountrylist` seconds. | tee -a "$name_
 --matching "${output_dir}/${proj}/matching-area.geojson" \
 --zips "${output_dir}/srtm/zip" \
 --tifs "${output_dir}/srtm/tif" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--SRTM downloaded.--" | tee -a "$name_out".txt
 tsrtm=`date +%s`
 echo SRTM: `expr $tsrtm - $tmatcharea` seconds. | tee -a "$name_time".txt
@@ -187,7 +182,7 @@ echo SRTM: `expr $tsrtm - $tmatcharea` seconds. | tee -a "$name_time".txt
 /bin/time -f "\nMemory used by generate_slope: %M KB" tmfpython3 -m methods.inputs.generate_slope \
 --input "${output_dir}/srtm/tif" \
 --output "${output_dir}/slopes" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Slope created.--" | tee -a "$name_out".txt
 tslope=`date +%s`
 echo Slope: `expr $tslope - $tsrtm` seconds. | tee -a "$name_time".txt
@@ -197,12 +192,12 @@ echo Slope: `expr $tslope - $tsrtm` seconds. | tee -a "$name_time".txt
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --tiles "${output_dir}/srtm/tif" \
 --output "${output_dir}/rescaled-elevation" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 /bin/time -f "\nMemory used by rescale_tiles_to_jrc: %M KB" tmfpython3 -m methods.inputs.rescale_tiles_to_jrc \
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --tiles "${output_dir}/slopes" \
 --output "${output_dir}/rescaled-slopes" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--JRC rescaled.--" | tee -a "$name_out".txt
 tjrc=`date +%s`
 echo JRC tiles: `expr $tjrc - $tslope` seconds. | tee -a "$name_time".txt
@@ -213,7 +208,7 @@ echo JRC tiles: `expr $tjrc - $tslope` seconds. | tee -a "$name_time".txt
 --matching "${output_dir}/${proj}/matching-area.geojson" \
 --countries /maps/4C/osm_boundaries.geojson \
 --output "${output_dir}/${proj}/countries.tif" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Country raster created.--" | tee -a "$name_out".txt
 tcountryraster=`date +%s`
 echo Country raster: `expr $tcountryraster - $tjrc` seconds. | tee -a "$name_time".txt
@@ -231,7 +226,7 @@ echo Country raster: `expr $tcountryraster - $tjrc` seconds. | tee -a "$name_tim
 --access /maps/4C/access \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/k.parquet" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Set K created.--" | tee -a "$name_out".txt
 tk=`date +%s`
 echo K set: `expr $tk - $tcountryraster` seconds. | tee -a "$name_time".txt
@@ -250,12 +245,12 @@ echo K set: `expr $tk - $tcountryraster` seconds. | tee -a "$name_time".txt
 --access /maps/4C/access \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/matches" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 /bin/time -f "\nMemory used by build_m_raster: %M KB" tmfpython3 -m methods.matching.build_m_raster \
 --rasters_directory "${output_dir}/${proj}/matches" \
 --output "${output_dir}/${proj}/matches.tif" \
 -j 1 \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 /bin/time -f "\nMemory used by build_m_table: %M KB" tmfpython3 -m methods.matching.build_m_table \
 --raster "${output_dir}/${proj}/matches.tif" \
 --matching "${output_dir}/${proj}/matching-area.geojson" \
@@ -269,7 +264,7 @@ echo K set: `expr $tk - $tcountryraster` seconds. | tee -a "$name_time".txt
 --access /maps/4C/access \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/matches.parquet" \
-2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+2>&1 | tee -a "$name_out".txt
 echo "--Set M created.--" | tee -a "$name_out".txt
 tm=`date +%s`
 echo M set: `expr $tm - $tk` seconds. | tee -a "$name_time".txt
@@ -286,7 +281,7 @@ echo M set: `expr $tm - $tk` seconds. | tee -a "$name_time".txt
     --output "${output_dir}/${proj}/pairs" \
     --seed 42 \
     -j 1 \
-    2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+    2>&1 | tee -a "$name_out".txt
 echo "--Pairs matched.--" | tee -a "$name_out".txt
 tpairs=`date +%s`
 echo Pairs: `expr $tpairs - $tm` seconds. | tee -a "$name_time".txt
@@ -304,7 +299,7 @@ if [ "$current_branch" == "mwd-check-stopping-criteria" ]; then
     --matches "${output_dir}/${proj}/pairs" \
     --output "${output_dir}/${proj}/additionality.csv" \
     --stopping "${output_dir}/${proj}/stopping.csv" \
-    2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+    2>&1 | tee -a "$name_out".txt
     echo "--Additionality and stopping criteria calculated.--" | tee -a "$name_out".txt
     else
     /bin/time -f "\nMemory used by calculate_additionality: %M KB" tmfpython3 -m methods.outputs.calculate_additionality \
@@ -314,7 +309,7 @@ if [ "$current_branch" == "mwd-check-stopping-criteria" ]; then
     --density "${output_dir}/${proj}/carbon-density.csv" \
     --matches "${output_dir}/${proj}/pairs" \
     --output "${output_dir}/${proj}/additionality.csv" \
-    2>&1 | tee -a "$name_out".txt >> "$name_memory".txt
+    2>&1 | tee -a "$name_out".txt
     echo "--Additionality calculated.--" | tee -a "$name_out".txt
 fi
 tadditionality=`date +%s`
@@ -339,17 +334,17 @@ fi
 end=`date +%s`
 echo "$proj was done" | tee -a "$name_out".txt
 echo Total execution time: `expr $end - $start` seconds. | tee -a "$name_time".txt
-# echo GEDI located: `expr $tgediloc - $tleakage` seconds.
-# echo GEDI downloaded: `expr $tgediload - $tgediloc` seconds.
-# echo GEDI filtered: `expr $tgedifilt - $tgediload` seconds.
-# echo Carbon: `expr $tcarbon - $tgedifilt` seconds.
-# echo Country list: `expr $tcountrylist - $tcarbon` seconds.
-# echo Matching area: `expr $tmatcharea - $tcountrylist` seconds.
-# echo SRTM: `expr $tsrtm - $tmatcharea` seconds.
-# echo Slope: `expr $tslope - $tsrtm` seconds.
-# echo JRC tiles: `expr $tjrc - $tslope` seconds.
-# echo Country raster: `expr $tcountryraster - $tjrc` seconds.
-# echo K set: `expr $tk - $tcountryraster` seconds.
-# echo M set: `expr $tm - $tk` seconds.
-# echo Pairs: `expr $tpairs - $tm` seconds.
-# echo Additionality: `expr $tadditionality - $tpairs` seconds.
+echo GEDI located: `expr $tgediloc - $tleakage` seconds.
+echo GEDI downloaded: `expr $tgediload - $tgediloc` seconds.
+echo GEDI filtered: `expr $tgedifilt - $tgediload` seconds.
+echo Carbon: `expr $tcarbon - $tgedifilt` seconds.
+echo Country list: `expr $tcountrylist - $tcarbon` seconds.
+echo Matching area: `expr $tmatcharea - $tcountrylist` seconds.
+echo SRTM: `expr $tsrtm - $tmatcharea` seconds.
+echo Slope: `expr $tslope - $tsrtm` seconds.
+echo JRC tiles: `expr $tjrc - $tslope` seconds.
+echo Country raster: `expr $tcountryraster - $tjrc` seconds.
+echo K set: `expr $tk - $tcountryraster` seconds.
+echo M set: `expr $tm - $tk` seconds.
+echo Pairs: `expr $tpairs - $tm` seconds.
+echo Additionality: `expr $tadditionality - $tpairs` seconds.
