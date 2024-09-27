@@ -166,5 +166,6 @@ cython_debug/
 
 # Output log files
 out*.txt
+test.sh
 
 !requirements.txt
