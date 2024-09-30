@@ -169,3 +169,7 @@ out*.txt
 test.sh
 
 !requirements.txt
+# GEDI experimental scripts
+methods/special/
+methods/common/special_geometry.py
+gedi_test.sh
