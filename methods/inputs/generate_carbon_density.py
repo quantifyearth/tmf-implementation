@@ -1,4 +1,5 @@
 import argparse
+import glob
 import os
 import math
 from typing import Dict, List
@@ -7,6 +8,7 @@ import glob
 import geopandas as gpd  # type: ignore
 import numpy as np
 import pandas as pd
+from scipy import stats 
 from yirgacheffe.layers import RasterLayer, GroupLayer  # type: ignore
 
 def generate_carbon_density(
@@ -15,53 +17,72 @@ def generate_carbon_density(
     output_file: str
 ) -> None:
 
+    # validate the output file extension
     _, output_ext = os.path.splitext(output_file)
     output_ext = output_ext.lower()
     if output_ext not in ['.csv', '.parquet']:
         raise ValueError("We only support .csv and .parquet outputs.")
 
+    # load the jrc raster layers for 2020
     jrc_raster_layer = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename)) for filename in
             glob.glob("*2020*.tif", root_dir=jrc_directory_path)
     ], name="luc_2020")
 
+    # read the gedi data into a geodataframe
     gedi = gpd.read_file(gedi_data_file)
 
+    # get the pixel scale from the raster layer
     pixel_scale = jrc_raster_layer.pixel_scale
+
+    # initialize a dictionary to hold agbd values for each land use class
     luc_buckets: Dict[int, List[float]] = {}
 
+    # iterate over each gedi point
     for _, row in gedi.iterrows():
         agbd = row['agbd']
         point = row['geometry']
 
+        # compute the x and y offsets in the raster grid
         xoffset = math.floor((point.x - jrc_raster_layer.area.left) / pixel_scale.xstep)
         yoffset = math.floor((point.y - jrc_raster_layer.area.top) / pixel_scale.ystep)
 
-        # Check the JRC data around this cell
+        # check the JRC data around this cell
         surroundings = jrc_raster_layer.read_array(xoffset - 1, yoffset - 1, 3, 3)
+
+        # get the land use class at the center
         land_use_class = surroundings[1][1]
 
+        # check if all surrounding cells have the same land use class
         if not np.all(surroundings == land_use_class):
             continue
 
-        try:
-            luc_buckets[land_use_class].append(agbd)
-        except KeyError:
-            luc_buckets[land_use_class] = [agbd]
+        # add the agbd value to the corresponding land use class bucket
+        luc_buckets.setdefault(land_use_class, []).append(agbd)
 
-    land_use_class_list = list(luc_buckets.keys())
-    land_use_class_list.sort()
+    # get a sorted list of land use classes
+    land_use_class_list = sorted(luc_buckets.keys())
 
+    # prepare a list to collect results
     results = []
     for land_use_class in land_use_class_list:
-        median_agbd = np.median(luc_buckets[land_use_class])
-        bgbd = median_agbd * 0.2
-        deadwood_bd = median_agbd * 0.11
-        total = median_agbd + bgbd + deadwood_bd
-        carbon_density = total * 0.47
-        results.append([land_use_class, carbon_density])
+        # get the list of agbd values for this land use class
+        agbd_values = luc_buckets[land_use_class]
+        # compute the median agbd
+        median_agbd = np.median(agbd_values)
+        # append the results to the list
+        results.append([
+            land_use_class,
+            median_agbd
+        ])
 
-    output = pd.DataFrame(results, columns=["land use class", "carbon density"])
+    # create a dataframe from the results
+    output = pd.DataFrame(results, columns=[
+        "luc",
+        "carbon_density
+    ])
+
+    # write the output to a file
     match output_ext:
         case '.csv':
             output.to_csv(output_file, index=False)
@@ -71,7 +92,8 @@ def generate_carbon_density(
             assert False, "Extensions was validated earlier"
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Finds the country codes for those the project intersects with")
+    # parse command-line arguments
+    parser = argparse.ArgumentParser(description="Calculates carbon density for different land use classes")
     parser.add_argument(
         "--jrc",
         type=str,
@@ -95,6 +117,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # generate carbon density data
     generate_carbon_density(
         args.jrc_directory_path,
         args.gedi_data_file,

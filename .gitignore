@@ -173,3 +173,4 @@ test.sh
 methods/special/
 methods/common/special_geometry.py
 gedi_test.sh
+#.idea/
