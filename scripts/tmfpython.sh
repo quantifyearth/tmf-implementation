@@ -197,6 +197,7 @@ tmfpython3 -m methods.matching.find_pairs \
 echo "--Pairs matched.--"
 
 #Calculate additionality
+tmfpython3 -m methods.outputs.calculate_additionality \
 --project "${input_dir}/${proj}.geojson" \
 --project_start "$t0" \
 --evaluation_year "$eval_year" \
