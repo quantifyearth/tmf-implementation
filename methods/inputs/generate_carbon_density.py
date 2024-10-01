@@ -77,8 +77,8 @@ def generate_carbon_density(
 
     # create a dataframe from the results
     output = pd.DataFrame(results, columns=[
-        "luc",
-        "carbon_density
+        "land use class",
+        "carbon density"
     ])
 
     # write the output to a file
