@@ -7,7 +7,6 @@ from typing import Dict, List
 import geopandas as gpd  # type: ignore
 import numpy as np
 import pandas as pd
-from scipy import stats 
 from yirgacheffe.layers import RasterLayer, GroupLayer  # type: ignore
 
 def generate_carbon_density(
