@@ -17,13 +17,6 @@ if __name__ == "__main__":
         description="Computes leakage for a range of years using pre-calculated pixel matches."
     )
     parser.add_argument(
-        "--project",
-        type=str,
-        required=True,
-        dest="project_boundary_file",
-        help="GeoJSON files containing the polygons for the project's boundary",
-    )
-    parser.add_argument(
         "--leakage_zone",
         type=str,
         required=True,
@@ -85,11 +78,11 @@ if __name__ == "__main__":
         luc = row["land use class"]
         density[int(luc) - 1] = row["carbon density"]
 
-    project_gpd = gpd.read_file(args.project_boundary_file)
-    project_area_msq = area_for_geometry(project_gpd)
+    leakage_gpd = gpd.read_file(args.project_leakage_zone)
+    leakage_area_msq = area_for_geometry(leakage_gpd)
 
-    add = generate_additionality(
-        project_area_msq,
+    leakage = generate_additionality(
+        leakage_area_msq,
         args.project_start,
         args.evaluation_year,
         density,
@@ -100,5 +93,5 @@ if __name__ == "__main__":
     with open(args.output_csv, "w", encoding="utf-8") as file:
         writer = csv.writer(file)
         writer.writerow(["year", "leakage"])
-        for year, value in add.items():
+        for year, value in leakage.items():
             writer.writerow([year, value])
