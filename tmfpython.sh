@@ -276,6 +276,7 @@ echo M set: `expr $tmset - $tkset` seconds. | tee -a "$name_out".txt
     --k "${output_dir}/${proj}/k.parquet" \
     --m "${output_dir}/${proj}/matches.parquet" \
     --start_year "$t0" \
+    --evaluation_year "$eval_year" \
     --luc_match $luc_match \
     --output "${output_dir}/${proj}/pairs" \
     --seed 42 \

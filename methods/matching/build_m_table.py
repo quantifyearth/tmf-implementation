@@ -28,8 +28,8 @@ def build_m_table(
     matching_collection = build_layer_collection(
         merged_raster.pixel_scale,
         merged_raster.projection,
-        list(luc_range(start_year, evaluation_year)),
-        [start_year, start_year - 5, start_year - 10],
+        list(luc_range(start_year - 10, start_year)),
+        [start_year - 10, start_year - 15, start_year - 20],
         matching_zone_filename,
         jrc_directory_path,
         cpc_directory_path,
@@ -44,7 +44,7 @@ def build_m_table(
     assert matching_collection.boundary.area == merged_raster.area
 
     results = []
-    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
+    luc_columns = [f'luc_{year}' for year in luc_range(start_year - 10, start_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
 
