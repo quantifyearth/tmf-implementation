@@ -60,7 +60,11 @@ done
 start=`date +%s`
 
 if [ "$luc_match" == "True" ]; then
-    output_dir="/maps/epr26/tmf_pipe_out_luc_t"
+    if [ "$current_branch" == "epr26-forecast-time-offset" ]; then
+        output_dir="/maps/epr26/tmf_pipe_out_offset"
+    else
+        output_dir="/maps/epr26/tmf_pipe_out_luc_t"
+    fi
 else
     output_dir="/maps/epr26/tmf_pipe_out_luc_f"
 fi

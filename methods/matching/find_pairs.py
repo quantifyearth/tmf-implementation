@@ -115,7 +115,7 @@ def find_match_iteration(
     match_years = [start_year + year for year in RELATIVE_MATCH_YEARS]
     # The categorical columns:
     if luc_match:
-        match_cats = ["ecoregion", "country", "cluster"] + ["luc_" + str(year) for year in match_years]
+        match_cats = ["ecoregion", "country", "cluster"] + ["luc_-10", "luc_-5", "luc_0"]
     else:
         match_cats = ["ecoregion", "country", "cluster"]
     
@@ -247,6 +247,16 @@ def greedy_match(
     
     return (pairs, matchless)
 
+def rename_luc_columns(df, start_year):
+    # Define the range of years based on the central start_year
+    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed@@@should rewrite using luc_range()
+    new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
+    
+    # Rename columns based on the new column names mapping
+    renamed_df = df.rename(columns=new_column_names)
+    
+    return renamed_df
+
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
@@ -261,6 +271,10 @@ def find_pairs(
     logging.info("Loading M from %s", m_parquet_filename)
     m_pixels = pd.read_parquet(m_parquet_filename)
     
+    # rename columns of each: this is the key change
+    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
+    m_pixels_renamed = rename_luc_columns(m_pixels, start_year - 10)
+    
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
     
@@ -271,8 +285,8 @@ def find_pairs(
         pool.map(
             partial(
                 find_match_iteration,
-                k_pixels,
-                m_pixels,
+                k_pixels_renamed,
+                m_pixels_renamed,
                 start_year,
                 luc_match,
                 output_folder

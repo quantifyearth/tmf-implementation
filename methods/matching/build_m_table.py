@@ -55,11 +55,11 @@ def build_m_table(
         row_matches = merged_raster.read_array(0, yoffset, width, 1)
         if row_matches.sum() == 0:
             continue
-        row_elevation = matching_collection.elevation.read_array(0, yoffset, width, 1)
         row_ecoregion = matching_collection.ecoregions.read_array(0, yoffset, width, 1)
+        row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
+        row_elevation = matching_collection.elevation.read_array(0, yoffset, width, 1)
         row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
         row_access = matching_collection.access.read_array(0, yoffset, width, 1)
-        row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
         row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
         row_cpcs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.cpcs]
 
@@ -68,7 +68,6 @@ def build_m_table(
                 continue
 
             coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
-
             results.append([
                 coord[0],
                 coord[1],
@@ -77,7 +76,9 @@ def build_m_table(
                 row_slope[0][xoffset],
                 row_access[0][xoffset],
                 row_countries[0][xoffset],
-            ] + [luc[0][xoffset] for luc in row_lucs] + [cpc[0][xoffset] for cpc in row_cpcs])
+           ] + [luc[0][xoffset] for luc in row_lucs] + [cpc[0][xoffset] for cpc in row_cpcs])
+        print(f"results: {len(results[0])}")
+        print(f"columns: {len(columns)}")
 
 
     output = pl.DataFrame(results, columns)

@@ -52,7 +52,9 @@ def build_layer_collection(
 
     lucs = [
         GroupLayer([
-            RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename)) for filename in
+            RasterLayer.layer_from_file(
+                os.path.join(jrc_directory_path, filename)
+            ) for filename in
                 glob.glob(f"*{year}*.tif", root_dir=jrc_directory_path)
         ], name=f"luc_{year}") for year in luc_years
     ]
