@@ -279,10 +279,6 @@ def find_pairs(
     logging.info("Loading M from %s", m_parquet_filename)
     m_pixels = pd.read_parquet(m_parquet_filename)
     
-    # rename columns of each 
-    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
-    m_pixels_renamed = rename_luc_columns(m_pixels, start_year-10)
-    
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
     
@@ -293,9 +289,10 @@ def find_pairs(
         pool.map(
             partial(
                 find_match_iteration,
-                k_pixels_renamed,
-                m_pixels_renamed,
+                k_pixels,
+                m_pixels,
                 start_year,
+                eval_year,
                 luc_match,
                 output_folder
             ),
@@ -371,6 +368,7 @@ def main():
         args.k_filename,
         args.m_filename,
         args.start_year,
+        args.eval_year,
         args.luc_match,
         args.seed,
         args.output_directory_path,
