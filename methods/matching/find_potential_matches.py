@@ -97,6 +97,7 @@ def load_k(
     return source_trees
 
 def worker(
+    lagged: bool,
     worker_index: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
@@ -116,11 +117,16 @@ def worker(
     example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
     example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
 
+    if lagged:
+        lag_year = 10 # create time offset in matching set
+    else:
+        lag_year = 0
+
     matching_collection = build_layer_collection(
         example_jrc_layer.pixel_scale,
         example_jrc_layer.projection,
-        [start_year, start_year - 5, start_year - 10],
-        [start_year, start_year - 5, start_year - 10],
+        [start_year - lag_year, start_year - 5 - lag_year, start_year - 10 - lag_year],
+        [start_year - lag_year, start_year - 5 - lag_year, start_year - 10 - lag_year],
         matching_zone_filename,
         jrc_directory_path,
         cpc_directory_path,
@@ -204,6 +210,7 @@ def worker(
 
 def find_potential_matches(
     k_filename: str,
+    lagged: bool,
     start_year: int,
     evaluation_year: int,
     matching_zone_filename: str,
@@ -233,6 +240,7 @@ def find_potential_matches(
         ktree = load_k(k_filename, start_year)
 
         workers = [Process(target=worker, args=(
+            lagged,
             index,
             matching_zone_filename,
             jrc_directory_path,
@@ -278,6 +286,13 @@ def main():
         required=True,
         dest="matching_zone_filename",
         help="Filename of GeoJSON file desribing area from which matching pixels may be selected."
+    )
+    parser.add_argument(
+        "--lagged",
+        type=str,
+        required=True,
+        dest="lagged",
+        help="Boolean variable determining whether time-lagged matching will be used."
     )
     parser.add_argument(
         "--start_year",
@@ -358,9 +373,11 @@ def main():
         help="Number of concurrent threads to use."
     )
     args = parser.parse_args()
+    args.lagged = args.lagged.lower() == "true"
 
     find_potential_matches(
         args.k_filename,
+        args.lagged,
         args.start_year,
         args.evaluation_year,
         args.matching_zone_filename,

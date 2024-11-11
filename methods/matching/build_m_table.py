@@ -1,4 +1,5 @@
 import argparse
+import logging
 from multiprocessing import cpu_count
 
 import polars as pl
@@ -9,6 +10,7 @@ from methods.common.luc import luc_range
 
 def build_m_table(
     m_raster_path: str,
+    lagged: bool,
     start_year: int,
     evaluation_year: int,
     matching_zone_filename: str,
@@ -25,11 +27,18 @@ def build_m_table(
 
     merged_raster = RasterLayer.layer_from_file(m_raster_path)
 
+    if lagged:
+        luc_range_list = list(luc_range(start_year - 10, start_year))
+        lag_year = 10
+    else:
+        luc_range_list = list(luc_range(start_year, evaluation_year))
+        lag_year = 0
+
     matching_collection = build_layer_collection(
         merged_raster.pixel_scale,
         merged_raster.projection,
-        list(luc_range(start_year, evaluation_year)),
-        [start_year, start_year - 5, start_year - 10],
+        luc_range_list,
+        [start_year - lag_year, start_year - 5 - lag_year, start_year - 10 - lag_year],
         matching_zone_filename,
         jrc_directory_path,
         cpc_directory_path,
@@ -44,7 +53,10 @@ def build_m_table(
     assert matching_collection.boundary.area == merged_raster.area
 
     results = []
-    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
+    if lagged:
+        luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
+    else:
+        luc_columns = [f'luc_{year}' for year in luc_range(start_year - 10, start_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
 
@@ -77,11 +89,13 @@ def build_m_table(
                 row_access[0][xoffset],
                 row_countries[0][xoffset],
            ] + [luc[0][xoffset] for luc in row_lucs] + [cpc[0][xoffset] for cpc in row_cpcs])
-        print(f"results: {len(results[0])}")
-        print(f"columns: {len(columns)}")
 
 
     output = pl.DataFrame(results, columns)
+    print(f"lagged: {lagged}")
+    print(f"luc_range_list: {luc_range_list}")
+    print(f"luc_columns: {luc_columns}")
+    print(f"output.columns: {list(output.columns)}")
     output.write_parquet(result_dataframe_filename)
 
 
@@ -100,6 +114,13 @@ def main() -> None:
         required=True,
         dest="matching_zone_filename",
         help="Filename of GeoJSON file desribing area from which matching pixels may be selected."
+    )
+    parser.add_argument(
+        "--lagged",
+        type=str,
+        required=True,
+        dest="lagged",
+        help="Boolean variable determining whether time-lagged matching will be used."
     )
     parser.add_argument(
         "--start_year",
@@ -180,9 +201,11 @@ def main() -> None:
         help="Number of concurrent threads to use."
     )
     args = parser.parse_args()
+    args.lagged = args.lagged.lower() == "true"
 
     build_m_table(
         args.m_raster_filename,
+        args.lagged,
         args.start_year,
         args.evaluation_year,
         args.matching_zone_filename,

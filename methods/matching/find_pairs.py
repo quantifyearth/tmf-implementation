@@ -104,7 +104,9 @@ def calculate_smd(group1, group2):
 def find_match_iteration(
     k_pixels: pd.DataFrame,
     m_pixels: pd.DataFrame,
+    lagged: bool,
     start_year: int,
+    eval_year: int,
     luc_match: bool,
     output_folder: str,
     idx_and_seed: tuple[int, int]
@@ -115,19 +117,34 @@ def find_match_iteration(
     match_years = [start_year + year for year in RELATIVE_MATCH_YEARS]
     # The categorical columns:
     if luc_match:
-        match_cats = ["ecoregion", "country", "cluster"] + ["luc_-10", "luc_-5", "luc_0"]
+        if lagged:
+            match_cats = ["ecoregion", "country", "cluster"] + ["luc_-10", "luc_-5", "luc_0"]
+        else:
+            match_cats = ["ecoregion", "country", "cluster"] + ["luc_" + str(year) for year in match_years]
     else:
         match_cats = ["ecoregion", "country", "cluster"]
-    
+
     if(m_pixels.shape[0] > (k_pixels.shape[0])):
         m_sub_size = int(k_pixels.shape[0]) # First down sample M as it is ~230 million points    
         m_random_indices = np.random.choice(m_pixels.shape[0], size=m_sub_size, replace=False)
         m_pixels = m_pixels.iloc[m_random_indices]
-    
-    # concat m and k
-    km_pixels = pd.concat([k_pixels.assign(trt='trt', ID=range(0, len(k_pixels))),
-                        m_pixels.assign(trt='ctrl', ID=range(0, len(m_pixels)))], ignore_index=True)
-    
+    logging.info("match_cats: %s", match_cats)
+    logging.info("k_pixels.columns: %s", list(k_pixels.columns))
+    logging.info("m_pixels.columns: %s", list(m_pixels.columns))
+
+    if lagged:
+        # rename columns of each: this is the key change
+        k_pixels_renamed = rename_luc_columns(k_pixels, start_year, eval_year)
+        m_pixels_renamed = rename_luc_columns(m_pixels, start_year - 10, eval_year)
+
+        # concat m and k
+        km_pixels = pd.concat([k_pixels_renamed.assign(trt='trt', ID=range(0, len(k_pixels))),
+                            m_pixels_renamed.assign(trt='ctrl', ID=range(0, len(m_pixels)))], ignore_index=True)
+    else:
+        # concat m and k
+        km_pixels = pd.concat([k_pixels.assign(trt='trt', ID=range(0, len(k_pixels))),
+                            m_pixels.assign(trt='ctrl', ID=range(0, len(m_pixels)))], ignore_index=True)
+
     # Extract only the continuous columns
     km_pixels_distance = km_pixels[DISTANCE_COLUMNS]
     # PCA transform and conversion to 32 bit ints
@@ -161,7 +178,7 @@ def find_match_iteration(
     # Take corresponding random samples from the PCA transformed K and M 
     k_sub_pca = k_pca[k_random_indices,:]
     m_sub_pca = m_pca[m_random_indices,:]
-    
+
     logging.info("Starting greedy matching... k_sub.shape: %s, m_sub.shape: %s",
                  k_sub.shape, m_sub.shape)
     
@@ -207,7 +224,7 @@ def greedy_match(
 ):
     # Identify the unique combinations of categorical columns
     k_cat_combinations = k_sub[match_cats].drop_duplicates().sort_values(by=match_cats, ascending=[True] * len(match_cats))
-    
+
     # Not all pixels may have matches
     pairs = []
     matchless = []
@@ -216,6 +233,7 @@ def greedy_match(
         # i = 6 # ith element of the unique combinations of the luc time series in k
         # for in range()
         k_cat_comb = k_cat_combinations.iloc[i]
+        logging.info("k_cat_comb: %s", k_cat_comb)
         k_cat_index = k_sub[match_cats] == k_cat_comb
         k_cat = k_sub[(k_cat_index).all(axis=1)]
         k_cat_pca = k_sub_pca[(k_cat_index).all(axis=1)]
@@ -224,7 +242,7 @@ def greedy_match(
         m_cat_index = m_sub[match_cats] == k_cat_comb
         m_cat = m_sub[(m_cat_index).all(axis=1)]
         m_cat_pca = m_sub_pca[(m_cat_index).all(axis=1)]
-        
+
         # If there is no suitable match for the pre-project luc time series
         # Then it may be preferable to just take the luc state at t0
         # m_luc_comb = m_pixels[(m_pixels[match_luc_years[1:3]] == K_luc_comb[1:3]).all(axis=1)]
@@ -247,20 +265,23 @@ def greedy_match(
     
     return (pairs, matchless)
 
-def rename_luc_columns(df, start_year):
+def rename_luc_columns(df, start_year, eval_year):
     # Define the range of years based on the central start_year
-    years = range(start_year - 10, start_year + 11)  # Adjust the range as needed@@@should rewrite using luc_range()
+#    no_years_post = (eval_year - start_year) + 1
+    years = range(start_year - 10, eval_year + 1)  # Adjust the range as needed
     new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
     
     # Rename columns based on the new column names mapping
-    renamed_df = df.rename(columns=new_column_names)
+    renamed_df = df.rename(columns = new_column_names)
     
     return renamed_df
 
 def find_pairs(
     k_parquet_filename: str,
     m_parquet_filename: str,
+    lagged: bool,
     start_year: int,
+    eval_year: int,
     luc_match: bool,
     seed: int,
     output_folder: str,
@@ -270,10 +291,6 @@ def find_pairs(
     k_pixels = pd.read_parquet(k_parquet_filename)
     logging.info("Loading M from %s", m_parquet_filename)
     m_pixels = pd.read_parquet(m_parquet_filename)
-    
-    # rename columns of each: this is the key change
-    k_pixels_renamed = rename_luc_columns(k_pixels, start_year)
-    m_pixels_renamed = rename_luc_columns(m_pixels, start_year - 10)
     
     logging.info("Starting find pairs")
     os.makedirs(output_folder, exist_ok=True)
@@ -285,9 +302,11 @@ def find_pairs(
         pool.map(
             partial(
                 find_match_iteration,
-                k_pixels_renamed,
-                m_pixels_renamed,
+                k_pixels,
+                m_pixels,
+                lagged,
                 start_year,
+                eval_year,
                 luc_match,
                 output_folder
             ),
@@ -315,6 +334,13 @@ def main():
         help="Parquet file containing pixels from M as generated by build_m_table.py"
     )
     parser.add_argument(
+        "--lagged",
+        type=str,
+        required=True,
+        dest="lagged",
+        help="Boolean variable determining whether time-lagged matching will be used."
+    )
+    parser.add_argument(
         "--start_year",
         type=int,
         required=True,
@@ -322,8 +348,15 @@ def main():
         help="Year project started."
     )
     parser.add_argument(
+        "--evaluation_year",
+        type=int,
+        required=True,
+        dest="evaluation_year",
+        help="Year of project evaluation."
+    )
+    parser.add_argument(
         "--luc_match",
-        type=bool,
+        type=str,
         required=True,
         dest="luc_match",
         help="Boolean determines whether matching should include LUCs."
@@ -351,11 +384,15 @@ def main():
         help="Number of concurrent threads to use."
     )
     args = parser.parse_args()
+    args.lagged = args.lagged.lower() == "true"
+    args.luc_match = args.luc_match.lower() == "true"
 
     find_pairs(
         args.k_filename,
         args.m_filename,
+        args.lagged,
         args.start_year,
+        args.evaluation_year,
         args.luc_match,
         args.seed,
         args.output_directory_path,
