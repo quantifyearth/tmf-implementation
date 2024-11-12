@@ -292,6 +292,7 @@ deactivate
 #Calculate additionality
 /bin/time -f "\nMemory used by calculate_additionality: %M KB" tmfpython3 -m methods.outputs.calculate_additionality \
 --project "${input_dir}/${proj}.geojson" \
+--lagged "$lagged" \
 --project_start "$t0" \
 --evaluation_year "$eval_year" \
 --density "${output_dir}/${proj}/carbon-density.csv" \

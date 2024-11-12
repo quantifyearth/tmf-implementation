@@ -20,10 +20,6 @@ from methods.common.luc import luc_matching_columns
 # m_parquet_filename = '/maps/aew85/tmf_pipe_out/1201/tom_pairs/matches.parquet'
 # luc_match = True
 
-t0 = 2018
-k_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/k.parquet'
-m_parquet_filename = '/maps/aew85/tmf_pipe_out/fastfp_test_ona/matches.parquet'
-
 REPEAT_MATCH_FINDING = 100
 DEBUG = False
 
@@ -128,7 +124,6 @@ def find_match_iteration(
         m_sub_size = int(k_pixels.shape[0]) # First down sample M as it is ~230 million points    
         m_random_indices = np.random.choice(m_pixels.shape[0], size=m_sub_size, replace=False)
         m_pixels = m_pixels.iloc[m_random_indices]
-    logging.info("match_cats: %s", match_cats)
     logging.info("k_pixels.columns: %s", list(k_pixels.columns))
     logging.info("m_pixels.columns: %s", list(m_pixels.columns))
 
@@ -178,6 +173,8 @@ def find_match_iteration(
     # Take corresponding random samples from the PCA transformed K and M 
     k_sub_pca = k_pca[k_random_indices,:]
     m_sub_pca = m_pca[m_random_indices,:]
+    logging.info("k_sub.columns: %s", list(k_sub.columns))
+    logging.info("m_sub.columns: %s", list(m_sub.columns))
 
     logging.info("Starting greedy matching... k_sub.shape: %s, m_sub.shape: %s",
                  k_sub.shape, m_sub.shape)
@@ -233,7 +230,6 @@ def greedy_match(
         # i = 6 # ith element of the unique combinations of the luc time series in k
         # for in range()
         k_cat_comb = k_cat_combinations.iloc[i]
-        logging.info("k_cat_comb: %s", k_cat_comb)
         k_cat_index = k_sub[match_cats] == k_cat_comb
         k_cat = k_sub[(k_cat_index).all(axis=1)]
         k_cat_pca = k_sub_pca[(k_cat_index).all(axis=1)]
@@ -270,6 +266,20 @@ def rename_luc_columns(df, start_year, eval_year):
 #    no_years_post = (eval_year - start_year) + 1
     years = range(start_year - 10, eval_year + 1)  # Adjust the range as needed
     new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
+    
+    # Rename columns based on the new column names mapping
+    renamed_df = df.rename(columns = new_column_names)
+    
+    return renamed_df
+
+def rename_luc_columns_copied(df, start_year, eval_year, lagged):
+    # Define the range of years based on the central start_year
+#    no_years_post = (eval_year - start_year) + 1
+    years = range(start_year - 10, eval_year + 1)  # Adjust the range as needed
+    if lagged:
+        new_column_names = {f'luc_{year}': f'luc_{year - start_year + 10}' for year in years}
+    else:
+        new_column_names = {f'luc_{year}': f'luc_{year - start_year}' for year in years}
     
     # Rename columns based on the new column names mapping
     renamed_df = df.rename(columns = new_column_names)

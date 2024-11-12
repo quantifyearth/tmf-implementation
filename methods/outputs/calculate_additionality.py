@@ -24,6 +24,13 @@ if __name__ == "__main__":
         help="GeoJSON file containing the polygons for the project's boundary",
     )
     parser.add_argument(
+        "--lagged",
+        type=str,
+        required=True,
+        dest="lagged",
+        help="Boolean variable determining whether time-lagged matching will be used."
+    )
+    parser.add_argument(
         "--project_start",
         type=int,
         required=True,
@@ -60,6 +67,7 @@ if __name__ == "__main__":
     )
 
     args = parser.parse_args()
+    args.lagged = args.lagged.lower() == "true"
 
     # TODO: may be present in config, in which case use that, but for now we use
     # the calculate version.
@@ -83,6 +91,7 @@ if __name__ == "__main__":
 
     additionality = generate_additionality(
         project_area_msq,
+        args.lagged,
         args.project_start,
         args.evaluation_year,
         density,

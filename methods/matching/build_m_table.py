@@ -54,9 +54,9 @@ def build_m_table(
 
     results = []
     if lagged:
-        luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-    else:
         luc_columns = [f'luc_{year}' for year in luc_range(start_year - 10, start_year)]
+    else:
+        luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
     cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
     columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
 
@@ -92,10 +92,6 @@ def build_m_table(
 
 
     output = pl.DataFrame(results, columns)
-    print(f"lagged: {lagged}")
-    print(f"luc_range_list: {luc_range_list}")
-    print(f"luc_columns: {luc_columns}")
-    print(f"output.columns: {list(output.columns)}")
     output.write_parquet(result_dataframe_filename)
 
 

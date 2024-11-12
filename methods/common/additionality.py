@@ -80,6 +80,7 @@ def is_not_matchless(path: str) -> bool:
 
 def generate_additionality(
     project_area_msq: float,
+    lagged: bool,
     project_start: str,
     end_year: int,
     density: np.ndarray,
@@ -104,6 +105,9 @@ def generate_additionality(
         columns.sort()
 
         earliest_year = find_first_luc(columns)
+
+        if lagged:
+            end_year = 10
 
         for year_index in range(earliest_year, end_year + 1):
             total_pixels_t = len(matches_df)
