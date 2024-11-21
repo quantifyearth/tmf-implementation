@@ -1,5 +1,6 @@
 import numpy as np
 from scipy.spatial.distance import mahalanobis
+import pandas as pd
 
 from methods.matching import find_pairs
 
@@ -54,16 +55,28 @@ def test_make_s_set_mask():
         [0.5, 0.6],
     ], dtype=np.float32)
 
-    starting_positions = np.array([1, 2, 3, 4])
+    rng = np.random.default_rng(42)
+    k_set = np.array([k_dist_hard, k_dist_thresholded])
+    k_set = np.moveaxis(k_set, 0, 1).reshape(-1, k_dist_hard.shape[1] + k_dist_thresholded.shape[1])
+    k_set = pd.DataFrame(k_set)
+
+    m_set = np.array([m_dist_hard, m_dist_thresholded])
+    m_set = np.moveaxis(m_set, 0, 1).reshape(-1, m_dist_hard.shape[1] + m_dist_thresholded.shape[1])
+    m_set = pd.DataFrame(m_set)
+
+    hard_match_columns = list(range(k_dist_hard.shape[1]))
+    hard_match_categories = list({k.tobytes(): k for k in k_dist_hard}.values())
 
     # calculate using make_s_set_mask
     s_subset_mask, misses = find_pairs.make_s_set_mask(
+        rng,
+        k_set,
+        m_set,
         m_dist_thresholded,
         k_dist_thresholded,
-        m_dist_hard,
-        k_dist_hard,
-        starting_positions,
+        hard_match_columns,
         2,
+        hard_match_categories,
     )
 
     assert (s_subset_mask == [True, False, False, False, False]).all()
