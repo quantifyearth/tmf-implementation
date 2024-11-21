@@ -71,12 +71,6 @@ Firstly we have access to healthcare data:
 python3 -m methods.inputs.download_accessibility /data/tmf/access/raw.tif
 ```
 
-Which must then be turned into smaller tiles:
-
-```shark-run:gdalenv
-python3 -m methods.inputs.generate_access_tiles /data/tmf/access/raw.tif /data/tmf/jrc/tif /data/tmf/access
-```
-
 ## Country boarders
 
 We use OSM data for country borders data. This requires an API key to access the downloads. To get an API key you must follow these steps:
@@ -134,8 +128,8 @@ DATA_PATH="/data/tmf/gedi"
 Once you have this the download script to pull the raw GEDI data is:
 
 ```shark-run:gdalenv
-python3 -m methods.inputs.locate_gedi_data /data/tmf/123/buffer.geojson /data/tmf/gedi/granule/info/
-python3 -m methods.inputs.download_gedi_data /data/tmf/gedi/granule/info/* /data/tmf/gedi/granule/
+python3 -m methods.inputs.locate_gedi_data /data/buffer.geojson /data/gedi/info/
+python3 -m methods.inputs.download_gedi_data /data/gedi/info/* /data/gedi/granule/
 ```
 
 Each GEDI granule is a complete sweep from the ISS along the path that crossed the buffer zone, and so contains
@@ -143,17 +137,21 @@ much more data than we need. We thus need to filter this to give us just the GED
 same time we filter based on time and quality as per the methodology document:
 
 ```shark-run:gdalenv
-python3 -m methods.inputs.filter_gedi_data --buffer /data/tmf/123/buffer.geojson \
-                                          --granules /data/tmf/gedi/granule/ \
-                                          --output /data/tmf/123/gedi.geojson
+python3 -m methods.inputs.filter_gedi_data --buffer /data/buffer.geojson \
+                                          --granules /data/gedi/granule/ \
+                                          --output /data/gedi.geojson
 ```
 
 Once filtered we can then combine the GEDI data with the JRC data we have to work out the carbon density per land usage class:
 
 ```shark-run:gdalenv
-python3 -m methods.inputs.generate_carbon_density --jrc /data/tmf/jrc/tif \
-                                                  --gedi /data/tmf/123/gedi.geojson \
-                                                  --output /data/tmf/123/carbon-density.csv
+python3 -m methods.inputs.generate_carbon_density --jrc /data/jrc/AnnualChange/ \
+                                                  --gedi /data/gedi.geojson \
+                                                  --output /data/tmf/123/agb.csv
+```
+
+```shark-publish
+/data/tmf/123/agb.csv
 ```
 
 ## Generate matching area
@@ -185,7 +183,6 @@ We use the SRTM elevation data, which we download to cover the matching area:
 ```shark-run:gdalenv
 python3 -m methods.inputs.download_srtm_data --project /data/tmf/project_boundaries/123.geojson \
                                             --matching /data/tmf/project_boundaries/123/matching-area.geojson \
-                                            --zips /data/tmf/srtm/zip \
                                             --tifs /data/tmf/srtm/tif
 ```
 
@@ -206,15 +203,35 @@ python3 -m methods.inputs.rescale_tiles_to_jrc --jrc /data/tmf/jrc/tif \
                                                  --output /data/tmf/rescaled-slopes
 ```
 
-## Country raster
+## Project baselayer rasters
 
-Again, rather than repeatedly dynamically rasterize the country vectors, we rasterise them once and re-use them:
+For various source inputs we generate a single raster layer that contains all we want, at the correct scale.
+
+First a map of countries:
 
 ```shark-run:gdalenv
 python3 -m methods.inputs.generate_country_raster --jrc /data/tmf/jrc/tif \
                                                   --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                   --countries /data/tmf/osm_borders.geojson \
                                                   --output /data/tmf/123/countries.tif
+```
+
+Then a raster map of ecoregions.
+
+```shark-run:gdalenv
+python3 -m methods.inputs.generate_ecoregion_rasters --jrc /data/jrc/AnnualChange/ \
+                                                     --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                                     --ecoregions /data/tmf/ecoregions/ecoregions.geojson \
+                                                     --output /data/tmf/ecoregions/ecoregion.tif
+```
+
+Finally a map of access data.
+
+```shark-run:gdalenv
+python3 -m methods.inputs.generate_access_raster --jrc /data/jrc/AnnualChange/ \
+                                               --matching /data/tmf/project_boundaries/123/matching-area.geojson \
+                                               --access /data/tmf/access/raw.tif \
+                                               --output /data/tmf/123/access.tif
 ```
 
 # Pixel matching
@@ -229,15 +246,20 @@ First we make K.
 python3 -m methods.matching.calculate_k --project /data/tmf/project_boundaries/123.geojson \
                                           --start_year 2012 \
                                           --evaluation_year 2021 \
-                                          --jrc /data/tmf/jrc/tif \
-                                          --cpc /data/tmf/fcc-cpcs \
-                                          --ecoregions /data/tmf/ecoregions \
-                                          --elevation /data/tmf/rescaled-elevation \
-                                          --slope /data/tmf/rescaled-slopes \
-                                          --access /data/tmf/access \
+                                          --jrc /data/jrc/AnnualChange/ \
+                                          --cpc /data/jrc/cpc/ \
+                                          --ecoregions /data/tmf/ecoregions/ecoregion.tif \
+                                          --elevation /data/tmf/rescaled-elevation/ \
+                                          --slope /data/tmf/rescaled-slopes/ \
+                                          --access /data/tmf/123/access.tif \
                                           --countries-raster /data/tmf/123/countries.tif \
                                           --output /data/tmf/123/k.parquet
 ```
+
+```shark-publish
+/data/tmf/123/k.parquet
+```
+
 
 ## Calculate set M
 
@@ -245,23 +267,23 @@ Calculating the set M is a three step process. First we generate a raster per K 
 
 ```shark-run:gdalenv
 python3 -m methods.matching.find_potential_matches --k /data/tmf/123/k.parquet \
-                                                     --matching /data/tmf/123/matching-area.geojson \
+                                                     --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                                      --start_year 2012 \
                                                      --evaluation_year 2021 \
-                                                     --jrc /data/tmf/jrc/tif \
-                                                     --cpc /data/tmf/fcc-cpcs \
-                                                     --ecoregions /data/tmf/ecoregions \
-                                                     --elevation /data/tmf/rescaled-elevation \
-                                                     --slope /data/tmf/rescaled-slopes \
-                                                     --access /data/tmf/access \
-                                                     --countries-raster /data/tmf/123/countries.tif \
-                                                     --output /data/tmf/123/matches
+                                                      --jrc /data/jrc/AnnualChange/ \
+                                                      --cpc /data/jrc/cpc/ \
+                                                      --ecoregions /data/tmf/ecoregions/ecoregion.tif \
+                                                      --elevation /data/tmf/rescaled-elevation/ \
+                                                      --slope /data/tmf/rescaled-slopes/ \
+                                                      --access /data/tmf/123/access.tif \
+                                                      --countries-raster /data/tmf/123/countries.tif \
+                                                     --output /data/tmf/123/matches/
 ```
 
 Then these rasters get combined into a single raster that is all the potential matches as one. The j parameter controls how many concurrent processes the script can use, which is bounded mostly by how much memory you have available. The value 20 is good for our server, but may not match yours.
 
 ```shark-run:gdalenv
-python3 -m methods.matching.build_m_raster --rasters_directory /data/tmf/123/matches \
+python3 -m methods.matching.build_m_raster --rasters_directory /data/tmf/123/matches/ \
                                           --output /data/tmf/123/matches.tif \
                                           -j 20
 ```
@@ -270,18 +292,24 @@ We then convert that raster into a table of pixels plus the data we need:
 
 ```shark-run:gdalenv
 python3 -m methods.matching.build_m_table --raster /data/tmf/123/matches.tif \
-                                            --matching /data/tmf/123/matching-area.geojson \
+                                                     --matching /data/tmf/project_boundaries/123/matching-area.geojson \
                                             --start_year 2012 \
                                             --evaluation_year 2021 \
-                                            --jrc /data/tmf/jrc/tif \
-                                            --cpc /data/tmf/fcc-cpcs \
-                                            --ecoregions /data/tmf/ecoregions \
-                                            --elevation /data/tmf/rescaled-elevation \
-                                            --slope /data/tmf/rescaled-slopes \
-                                            --access /data/tmf/access \
-                                            --countries-raster /data/tmf/123/countries.tif \
+                                          --jrc /data/jrc/AnnualChange/ \
+                                          --cpc /data/jrc/cpc/ \
+                                          --ecoregions /data/tmf/ecoregions/ecoregion.tif \
+                                          --elevation /data/tmf/rescaled-elevation/ \
+                                          --slope /data/tmf/rescaled-slopes/ \
+                                          --access /data/tmf/123/access.tif \
+                                          --countries-raster /data/tmf/123/countries.tif \
                                             --output /data/tmf/123/matches.parquet
 ```
+
+
+```shark-publish
+/data/tmf/123/matches.parquet
+```
+
 
 ## Find pairs
 
@@ -291,9 +319,8 @@ Finally we can find the 100 sets of matched pairs. The seed is used to control t
 python3 -m methods.matching.find_pairs --k /data/tmf/123/k.parquet \
                                          --m /data/tmf/123/matches.parquet \
                                          --start_year 2012 \
-                                         --output /data/tmf/123/pairs \
-                                         --seed 42 \
-                                         -j 1
+                                         --output /data/tmf/123/pairs/ \
+                                         --seed 42
 ```
 
 # Calculate additionality
@@ -304,9 +331,14 @@ Finally this script calculates additionality:
 python3 -m methods.outputs.calculate_additionality --project /data/tmf/project_boundaries/123.geojson \
                                                     --project_start 2012 \
                                                     --evaluation_year 2021 \
-                                                    --density /data/tmf/123/carbon-density.csv \
-                                                    --matches /data/tmf/123/pairs \
+                                                    --density /data/tmf/123/agb.csv \
+                                                    --matches /data/tmf/123/pairs/ \
                                                     --output /data/tmf/123/additionality.csv
+cat /data/tmf/123/additionality.csv
 ```
 
-By running the additionality step with the environment variable `TMF_PARTIALS` set to some directory, this step will also generate GeoJSON files for visualising the pairs and the standardised mean difference calculations for the matching variables. You can add `TMF_PARTIALS=/some/dir` before `python3` to set this just for a specific run of `calculate_additionality`. 
+By running the additionality step with the environment variable `TMF_PARTIALS` set to some directory, this step will also generate GeoJSON files for visualising the pairs and the standardised mean difference calculations for the matching variables. You can add `TMF_PARTIALS=/some/dir` before `python3` to set this just for a specific run of `calculate_additionality`.
+
+```shark-publish
+/data/tmf/123/additionality.csv
+```

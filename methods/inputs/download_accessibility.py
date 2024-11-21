@@ -1,13 +1,13 @@
+import io
 import os
 import sys
 import tempfile
 import traceback
+import zipfile
 from shutil import move
 from glob import glob
 
 import requests
-
-from biomassrecovery.utils.unzip import unzip  # type: ignore
 
 # As taken from https://malariaatlas.org/open-access-policy/
 # Under "Creative Commons Attribution 3.0 Unported License"
@@ -22,20 +22,13 @@ def is_tif(fname : str) -> bool:
 
 def download_accessibility_tif(source_url: str, target_path: str) -> None:
     with tempfile.TemporaryDirectory() as tmpdir:
-        download_path = os.path.join(tmpdir, "accessibility.zip")
-        response = requests.get(source_url, stream=True, timeout=60)
-        if not response.ok:
-            raise DownloadError(f'{response.status_code}: {response.reason}')
-        with open(download_path, 'wb') as output_file:
-            print("Downloading accessibility data...")
-            for chunk in response.iter_content(chunk_size=1024*1024):
-                output_file.write(chunk)
-        print(f"Unzipping from {download_path}")
-        unzip(
-            download_path,
-            tmpdir,
-            filter_func=is_tif
-        )
+        with requests.get(source_url, stream=True, timeout=60) as response:
+            if not response.ok:
+                raise DownloadError(response.status_code, response.reason, source_url)
+            with zipfile.ZipFile(io.BytesIO(response.content)) as zipf:
+                members = zipf.namelist()
+                for member in members:
+                    _ = zipf.extract(member, path=tmpdir)
 
         # There should only be a single TIF file
         tif = glob("*.tif", root_dir=tmpdir)
