@@ -11,6 +11,9 @@ from biomassrecovery.data.gedi_download_pipeline import check_and_format_shape  
 from biomassrecovery.constants import GediProduct  # type: ignore
 from osgeo import ogr, osr  # type: ignore
 
+# you have to import gdal to get the type ogr.DataSource for mypy 🤦
+from osgeo import gdal # pylint: disable=W0611
+
 # load environment variables from .env file for Earthdata credentials
 dotenv.load_dotenv()
 EARTHDATA_USER = os.getenv("EARTHDATA_USER")

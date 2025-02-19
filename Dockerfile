@@ -3,7 +3,7 @@ RUN git clone https://github.com/carboncredits/littlejohn.git
 WORKDIR littlejohn
 RUN go build
 
-FROM ghcr.io/osgeo/gdal:ubuntu-small-3.8.4
+FROM ghcr.io/osgeo/gdal:ubuntu-small-3.10.1
 
 COPY --from=littlejohn /go/littlejohn/littlejohn /bin/littlejohn
 
@@ -18,9 +18,8 @@ apt-get install -qy \
 # You must install numpy before anything else otherwise
 # gdal's python bindings are sad. Pandas we full out as its slow
 # to build, and this means it'll be cached
-RUN pip install --upgrade pip
-RUN pip install numpy
-RUN pip install gdal[numpy]==3.8.4
+RUN pip config set global.break-system-packages true
+RUN pip install gdal[numpy]==3.10.1
 
 WORKDIR /usr/src/app
 COPY requirements.txt ./
