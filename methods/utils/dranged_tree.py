@@ -17,17 +17,17 @@ import math
 
 class DRangedTree:
     def contains(self, point: np.ndarray):
-        raise NotImplemented
+        raise NotImplementedError
 
     def depth(self) -> int:
         return 1
-    
+
     def dump(self, space: str) -> None:
-        raise NotImplemented
-    
+        raise NotImplementedError
+
     def size(self) -> int:
         return 1
-    
+
     @staticmethod
     def build(items: np.ndarray, widths: np.ndarray, expected_fraction: float) -> DRangedTree:
         """
@@ -101,7 +101,7 @@ class FulfilledTree(DRangedTree):
         return 1 + self.subtree.depth()
     def size(self):
         return 1 + self.subtree.size()
-    
+
 class CheckTree(DRangedTree):
     def __init__(self, axis: int, value: float, subtree: DRangedTree, continuation: DRangedTree|None = None):
         self.axis = axis
@@ -198,10 +198,10 @@ class TreeState:
 
     def descend(self, j: int) -> TreeState:
         return TreeState(self, j)
-    
+
     def drop(self, j: int) -> TreeState:
         return TreeState(self, j, drop=True)
-    
+
     def print(self, s: str) -> None:
         if self.logging:
             print(self.depth * "  ", s)
@@ -247,7 +247,7 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
                 sub_bounds = without(bounds, d)
                 subtree = _make_tree_internal(sub_rects, sub_bounds, state.drop(d))
                 return FulfilledTree(subtree, d)
-    
+
     # Check if we need to bound a dimension
     for d in range(dimensions):
         if state.descent[d] == state.bound_dimension_at:
@@ -353,7 +353,7 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
         # Diminishing returns as this parameter is dropped; this seems like reasonable trade-off
         # Wherever we split we're hardly going to achieve much, so fall out to a list
         return ListTree(rects)
-    
+
     d = best_d
     split = splits[d]
 
@@ -365,7 +365,7 @@ def _make_tree_internal(rects: np.ndarray, bounds: np.ndarray, state: TreeState)
         # We can only get here if we're splitting on classes, and there are only two classes,
         # so we can simply split at a point between the two classes.
         split_at = np.mean(split)
-    else:        
+    else:
         if False and best_classes < 3:
             # Chance there is an overlap here, so let's check and eliminate it if possible
             # L  L L LL LL
