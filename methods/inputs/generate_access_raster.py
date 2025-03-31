@@ -1,40 +1,45 @@
 import argparse
 import glob
 import os
+import shutil
+import tempfile
 
-from osgeo.gdal import GDT_Byte # type: ignore
-from yirgacheffe.layers import RasterLayer, VectorLayer  # type: ignore
+from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer  # type: ignore
 
-def generate_country_raster(
+def generate_access_tiles(
     jrc_directory_path: str,
     matching_zone_filename: str,
-    countries_shape_filename: str,
+    access_geotif_filename: str,
     output_filename: str
 ) -> None:
-    # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
-    example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
-    example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
+    output_folder, _ = os.path.split(output_filename)
+    os.makedirs(output_folder, exist_ok=True)
+
+    jrc_layer = GroupLayer([
+        RasterLayer.layer_from_file(os.path.join(jrc_directory_path, filename))
+        for filename in glob.glob("*2020*.tif", root_dir=jrc_directory_path)
+    ])
 
     matching = VectorLayer.layer_from_file(
         matching_zone_filename,
         None,
-        example_jrc_layer.pixel_scale,
-        example_jrc_layer.projection,
+        jrc_layer.pixel_scale,
+        jrc_layer.projection,
     )
 
-    countries = VectorLayer.layer_from_file(
-        countries_shape_filename,
-        None,
-        example_jrc_layer.pixel_scale,
-        example_jrc_layer.projection,
-        datatype=GDT_Byte,
-        burn_value="TMF_INDEX"
-    )
+    access_data = RasterLayer.layer_from_file(access_geotif_filename)
+    access_data.set_window_for_intersection(matching.area)
 
-    countries.set_window_for_intersection(matching.area)
-    result = RasterLayer.empty_raster_layer_like(countries, output_filename, compress=False)
-    countries.save(result)
+    temp = RasterLayer.empty_raster_layer_like(access_data)
+    access_data.save(temp)
 
+    with tempfile.TemporaryDirectory() as tempdir:
+        temp_output = os.path.join(tempdir, "rescaled.tif")
+
+        scaled = RasterLayer.scaled_raster_from_raster(temp, jrc_layer.pixel_scale, filename=temp_output)
+        scaled.close()
+
+        shutil.move(temp_output, output_filename)
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate a GeoTIFF from country boundaries")
@@ -53,10 +58,10 @@ def main() -> None:
         help="Filename of GeoJSON file describing area from which matching pixels may be selected."
     )
     parser.add_argument(
-        "--countries",
+        "--access",
         type=str,
         required=True,
-        dest="countries_shape_filename",
+        dest="access_geotif_filename",
         help="GeoJSON of country boundaries."
     )
     parser.add_argument(
@@ -68,11 +73,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    generate_country_raster(
+    generate_access_tiles(
         args.jrc_directory_path,
         args.matching_zone_filename,
-        args.countries_shape_filename,
-        args.output_filename,
+        args.access_geotif_filename,
+        args.output_filename
     )
 
 if __name__ == "__main__":

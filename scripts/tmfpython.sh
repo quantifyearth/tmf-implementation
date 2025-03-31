@@ -113,7 +113,6 @@ echo "--Matching area created.--"
 #Download SRTM data
 tmfpython3 -m methods.inputs.download_srtm_data --project "${input_dir}/${proj}.geojson" \
 --matching "${output_dir}/${proj}/matching-area.geojson" \
---zips "${output_dir}/srtm/zip" \
 --tifs "${output_dir}/srtm/tif"
 echo "--SRTM downloaded.--"
 
@@ -138,6 +137,20 @@ tmfpython3 -m methods.inputs.generate_country_raster --jrc /maps/forecol/data/JR
 --output "${output_dir}/${proj}/countries.tif"
 echo "--Country raster created.--"
 
+#Create ecoregion raster
+tmfpython3 -m methods.inputs.generate_ecoregion_rasters --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs  \
+--matching "${output_dir}/${proj}/matching-area.geojson" \
+--ecoregions /maps/4C/ecoregions/ecoregions.geojson \
+--output "${output_dir}/${proj}/ecoregion.tif"
+echo "--Ecoregions raster created.--"
+
+#Create access raster
+tmfpython3 -m methods.inputs.generate_access_raster --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs  \
+---matching "${output_dir}/${proj}/matching-area.geojson" \
+--access /maps/4C/access/raw/202001_Global_Walking_Only_Travel_Time_To_Healthcare_2019.tif \
+--output "${output_dir}/${proj}/access.tif"
+echo "--Access raster created.--"
+
 #Matching: calculate set K
 tmfpython3 -m methods.matching.calculate_k \
 --project "${input_dir}/${proj}.geojson" \
@@ -145,10 +158,10 @@ tmfpython3 -m methods.matching.calculate_k \
 --evaluation_year "$eval_year" \
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --cpc /maps/rhm31/fine_circular_coverage/forecol_complete/ \
---ecoregions /maps/4C/ecoregions/ \
+--ecoregions "${output_dir}/${proj}/ecoregion.tif" \
 --elevation "${output_dir}/rescaled-elevation" \
 --slope "${output_dir}/rescaled-slopes" \
---access /maps/4C/access \
+--access "${output_dir}/${proj}/access.tif" \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/k.parquet"
 echo "--Set K created.--"
@@ -161,10 +174,10 @@ tmfpython3 -m methods.matching.find_potential_matches \
 --evaluation_year "$eval_year" \
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --cpc /maps/rhm31/fine_circular_coverage/forecol_complete/ \
---ecoregions /maps/4C/ecoregions/ \
+--ecoregions "${output_dir}/${proj}/ecoregion.tif" \
 --elevation "${output_dir}/rescaled-elevation" \
 --slope "${output_dir}/rescaled-slopes" \
---access /maps/4C/access \
+--access "${output_dir}/${proj}/access.tif" \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/matches"
 tmfpython3 -m methods.matching.build_m_raster \
@@ -178,10 +191,10 @@ tmfpython3 -m methods.matching.build_m_table \
 --evaluation_year "$eval_year" \
 --jrc /maps/forecol/data/JRC/v1_2022/AnnualChange/tifs \
 --cpc /maps/rhm31/fine_circular_coverage/forecol_complete/ \
---ecoregions /maps/4C/ecoregions/ \
+--ecoregions "${output_dir}/${proj}/ecoregion.tif" \
 --elevation "${output_dir}/rescaled-elevation" \
 --slope "${output_dir}/rescaled-slopes" \
---access /maps/4C/access \
+--access "${output_dir}/${proj}/access.tif" \
 --countries-raster "${output_dir}/${proj}/countries.tif" \
 --output "${output_dir}/${proj}/matches.parquet"
 echo "--Set M created.--"

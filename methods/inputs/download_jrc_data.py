@@ -1,5 +1,6 @@
 import argparse
 import io
+import logging
 import multiprocessing
 import os
 import shutil
@@ -13,13 +14,19 @@ import geopandas as gpd # type: ignore
 import requests
 import shapely # type: ignore
 
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
 URL_FORMAT = "https://ies-ows.jrc.ec.europa.eu/iforce/tmf_v1/download.py?type=tile&dataset=AnnualChange&lat=%s&lon=%s"
 
 def download_jrc_dataset(tempdir: str, output_dir: str, tile_url: str) -> None:
     with requests.get(tile_url, stream=True, timeout=60) as response:
         if response.status_code == HTTPStatus.NOT_FOUND:
+            logging.warning("No file found at %s", tile_url)
             return
         if response.status_code != HTTPStatus.OK:
+            logging.warning("Bad status for %s: %d", tile_url, response.status_code)
             raise ValueError(response.status_code)
         try:
             with zipfile.ZipFile(io.BytesIO(response.content)) as zzip:
@@ -32,8 +39,10 @@ def download_jrc_dataset(tempdir: str, output_dir: str, tile_url: str) -> None:
                         os.rename(target, final_path)
                     except OSError:
                         shutil.move(target, final_path)
+            logging.info("Successfully fetched %s", tile_url)
         except zipfile.BadZipFile:
-            pass
+            logging.error("Bad zip file %s: %s", tile_url, response.content)
+            raise
 
 def download_jrc_data(
     target_tif_directory: str,
@@ -64,6 +73,7 @@ def download_jrc_data(
             url = URL_FORMAT % (slat, slng)
             tile_urls.append(url)
 
+    logging.info("Found %s tiles", len(tile_urls))
     with tempfile.TemporaryDirectory() as tempdir:
         core_count = int(multiprocessing.cpu_count() / 4)
         n_workers = min(len(tile_urls), core_count)

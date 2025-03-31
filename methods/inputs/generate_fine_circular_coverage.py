@@ -151,7 +151,9 @@ def generate_fine_circular_coverage(
     filesets = []
     for year in years:
         for area in areas:
-            filesets.append([os.path.join(jrc_directory, x) for x in jrc_filenames if year in x and area in x])
+            fileset = [os.path.join(jrc_directory, x) for x in jrc_filenames if year in x and area in x]
+            if fileset:
+                filesets.append(fileset)
 
     total_files = sum(len(files) for files in filesets)
 
