@@ -41,12 +41,12 @@ def test_dranged_tree_matches_as_expected():
                 row.elevation,
                 row.slope,
                 row.access,
-                row["cpc0_u"],
-                row["cpc0_d"],
-                row["cpc5_u"],
-                row["cpc5_d"],
-                row["cpc10_u"],
-                row["cpc10_d"],
+                row["fcc0_u"],
+                row["fcc0_d"],
+                row["fcc5_u"],
+                row["fcc5_d"],
+                row["fcc10_u"],
+                row["fcc10_d"],
                 ) for row in k_rows
             ]), ALLOWED_VARIATION, expected_fraction)
 
@@ -67,12 +67,12 @@ def test_dranged_tree_matches_as_expected():
             row.elevation,
             row.slope,
             row.access,
-            row["cpc0_u"],
-            row["cpc0_d"],
-            row["cpc5_u"],
-            row["cpc5_d"],
-            row["cpc10_u"],
-            row["cpc10_d"],
+            row["fcc0_u"],
+            row["fcc0_d"],
+            row["fcc5_u"],
+            row["fcc5_d"],
+            row["fcc10_u"],
+            row["fcc10_d"],
         ] for row in source_rows
     ])
 

@@ -8,7 +8,7 @@ import pandas as pd # type: ignore
 import matplotlib.pyplot as plt # type: ignore
 from geojson import LineString, FeatureCollection, Feature, MultiPoint, dumps  # type: ignore
 
-from methods.common import LandUseClass, partials_dir
+from methods.common import LandUseClass
 
 MOLECULAR_MASS_CO2_TO_C_RATIO = 44 / 12
 
@@ -63,18 +63,24 @@ def plot_carbon_trajectories(
 
 
 def find_first_luc(columns: list[str]) -> int:
+    """Finds the earliest year present in LUC column names (e.g., k_luc_2010)."""
+    min_year = float('inf')
+    found = False
     for col in columns:
-        split = col.split("_luc_")
-        if len(split) < 2:
-            continue
-        try:
-            return int(split[1])
-        except ValueError:
-            continue
-    raise ValueError("Failed to extract earliest year from LUCs")
+        if "_luc_" in col:
+            try:
+                year = int(col.split("_luc_")[-1])
+                min_year = min(min_year, year)
+                found = True
+            except (ValueError, IndexError):
+                continue
+    if not found:
+        raise ValueError("Failed to extract any year from LUC columns")
+    return int(min_year)
 
 
 def is_not_matchless(path: str) -> bool:
+    """Checks if a filename does not end with _matchless.parquet."""
     return not path.endswith("_matchless.parquet")
 
 
@@ -84,234 +90,296 @@ def generate_additionality(
     end_year: int,
     density: np.ndarray,
     matches_directory: str,
-    expected_number_of_iterations: int,
-) -> Dict[int, float]:
-    """Calculate the additionality (or leakage) of a project from the counterfactual pair matchings
-    alongside the carbon density values and some project specific metadata."""
-    logging.info("Project area: %.2fmsq", project_area_msq)
+    partials_dir: str | None = None # Optional: For saving plots/diagnostics
+) -> pd.DataFrame: # Return a DataFrame
+    """
+    Calculate additionality, carbon stocks, avoided deforestation, and associated
+    standard errors (SE) and relative standard errors (RSE) for a project
+    based on counterfactual pair matchings.
 
+    Args:
+        project_area_msq: Area of the project in square meters.
+        project_start: The start year of the project (as string or int).
+        end_year: The final year for analysis.
+        density: Numpy array of carbon densities per land use class.
+        matches_directory: Directory containing the pairs parquet files (output of find_pairs).
+        partials_dir: Optional directory to save diagnostic plots and files.
+
+    Returns:
+        A pandas DataFrame with yearly metrics including means, SE, and RSE.
+    """
+    project_area_ha = project_area_msq / 10000.0 # Convert m^2 to hectares
+    logging.info(f"Project area: {project_area_msq:.2f} m^2 ({project_area_ha:.2f} ha)")
+
+    # Find all non-matchless pairs files
     matches = glob.glob("*.parquet", root_dir=matches_directory)
     matches = [x for x in matches if is_not_matchless(x)]
-    assert len(matches) == expected_number_of_iterations
+    num_iterations = len(matches)
 
-    treatment_data : Dict[int, np.ndarray] = {}
+    if num_iterations == 0:
+        raise ValueError(f"No non-matchless parquet files found in {matches_directory}")
+    logging.info(f"Found {num_iterations} match files (iterations) to process.")
 
-    for pair_idx, pairs in enumerate(matches):
-        logging.info("Computing additionality in treatment for %s", pairs)
-        matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+    # Dictionaries to store LUC proportions per iteration for each year
+    treatment_luc_proportions: Dict[int, np.ndarray] = {}
+    control_luc_proportions: Dict[int, np.ndarray] = {}
+    earliest_year_overall = float('inf')
+
+    # --- Loop 1: Extract LUC proportions from each iteration file ---
+    for pair_idx, pairs_file in enumerate(matches):
+        logging.debug(f"Processing iteration {pair_idx + 1}/{num_iterations}: {pairs_file}")
+        file_path = os.path.join(matches_directory, pairs_file)
+        try:
+            matches_df = pd.read_parquet(file_path)
+        except Exception as e:
+            logging.error(f"Failed to read parquet file {file_path}: {e}")
+            continue # Skip this file
+
+        if matches_df.empty:
+            logging.warning(f"Skipping empty pairs file: {pairs_file}")
+            continue
 
         columns = matches_df.columns.to_list()
-        columns.sort()
+        try:
+            earliest_year_in_file = find_first_luc(columns)
+            earliest_year_overall = min(earliest_year_overall, earliest_year_in_file)
+        except ValueError as e:
+            logging.error(f"Could not determine start year for {pairs_file}: {e}")
+            continue # Skip this file if years can't be determined
 
-        earliest_year = find_first_luc(columns)
+        # Process each year present in the file, up to the overall end_year
+        for year_index in range(earliest_year_in_file, end_year + 1):
+            k_luc_col = f"k_luc_{year_index}"
+            s_luc_col = f"s_luc_{year_index}"
 
-        for year_index in range(earliest_year, end_year + 1):
+            # Check if columns for the year exist
+            if k_luc_col not in columns or s_luc_col not in columns:
+                logging.warning(f"LUC columns for year {year_index} not found in {pairs_file}. Skipping year.")
+                continue
+
+            # --- Treatment Proportions ---
             total_pixels_t = len(matches_df)
-
-            values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-            value_count_year = matches_df[f"k_luc_{year_index}"].value_counts()
-
+            values_t = np.zeros(len(LandUseClass))
+            value_count_year_t = matches_df[k_luc_col].value_counts()
             for luc in LandUseClass:
-                if value_count_year.get(luc.value) is not None:
-                    values[luc.value - 1] = value_count_year[luc.value]
+                if value_count_year_t.get(luc.value) is not None:
+                    if 0 <= luc.value - 1 < len(values_t):
+                         values_t[luc.value - 1] = value_count_year_t[luc.value]
+                    else:
+                        logging.warning(f"Invalid LUC value {luc.value} encountered in {pairs_file}, year {year_index}.")
 
-            undisturbed_t = values[LandUseClass.UNDISTURBED - 1]
-            degraded_t = values[LandUseClass.DEGRADED - 1]
-            deforested_t = values[LandUseClass.DEFORESTED - 1]
-            regrowth_t = values[LandUseClass.REGROWTH - 1]
-            water_t = values[LandUseClass.WATER - 1]
-            other_t = values[LandUseClass.OTHER - 1]
+            proportions_t = values_t / total_pixels_t
+            prop_t_sum = np.sum(proportions_t)
+            if not (0.99 < prop_t_sum < 1.01):
+                 logging.warning(f"Treatment proportions sum to {prop_t_sum:.4f} for {pairs_file}, year {year_index}")
 
-            proportions_t = np.array(
-                [
-                    undisturbed_t / total_pixels_t,
-                    degraded_t / total_pixels_t,
-                    deforested_t / total_pixels_t,
-                    regrowth_t / total_pixels_t,
-                    water_t / total_pixels_t,
-                    other_t / total_pixels_t,
-                ]
-            )
+            # Initialize array for the year if first time seeing it
+            if treatment_luc_proportions.get(year_index) is None:
+                treatment_luc_proportions[year_index] = np.full((num_iterations, len(LandUseClass)), np.nan)
+            treatment_luc_proportions[year_index][pair_idx, :] = proportions_t
 
-            # Quick Sanity Check
-            prop = np.sum(proportions_t)
-            assert 0.99 < prop < 1.01
-
-            areas_t = proportions_t * (project_area_msq / 10000)
-            s_t = areas_t * density
-
-            s_t_value = s_t.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
-
-            logging.info("Additionality in treatment is %f", s_t_value)
-
-            if treatment_data.get(year_index) is not None:
-                treatment_data[year_index][pair_idx] = s_t_value
-            else:
-                arr = np.zeros(expected_number_of_iterations)
-                arr[pair_idx] = s_t_value
-                treatment_data[year_index] = arr
-
-    scvt : Dict[int, np.ndarray] = {}
-
-    for pair_idx, pairs in enumerate(matches):
-        logging.info("Computing additionality for control %s", pairs)
-        matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
-
-        columns = matches_df.columns.to_list()
-        columns.sort()
-
-        earliest_year = find_first_luc(columns)
-
-        if earliest_year is None:
-            raise ValueError("Failed to extract earliest year from LUCs")
-
-        total_pixels_c = len(matches_df)
-        for year_index in range(earliest_year, end_year + 1):
-            values = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-            value_count_year = matches_df[f"s_luc_{year_index}"].value_counts()
-
+            # --- Control Proportions ---
+            total_pixels_c = len(matches_df)
+            values_c = np.zeros(len(LandUseClass))
+            value_count_year_c = matches_df[s_luc_col].value_counts()
             for luc in LandUseClass:
-                if value_count_year.get(luc.value) is not None:
-                    values[luc.value - 1] = value_count_year[luc.value]
+                 if value_count_year_c.get(luc.value) is not None:
+                    if 0 <= luc.value - 1 < len(values_c):
+                        values_c[luc.value - 1] = value_count_year_c[luc.value]
+                    else:
+                        logging.warning(f"Invalid LUC value {luc.value} encountered in {pairs_file}, year {year_index}.")
 
-            undisturbed_c = values[LandUseClass.UNDISTURBED - 1]
-            degraded_c = values[LandUseClass.DEGRADED - 1]
-            deforested_c = values[LandUseClass.DEFORESTED - 1]
-            regrowth_c = values[LandUseClass.REGROWTH - 1]
-            water_c = values[LandUseClass.WATER - 1]
-            other_c = values[LandUseClass.OTHER - 1]
+            proportions_c = values_c / total_pixels_c
+            prop_c_sum = np.sum(proportions_c)
+            if not (0.99 < prop_c_sum < 1.01):
+                 logging.warning(f"Control proportions sum to {prop_c_sum:.4f} for {pairs_file}, year {year_index}")
 
-            proportions_c = np.array(
-                [
-                    undisturbed_c / total_pixels_c,
-                    degraded_c / total_pixels_c,
-                    deforested_c / total_pixels_c,
-                    regrowth_c / total_pixels_c,
-                    water_c / total_pixels_c,
-                    other_c / total_pixels_c,
-                ]
-            )
+            if control_luc_proportions.get(year_index) is None:
+                control_luc_proportions[year_index] = np.full((num_iterations, len(LandUseClass)), np.nan)
+            control_luc_proportions[year_index][pair_idx, :] = proportions_c
 
-            # Quick Sanity Check
-            prop = np.sum(proportions_c)
-            assert 0.99 < prop < 1.01
+    if earliest_year_overall == float('inf'):
+        raise ValueError("Could not determine earliest year from any input file.")
 
-            areas_c = proportions_c * (project_area_msq / 10000)
-            s_c = areas_c * density
+    # --- Loop 2: Calculate final metrics for each year ---
+    results_list = []
+    all_years = sorted([y for y in treatment_luc_proportions.keys() if y >= earliest_year_overall])
 
-            s_c_value = s_c.sum() * MOLECULAR_MASS_CO2_TO_C_RATIO
+    try:
+        deforested_luc_index = LandUseClass.DEFORESTED.value - 1
+    except AttributeError:
+        logging.error("LandUseClass.DEFORESTED not found. Cannot calculate deforestation metrics.")
+        deforested_luc_index = -1
 
-            logging.info("Additionality in counterfactual is %f", s_c_value)
+    for year in all_years:
+        treatment_props_year = treatment_luc_proportions.get(year, np.full((num_iterations, len(LandUseClass)), np.nan))
+        control_props_year = control_luc_proportions.get(year, np.full((num_iterations, len(LandUseClass)), np.nan))
 
-            if scvt.get(year_index) is not None:
-                scvt[year_index][pair_idx] = s_c_value
+        treatment_carbon_iter = np.nansum(treatment_props_year * project_area_ha * density, axis=1) * MOLECULAR_MASS_CO2_TO_C_RATIO
+        control_carbon_iter = np.nansum(control_props_year * project_area_ha * density, axis=1) * MOLECULAR_MASS_CO2_TO_C_RATIO
+        additionality_iter = treatment_carbon_iter - control_carbon_iter
+
+        valid_indices = ~np.isnan(additionality_iter)
+        valid_additionality = additionality_iter[valid_indices]
+        valid_treatment_carbon = treatment_carbon_iter[valid_indices]
+        valid_control_carbon = control_carbon_iter[valid_indices]
+        n_valid = len(valid_additionality)
+
+        mean_additionality = np.mean(valid_additionality) if n_valid > 0 else np.nan
+
+        if n_valid >= 2:
+            std_dev_additionality = np.std(valid_additionality, ddof=1)
+            stderr_additionality = std_dev_additionality / np.sqrt(n_valid)
+            if abs(mean_additionality) > 1e-9:
+                rse_additionality = stderr_additionality / abs(mean_additionality)
             else:
-                arr = np.zeros(expected_number_of_iterations)
-                arr[pair_idx] = s_c_value
-                scvt[year_index] = arr
+                rse_additionality = np.inf
+        else:
+            stderr_additionality = np.nan
+            rse_additionality = np.nan
 
-    c_tot : Dict[int, float] = {}
-    for year, values in scvt.items():
-        c_tot[year] = np.average(values)
+        mean_treatment_carbon = np.mean(valid_treatment_carbon) if n_valid > 0 else np.nan
+        mean_control_carbon = np.mean(valid_control_carbon) if n_valid > 0 else np.nan
+        stderr_treatment_carbon = (np.std(valid_treatment_carbon, ddof=1) / np.sqrt(n_valid)) if n_valid >= 2 else np.nan
+        stderr_control_carbon = (np.std(valid_control_carbon, ddof=1) / np.sqrt(n_valid)) if n_valid >= 2 else np.nan
 
-    p_tot : Dict[int, float] = {}
-    for year, values in treatment_data.items():
-        p_tot[year] = np.average(values)
+        mean_avoided_deforestation = np.nan
+        stderr_avoided_deforestation = np.nan
+        if deforested_luc_index != -1:
+             treatment_deforested_area_iter = treatment_props_year[:, deforested_luc_index] * project_area_ha
+             control_deforested_area_iter = control_props_year[:, deforested_luc_index] * project_area_ha
+             avoided_deforestation_iter = control_deforested_area_iter - treatment_deforested_area_iter
 
-    if partials_dir is not None:
-        figure, untyped_axis = plt.subplots(1, 3)
-        axis = cast(List[plt.Axes], untyped_axis)
-        figure.set_figheight(10)
-        figure.set_figwidth(18)
+             valid_avoided_deforestation = avoided_deforestation_iter[valid_indices]
+             valid_treatment_deforested = treatment_deforested_area_iter[valid_indices]
+             valid_control_deforested = control_deforested_area_iter[valid_indices]
 
-        plot_carbon_trajectories(
-            axis,
-            "Carbon stock (All Matches Treatment)",
-            1,
-            treatment_data,
-            project_start,
-        )
-        plot_carbon_trajectories(
-            axis, "Carbon stock (All Matches Control)", 2, scvt, project_start
-        )
-        plot_carbon_stock(axis[0], p_tot, c_tot, int(project_start))
+             mean_avoided_deforestation = np.mean(valid_avoided_deforestation) if n_valid > 0 else np.nan
+             if n_valid >= 2:
+                 stderr_avoided_deforestation = np.std(valid_avoided_deforestation, ddof=1) / np.sqrt(n_valid)
 
-        out_path = os.path.join(
-            partials_dir, os.path.splitext(pairs)[0] + "-carbon-stock.png"
-        )
+        results_list.append({
+            "year": year,
+            "iterations_valid": n_valid,
+            "additionality_mean": mean_additionality,
+            "additionality_stderr": stderr_additionality,
+            "additionality_rse": rse_additionality,
+        })
 
-        figure.savefig(out_path)
+    results_df = pd.DataFrame(results_list)
 
-        # Now for all the pairs we create a GeoJSON for visualising
-        smds : Dict[str, Any] = {"pair_id": [], "feature": [], "smd": []}
-        for pair_idx, pairs in enumerate(matches):
-            matches_df = pd.read_parquet(os.path.join(matches_directory, pairs))
+    if partials_dir is not None and num_iterations > 0 and not results_df.empty:
+        try:
+            logging.info(f"Generating diagnostic plots and files in {partials_dir}")
+            os.makedirs(partials_dir, exist_ok=True)
 
-            linestrings = []
-            for _, row in matches_df.iterrows():
-                linestring = Feature(
-                    geometry=LineString(
-                        [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
-                    )
-                )
-                linestrings.append(linestring)
+            plot_year = all_years[-1]
+            plot_data = results_df[results_df['year'] == plot_year].iloc[0]
+            treatment_props_plot_year = treatment_luc_proportions.get(plot_year)
+            control_props_plot_year = control_luc_proportions.get(plot_year)
 
-            geomtry_collection = FeatureCollection(linestrings)
-            out_path = os.path.join(
-                partials_dir, os.path.splitext(pairs)[0] + "-pairs.geojson"
-            )
+            if treatment_props_plot_year is not None and control_props_plot_year is not None:
+                treatment_carbon_all_iters = np.nansum(treatment_props_plot_year * project_area_ha * density, axis=1) * MOLECULAR_MASS_CO2_TO_C_RATIO
+                control_carbon_all_iters = np.nansum(control_props_plot_year * project_area_ha * density, axis=1) * MOLECULAR_MASS_CO2_TO_C_RATIO
+                valid_indices_plot = ~np.isnan(treatment_carbon_all_iters) & ~np.isnan(control_carbon_all_iters)
 
-            with open(out_path, "w", encoding="utf-8") as output_file:
-                output_file.write(dumps(geomtry_collection))
+                figure, untyped_axis = plt.subplots(1, 3, figsize=(18, 6))
+                axis = cast(List[plt.Axes], untyped_axis)
 
-            points = []
-            for _, row in matches_df.iterrows():
-                linestring = Feature(
-                    geometry=MultiPoint(
-                        [(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]
-                    )
-                )
-                points.append(linestring)
+                p_tot_plot = results_df.set_index('year')['treatment_carbon_mean'].dropna().to_dict()
+                c_tot_plot = results_df.set_index('year')['control_carbon_mean'].dropna().to_dict()
+                if p_tot_plot and c_tot_plot:
+                     plot_carbon_stock(axis[0], p_tot_plot, c_tot_plot, int(project_start))
+                else:
+                     axis[0].set_title("Carbon stock (Average) - No Data")
 
-            points_gc = FeatureCollection(points)
-            out_path = os.path.join(
-                partials_dir, os.path.splitext(pairs)[0] + "-pairs-points.geojson"
-            )
+                if np.any(valid_indices_plot):
+                    axis[1].hist(treatment_carbon_all_iters[valid_indices_plot], bins=20, alpha=0.7)
+                    axis[1].set_title(f'Treatment Carbon Distribution ({plot_year})')
+                    axis[1].set_xlabel('Carbon Stock (MgCO2e)')
+                    axis[1].set_ylabel('Frequency')
 
-            with open(out_path, "w", encoding="utf-8") as output_file:
-                output_file.write(dumps(points_gc))
+                    axis[2].hist(control_carbon_all_iters[valid_indices_plot], bins=20, alpha=0.7)
+                    axis[2].set_title(f'Control Carbon Distribution ({plot_year})')
+                    axis[2].set_xlabel('Carbon Stock (MgCO2e)')
+                    axis[2].set_ylabel('Frequency')
+                else:
+                     axis[1].set_title(f'Treatment Carbon ({plot_year}) - No Data')
+                     axis[2].set_title(f'Control Carbon ({plot_year}) - No Data')
 
-            # We now compute statistics for each pairing mainly looking at SMD
-            mean_std = matches_df.agg(["mean", "std"])
-            for col in matches_df.columns:
-                # only go from K to S so we don't double count
-                if col[0] == "k":
-                    treat_mean = mean_std[col]["mean"]
-                    feature = "_".join(col.split("_")[1:])
-                    control_col = "s_" + feature
-                    control_mean = mean_std[control_col]["mean"]
-                    treat_std = mean_std[col]["std"]
-                    control_std = mean_std[control_col]["std"]
-                    smd = (treat_mean - control_mean) / np.sqrt(
-                        (treat_std**2 + control_std**2) / 2
-                    )
-                    smd = round(abs(smd), 8)
-                    smds["pair_id"].append(os.path.splitext(pairs)[0])
-                    smds["feature"].append(feature)
-                    smds["smd"].append(smd)
-        smd_path = os.path.join(
-            partials_dir,
-            "smd.csv"
-        )
-        smds_df = pd.DataFrame.from_dict(smds)
-        smds_df.to_csv(smd_path)
+                plt.tight_layout()
+                out_path_plot = os.path.join(partials_dir, "summary_carbon_stock.png")
+                figure.savefig(out_path_plot)
+                plt.close(figure)
+                logging.info(f"Saved summary plot to {out_path_plot}")
 
-    result : Dict[int, float] = {}
+            first_valid_match_file = None
+            first_valid_match_df = None
+            for pairs_file in matches:
+                 try:
+                     df_temp = pd.read_parquet(os.path.join(matches_directory, pairs_file))
+                     if not df_temp.empty:
+                         first_valid_match_file = pairs_file
+                         first_valid_match_df = df_temp
+                         break
+                 except Exception:
+                     continue
 
-    for year, value in p_tot.items():
-        result[year] = value - c_tot[year]
+            if first_valid_match_file and first_valid_match_df is not None:
+                logging.info(f"Generating diagnostics (SMD, GeoJSON) using: {first_valid_match_file}")
+                smds : Dict[str, Any] = {"pair_id": [], "feature": [], "smd": []}
+                mean_std = first_valid_match_df.agg(["mean", "std"])
+                for col in first_valid_match_df.columns:
+                    if col.startswith("k_"):
+                        feature = "_".join(col.split("_")[1:])
+                        control_col = "s_" + feature
+                        if control_col in mean_std and col in mean_std:
+                            treat_mean = mean_std[col]["mean"]
+                            control_mean = mean_std[control_col]["mean"]
+                            treat_std = mean_std[col]["std"]
+                            control_std = mean_std[control_col]["std"]
+                            denominator = np.sqrt((treat_std**2 + control_std**2) / 2)
+                            if denominator > 1e-9:
+                                smd = abs(treat_mean - control_mean) / denominator
+                            else:
+                                smd = 0.0 if abs(treat_mean - control_mean) < 1e-9 else np.inf
+                            smds["pair_id"].append(os.path.splitext(first_valid_match_file)[0])
+                            smds["feature"].append(feature)
+                            smds["smd"].append(round(smd, 8))
 
-    return result
-    
+                if smds["pair_id"]:
+                    smd_path = os.path.join(partials_dir, "smd_summary.csv")
+                    smds_df = pd.DataFrame.from_dict(smds)
+                    smds_df.to_csv(smd_path, index=False)
+                    logging.info(f"Saved SMD summary to {smd_path}")
+
+                linestrings = []
+                points = []
+                for _, row in first_valid_match_df.iterrows():
+                     if all(pd.notna(coord) for coord in [row.get("k_lng"), row.get("k_lat"), row.get("s_lng"), row.get("s_lat")]):
+                         try:
+                             linestring = Feature(geometry=LineString([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                             point = Feature(geometry=MultiPoint([(row["k_lng"], row["k_lat"]), (row["s_lng"], row["s_lat"])]))
+                             linestrings.append(linestring)
+                             points.append(point)
+                         except Exception as geo_e:
+                             logging.warning(f"Could not create geometry for row in {first_valid_match_file}: {geo_e}")
+
+                if linestrings:
+                     geom_collection_lines = FeatureCollection(linestrings)
+                     out_path_lines = os.path.join(partials_dir, f"{os.path.splitext(first_valid_match_file)[0]}-pairs.geojson")
+                     with open(out_path_lines, "w", encoding="utf-8") as f: f.write(dumps(geom_collection_lines))
+                     logging.info(f"Saved pairs linestrings to {out_path_lines}")
+                if points:
+                     geom_collection_points = FeatureCollection(points)
+                     out_path_points = os.path.join(partials_dir, f"{os.path.splitext(first_valid_match_file)[0]}-pairs-points.geojson")
+                     with open(out_path_points, "w", encoding="utf-8") as f: f.write(dumps(geom_collection_points))
+                     logging.info(f"Saved pairs points to {out_path_points}")
+
+            else:
+                 logging.warning("No valid iteration data found for generating SMD/GeoJSON diagnostics.")
+
+        except Exception as e:
+             logging.error(f"Failed during diagnostic generation: {e}", exc_info=True)
+
+    return results_df

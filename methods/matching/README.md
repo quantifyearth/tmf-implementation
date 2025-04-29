@@ -1,11 +1,63 @@
-# Pixel matching stages
+# Pixel Matching Stages
 
-Currently, due to the large amount of data involved and the need to apply different processing styles to the data depending on, for example, if we're processing raster or tabular data, we've split pixel matching into the following distinct stages, where each stage flows into the next one:
+This directory contains the scripts responsible for finding counterfactual control pixels (Set S) for each treatment pixel (Set K). This process involves several steps to identify suitable control candidates and then perform the matching based on covariate similarity.
 
-1. calculate_k.py - Selects pixels from within the project area to be used in the matching process
-2. find_potential_matches.py - generates rasters, each covering a subset of the matching area, and identifies pixels from which counterfactual pixels can be selected (aka, a subset of M).
-3. build_m_raster.py - Combines all the rasters from the previous stage into a single raster, which is M, the set of pixels from which counterfactuals can be selected.
-4. build_m_table.py - Takes the raster for M, and generates a table with a row per pixel, adding in the data from JRC, CPC, etc. related to that pixel.
-5. find_pairs.py - Uses the pixel set K and counterfactual pool M to provide sets of matches. We generate 100 sets of matches, that will then later be compared.
+## 1. Calculate Set K (`calculate_k.py`)
 
-If calculating leakage rather than additionality you can just input the leakage zone rather than the project zone, and suitably adjusted matching areas. Otherwise the process is the same for each.
+*   **Input:** Project boundary, start/evaluation years, covariate data layers (JRC, FCC, Ecoregions, Elevation, Slope, Access, Countries).
+*   **Process:**
+    *   Identifies pixels within the project boundary to comprise Set K.
+    *   Samples pixels from the project area using a grid-based approach with offsets. The density of sampling depends on the project size (small vs. large).
+    *   Generates multiple "K grid" files (`k_*.parquet`), each representing a slightly different spatial grid of the project area.
+    *   Extracts confounder exposure and land use history for each sampled K pixel for all relevant years.
+*   **Output:** A directory (`k_grids`) containing multiple Parquet files, each holding a subset grid of K pixels and their confounder exposure and land use history. Within this directory there is also a folder of point geojsons files representing the different K pixel grids. These files are used to visualize the K pixel locations in GIS software.
+
+## 2. Find Potential Matches (`find_potential_matches.py`)
+
+*   **Input:** K grid parquets, matching area boundary, covariate data layers.
+*   **Process:**
+**Process:**
+    *   **Load K Data:** Reads all the gridded `k_*.parquet` files, concatenates them, and groups the K pixels based on hard matching criteria (ecoregion, country, baseline LUCs).
+    *   **Build K-Trees:** For each group of K pixels, builds a `DRangedTree`. This tree stores the continuous covariate values (elevation, slope, access, FCCs) of the K pixels in that group and is optimized for quickly checking if a point falls within the range (defined by thresholds) of any K point in the tree.
+    *   **Parallel Processing:** Divides the matching area GeoJSON into horizontal strips. Worker processes are assigned strips.
+    *   **Worker Task:** Each worker iterates through the pixels in its assigned strip of the matching area. For each pixel:
+        *   Checks if it falls within the matching area boundary.
+        *   Extracts the pixel's hard criteria (ecoregion, country, baseline LUCs) and continuous covariates.
+        *   Finds the corresponding K-Tree based on the hard criteria.
+        *   If a tree exists, uses the tree's `contains()` method to efficiently check if the pixel's continuous covariates fall within the pre-defined range (thresholds) of *any* K pixel in that group.
+        *   If both hard criteria match a group *and* the continuous covariates are within the range, the pixel is marked as a potential match (value 1).
+    *   Each worker writes its results (pixels marked 0 or 1) to a separate GeoTIFF file representing its assigned horizontal strip.
+*   **Output:** A directory (`matches`) containing multiple GeoTIFF raster files. Each raster covers a horizontal strip of the matching area. Pixels with value 1 represent potential control pixels that satisfy both the hard matching criteria and the initial confounder exposure and land use history relative to the K pixels.
+
+## 3. Build M Table (`build_m_table.py`)
+
+*   **Input:** Potential match raster directory (`matches`), matching area boundary, covariate data layers.
+*   **Process:**
+    *   Consolidates the information from all potential match rasters into a single, comprehensive table (Set M).
+    *   Extracts the full set of covariate values (elevation, slope, access, forest cover change, LUC) for all years for every potential control pixel identified in the previous step.
+*   **Output:** A single Parquet file (`matches.parquet`) containing all potential control pixels (Set M) and their detailed covariate data across all years.
+
+## 4. Find Pairs (`find_pairs.py`) - Modified Process
+
+*   **Input:** K grids directory, M table (`matches.parquet`), start/evaluation years, carbon density file, project boundary file, batch size, RSE threshold, seed.
+*   **Process:**
+    *   Iterates through the K grid files generated by `calculate_k.py`.
+    *   Uses `multiprocessing` to process K grids in parallel.
+    *   **Batch Processing:** Processes K grids in batches (e.g., 10 at a time).
+    *   **Per Iteration within each Batch (Parallel Worker):**
+        *   Loads its assigned K grid file.
+        *   Loads the entire M table (`matches.parquet`).
+        *   **Shuffles** the M table randomly using an unique but reproducable seed derived from the main script seed.
+        *   Performs greedy matching: For each K pixel (processed in random order), it finds the best available S pixel from the shuffled M table based on Mahalanobis distance calculated using relevant covariates (elevation, slope, access, baseline forest cover change). Hard criteria (country, ecoregion, baseline LUC) must also match.
+        *   Saves the matched K-S pairs to an iteration-specific Parquet file (e.g., `65.parquet`).
+        *   **Intermediate Calculation:** Calculates an estimate of the carbon additionality for a specified `evaluation_year` using the generated pairs, project area, and carbon density data.
+        *   Returns the K grid ID and the calculated additionality estimate.
+    *   **Convergence Check (After Each Batch):**
+        *   Collects the additionality estimates from the completed batch.
+        *   Calculates the running mean and standard error (SE) of *all* additionality estimates collected so far.
+        *   Calculates the Relative Standard Error (RSE = SE / |mean|).
+        *   If the RSE drops below the specified `--rse_threshold`, the script stops processing further batches, assuming convergence.
+*   **Output:**
+    *   A directory (`pairs`) containing Parquet files, one for each K grid iteration that was processed before stopping. Each file contains the matched K-S pairs for that iteration.
+
+This multi-stage process, particularly the Monte Carlo-equse iterations in `find_pairs.py` with the early stopping criterion, aims to generate robust counterfactuals by exploring different spatial samplings and matching orders while optimizing computational resources. Spatial Autocorrelation and order bias is avoided by using the grid-based sampling approach in `calculate_k.py` and the random shuffling of the M table in `find_pairs.py`. The use of parallel processing ensures that the matching process is efficient, even for large datasets. The final `pairs` files are then used by `calculate_additionality.py` to compute the overall project impact metrics.

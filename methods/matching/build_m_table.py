@@ -1,5 +1,11 @@
 import argparse
-from multiprocessing import cpu_count
+import glob
+import os
+import tempfile
+import shutil
+from multiprocessing import Pool, cpu_count
+from functools import partial
+import logging
 
 import polars as pl
 from yirgacheffe.layers import RasterLayer  # type: ignore
@@ -7,91 +13,103 @@ from yirgacheffe.layers import RasterLayer  # type: ignore
 from methods.matching.calculate_k import build_layer_collection
 from methods.common.luc import luc_range
 
-def build_m_table(
-    m_raster_path: str,
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(processName)s %(message)s")
+
+def process_partial_raster(
     start_year: int,
     evaluation_year: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
-    cpc_directory_path: str,
+    fcc_directory_path: str,
     ecoregions_directory_path: str,
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
     countries_raster_filename: str,
-    result_dataframe_filename: str,
-    _processes_count: int
-) -> None:
+    temp_output_dir: str,
+    partial_raster_path: str
+) -> str:
+    """Processes one partial M raster and saves its table data to a temp parquet file."""
+    logging.info(f"Processing partial raster: {partial_raster_path}")
+    partial_raster_filename = os.path.basename(partial_raster_path)
+    temp_parquet_filename = os.path.join(temp_output_dir, partial_raster_filename.replace('.tif', '.parquet'))
 
-    merged_raster = RasterLayer.layer_from_file(m_raster_path)
+    try:
+        partial_raster = RasterLayer.layer_from_file(partial_raster_path)
 
-    matching_collection = build_layer_collection(
-        merged_raster.pixel_scale,
-        merged_raster.projection,
-        list(luc_range(start_year, evaluation_year)),
-        [start_year, start_year - 5, start_year - 10],
-        matching_zone_filename,
-        jrc_directory_path,
-        cpc_directory_path,
-        ecoregions_directory_path,
-        elevation_directory_path,
-        slope_directory_path,
-        access_directory_path,
-        countries_raster_filename,
-    )
+        matching_collection = build_layer_collection(
+            partial_raster.pixel_scale,
+            partial_raster.projection,
+            list(luc_range(start_year, evaluation_year)),
+            [start_year, start_year - 5, start_year - 10],
+            matching_zone_filename,
+            jrc_directory_path,
+            fcc_directory_path,
+            ecoregions_directory_path,
+            elevation_directory_path,
+            slope_directory_path,
+            access_directory_path,
+            countries_raster_filename,
+        )
 
-    assert matching_collection.boundary.window == merged_raster.window
-    assert matching_collection.boundary.area == merged_raster.area
+        results = []
+        luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
+        fcc_columns = ['fcc0_u', 'fcc0_d', 'fcc5_u', 'fcc5_d', 'fcc10_u', 'fcc10_d']
+        columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + fcc_columns
 
-    results = []
-    luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-    cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
-    columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + cpc_columns
+        window = partial_raster.window
+        logging.debug(f"Processing window {window} for {partial_raster_filename}")
 
-    # now we we need to scan for matched pixels and store the data about them
-    width = matching_collection.boundary.window.xsize
-    for yoffset in range(matching_collection.boundary.window.ysize):
-        print(f"{yoffset}/{matching_collection.boundary.window.ysize}")
-        row_matches = merged_raster.read_array(0, yoffset, width, 1)
-        if row_matches.sum() == 0:
-            continue
-        row_elevation = matching_collection.elevation.read_array(0, yoffset, width, 1)
-        row_ecoregion = matching_collection.ecoregions.read_array(0, yoffset, width, 1)
-        row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
-        row_access = matching_collection.access.read_array(0, yoffset, width, 1)
-        row_countries = matching_collection.countries.read_array(0, yoffset, width, 1)
-        row_lucs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.lucs]
-        row_cpcs = [x.read_array(0, yoffset, width, 1) for x in matching_collection.cpcs]
-
-        for xoffset in range(width):
-            if not row_matches[0][xoffset]:
+        for yoffset_local in range(window.ysize):
+            yoffset_global = window.yoff + yoffset_local
+            row_matches = partial_raster.read_array(0, yoffset_local, window.xsize, 1)
+            if not row_matches.any():
                 continue
 
-            coord = matching_collection.boundary.latlng_for_pixel(xoffset, yoffset)
+            row_elevation = matching_collection.elevation.read_array(window.xoff, yoffset_global, window.xsize, 1)
+            row_ecoregion = matching_collection.ecoregions.read_array(window.xoff, yoffset_global, window.xsize, 1)
+            row_slope = matching_collection.slope.read_array(window.xoff, yoffset_global, window.xsize, 1)
+            row_access = matching_collection.access.read_array(window.xoff, yoffset_global, window.xsize, 1)
+            row_countries = matching_collection.countries.read_array(window.xoff, yoffset_global, window.xsize, 1)
+            row_lucs = [x.read_array(window.xoff, yoffset_global, window.xsize, 1) for x in matching_collection.lucs]
+            row_fccs = [x.read_array(window.xoff, yoffset_global, window.xsize, 1) for x in matching_collection.fccs]
 
-            results.append([
-                coord[0],
-                coord[1],
-                row_ecoregion[0][xoffset],
-                row_elevation[0][xoffset],
-                row_slope[0][xoffset],
-                row_access[0][xoffset],
-                row_countries[0][xoffset],
-            ] + [luc[0][xoffset] for luc in row_lucs] + [cpc[0][xoffset] for cpc in row_cpcs])
+            for xoffset_local in range(window.xsize):
+                if row_matches[0, xoffset_local] > 0:
+                    xoffset_global = window.xoff + xoffset_local
+                    coord = matching_collection.boundary.latlng_for_pixel(xoffset_global, yoffset_global)
 
+                    results.append([
+                        coord[0], coord[1],
+                        row_ecoregion[0, xoffset_local],
+                        row_elevation[0, xoffset_local],
+                        row_slope[0, xoffset_local],
+                        row_access[0, xoffset_local],
+                        row_countries[0, xoffset_local],
+                    ] + [luc[0, xoffset_local] for luc in row_lucs] + [fcc[0, xoffset_local] for fcc in row_fccs])
 
-    output = pl.DataFrame(results, columns)
-    output.write_parquet(result_dataframe_filename)
+        if results:
+            output_df = pl.DataFrame(results, schema=columns)
+            output_df.write_parquet(temp_parquet_filename)
+            logging.info(f"Wrote {len(results)} points to {temp_parquet_filename}")
+            return temp_parquet_filename
+        else:
+            logging.info(f"No matching points found in {partial_raster_path}. No temp file created.")
+            return None
+
+    except Exception as e:
+        logging.error(f"Error processing {partial_raster_path}: {e}", exc_info=True)
+        return None
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Finds all potential matches to K in matching zone, aka set M.")
     parser.add_argument(
-        "--raster",
+        "--rasters_directory",
         type=str,
         required=True,
-        dest="m_raster_filename",
-        help="GeoTIFF file containing pixels in set M as generated by build_m_raster.py"
+        dest="m_rasters_directory",
+        help="Directory containing partial M rasters (*.tif) generated by find_potential_matches.py"
     )
     parser.add_argument(
         "--matching",
@@ -122,10 +140,10 @@ def main() -> None:
         help="Directory containing JRC AnnualChange GeoTIFF tiles for all years."
     )
     parser.add_argument(
-        "--cpc",
+        "--fcc",
         type=str,
         required=True,
-        dest="cpc_directory_path",
+        dest="fcc_directory_path",
         help="Directory containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
     )
     parser.add_argument(
@@ -171,30 +189,57 @@ def main() -> None:
         help="Destination parquet file for results."
     )
     parser.add_argument(
-        "-j",
+        "--j",
         type=int,
         required=False,
-        default=round(cpu_count() / 2),
+        default=round(cpu_count() / 4),
         dest="processes_count",
         help="Number of concurrent threads to use."
     )
     args = parser.parse_args()
 
-    build_m_table(
-        args.m_raster_filename,
-        args.start_year,
-        args.evaluation_year,
-        args.matching_zone_filename,
-        args.jrc_directory_path,
-        args.cpc_directory_path,
-        args.ecoregions_directory_path,
-        args.elevation_directory_path,
-        args.slope_directory_path,
-        args.access_directory_path,
-        args.countries_raster_filename,
-        args.output_filename,
-        args.processes_count
-    )
+    partial_raster_files = glob.glob(os.path.join(args.m_rasters_directory, "*.tif"))
+    if not partial_raster_files:
+        logging.error(f"No *.tif files found in {args.m_rasters_directory}")
+        return
+
+    logging.info(f"Found {len(partial_raster_files)} partial M rasters to process.")
+
+    with tempfile.TemporaryDirectory() as tempdir:
+        logging.info(f"Using temporary directory for intermediate parquets: {tempdir}")
+
+        worker_func = partial(
+            process_partial_raster,
+            args.start_year,
+            args.evaluation_year,
+            args.matching_zone_filename,
+            args.jrc_directory_path,
+            args.fcc_directory_path,
+            args.ecoregions_directory_path,
+            args.elevation_directory_path,
+            args.slope_directory_path,
+            args.access_directory_path,
+            args.countries_raster_filename,
+            tempdir
+        )
+
+        num_processes = min(args.processes_count, len(partial_raster_files))
+        logging.info(f"Starting parallel processing with {num_processes} workers...")
+        with Pool(processes=num_processes) as pool:
+            temp_parquet_files = pool.map(worker_func, partial_raster_files)
+
+        valid_temp_files = [f for f in temp_parquet_files if f is not None and os.path.exists(f)]
+
+        if valid_temp_files:
+            logging.info(f"Concatenating {len(valid_temp_files)} intermediate parquet files...")
+            combined_df = pl.scan_parquet(valid_temp_files).collect()
+
+            logging.info(f"Writing final combined table with {len(combined_df)} rows to {args.output_filename}")
+            combined_df.write_parquet(args.output_filename)
+        else:
+            logging.warning("No valid intermediate parquet files were generated. Output file will not be created.")
+
+    logging.info("Processing complete.")
 
 if __name__ == "__main__":
     main()

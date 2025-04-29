@@ -54,14 +54,35 @@ def generate_carbon_density(
 
     results = []
     for land_use_class in land_use_class_list:
-        median_agbd = np.median(luc_buckets[land_use_class])
-        bgbd = median_agbd * 0.2
-        deadwood_bd = median_agbd * 0.11
-        total = median_agbd + bgbd + deadwood_bd
-        carbon_density = total * 0.47
-        results.append([land_use_class, carbon_density])
+        # build a 50% trimmed sample (drop lowest 25% & highest 25%)
+        vals = np.array(luc_buckets[land_use_class], dtype=np.float64)
+        vals.sort()
+        n0 = vals.size
+        trim = int(math.floor(n0 * 0.25))
+        mid_vals = vals[trim : n0 - trim]
+        n_mid = mid_vals.size
 
-    output = pd.DataFrame(results, columns=["land use class", "carbon density"])
+        # compute midmean & its SE
+        midmean = np.mean(mid_vals) if n_mid > 0 else np.nan
+        se_agbd = (np.std(mid_vals, ddof=1) / math.sqrt(n_mid)) if n_mid > 1 else np.nan
+
+        # carbon density = (AGBD + BGBD + deadwood) * 0.47
+        # where BGBD = 0.2*AGBD, deadwood = 0.11*AGBD
+        factor = (1 + 0.2 + 0.11) * 0.47
+        carbon_density = midmean * factor
+        se_carbon_density = se_agbd * factor
+
+        results.append([
+            land_use_class,
+            carbon_density,
+            n_mid,
+            se_carbon_density
+        ])
+
+    output = pd.DataFrame(
+        results,
+        columns=["land use class", "carbon density", "n", "se"]
+    )
     match output_ext:
         case '.csv':
             output.to_csv(output_file, index=False)

@@ -1,50 +1,60 @@
 import argparse
 import glob
 import os
+import random
 import tempfile
+import logging
+import multiprocessing
+from functools import partial
 from collections import namedtuple
 from itertools import product
 from typing import List, Optional
 
 import pandas as pd
-from geopandas import gpd  # type: ignore
-from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer  # type: ignore
-from yirgacheffe.window import PixelScale  # type: ignore
+import geopandas as gpd
+from shapely.geometry import Point
+from yirgacheffe.layers import GroupLayer, RasterLayer, VectorLayer
+from yirgacheffe.window import PixelScale
 
-from methods.common import LandUseClass
-from methods.common.geometry import area_for_geometry, expand_boundaries
-from methods.common.luc import luc_range
+from methods.common import LandUseClass # Assuming this exists in your project structure
+from methods.common.geometry import area_for_geometry, expand_boundaries # Assuming this exists
+from methods.common.luc import luc_range # Assuming this exists
 
+# --- Constants ---
 HECTARE_WIDTH_IN_METERS = 100
 PIXEL_WIDTH_IN_METERS = 30
-SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.25
-LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.05
+# Adjust densities as needed
+SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.05
+LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.01
 
-# The '2 *' in this is because I'm just considering one axis, rather than area
-PIXEL_SKIP_SMALL_PROJECT = \
-    round((HECTARE_WIDTH_IN_METERS / (2 * SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
-PIXEL_SKIP_LARGE_PROJECT = \
-    round((HECTARE_WIDTH_IN_METERS / (2 * LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
+# Pixel skip calculation based on density
+PIXEL_SKIP_SMALL_PROJECT = round((HECTARE_WIDTH_IN_METERS / (2 * SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
+PIXEL_SKIP_LARGE_PROJECT = round((HECTARE_WIDTH_IN_METERS / (2 * LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
 
+# --- Data Structures ---
 MatchingCollection = namedtuple('MatchingCollection',
-    ['boundary', 'lucs', 'cpcs', 'ecoregions', 'elevation', 'slope', 'access', 'countries'])
+    ['boundary', 'lucs', 'fccs', 'ecoregions', 'elevation', 'slope', 'access', 'countries'])
+
+# --- Logging Setup ---
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(processName)s %(message)s")
+
+# --- Core Functions (Copied/Adapted from calculate_k.py) ---
 
 def build_layer_collection(
     pixel_scale: PixelScale,
     projection: str,
     luc_years: List[int],
-    cpc_years: List[int],
+    fcc_years: List[int],
     boundary_filename: str,
     jrc_directory_path: str,
-    cpc_directory_path: str,
+    fcc_directory_path: str,
     ecoregions_directory_path: str,
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
     countries_raster_filename: str,
 ) -> MatchingCollection:
-    # profiler = cProfile.Profile()
-    # profiler.enable()
+    """Builds the collection of layers needed for sampling."""
     outline_layer = VectorLayer.layer_from_file(boundary_filename, None, pixel_scale, projection)
 
     lucs = [
@@ -54,18 +64,16 @@ def build_layer_collection(
         ], name=f"luc_{year}") for year in luc_years
     ]
 
-    cpcs = [
+    fccs = [
         GroupLayer([
             RasterLayer.layer_from_file(
-                os.path.join(cpc_directory_path, filename)
+                os.path.join(fcc_directory_path, filename)
             ) for filename in
-                glob.glob(f"*{year_class[0]}*_{year_class[1].value}.tif", root_dir=cpc_directory_path)
-        ], name=f"cpc_{year_class}") for year_class in product(cpc_years,
-            [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])
+                glob.glob(f"*{year_class[0]}*_{year_class[1].value}.tif", root_dir=fcc_directory_path)
+        ], name=f"fcc_{year_class}") for year_class in product(fcc_years,
+            [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED]) # Assuming LandUseClass enum
     ]
 
-    # ecoregions is such a heavy layer it pays to just rasterize it once - we should possibly do this once
-    # as part of import of the ecoregions data
     ecoregions = GroupLayer([
         RasterLayer.layer_from_file(os.path.join(ecoregions_directory_path, filename)) for filename in
             glob.glob("*.tif", root_dir=ecoregions_directory_path)
@@ -87,226 +95,262 @@ def build_layer_collection(
 
     countries = RasterLayer.layer_from_file(countries_raster_filename)
 
-    # constrain everything to project boundaries
-    layers = [elevation, slopes, ecoregions, access, countries] + lucs + cpcs
+    # Constrain layers
+    layers = [elevation, slopes, ecoregions, access, countries] + lucs + fccs
     for layer in layers:
         if layer.pixel_scale != pixel_scale:
-            raise ValueError(f"Raster {layer.name} is at wrong pixel scale")
+            logging.warning(f"Raster {layer.name} might be at wrong pixel scale (Expected: {pixel_scale}, Got: {layer.pixel_scale}). Reprojecting.")
+            # Add reprojection logic if necessary, or ensure inputs match
         layer.set_window_for_intersection(outline_layer.area)
 
-    # profiler.disable()
-    # stats = pstats.Stats(profiler).sort_stats('ncalls')
-    # stats.print_stats()
-
     return MatchingCollection(
-        boundary=outline_layer,
-        lucs=lucs,
-        cpcs=cpcs,
-        ecoregions=ecoregions,
-        elevation=elevation,
-        slope=slopes,
-        access=access,
-        countries=countries,
+        boundary=outline_layer, lucs=lucs, fccs=fccs, ecoregions=ecoregions,
+        elevation=elevation, slope=slopes, access=access, countries=countries,
     )
 
-def calculate_k(
+def calculate_single_k_parquet(
     project_boundary_filename: str,
     start_year: int,
     evaluation_year: int,
     jrc_directory_path: str,
-    cpc_directory_path: str,
+    fcc_directory_path: str,
     ecoregions_directory_path: str,
     elevation_directory_path: str,
     slope_directory_path: str,
     access_directory_path: str,
     countries_raster_filename: str,
-    buffer: Optional[int],
-    result_dataframe_filename: str,
+    buffer_distance: int,
+    result_parquet_filename: str,
+    pixel_skip: int,
+    x_offset: int = 0,
+    y_offset: int = 0,
 ) -> None:
-    project = gpd.read_file(project_boundary_filename)
+    """Calculates and saves the K set (sample points) for a single offset to a Parquet file."""
 
-    # Assumption: even if a buffer is specified, we use the unbuffered project
-    # boundary as the project area to work out pixel_skip
-    project_area_in_metres_squared = area_for_geometry(project)
-    project_area_in_hectares = project_area_in_metres_squared / 10_000
-    pixel_skip = PIXEL_SKIP_LARGE_PROJECT if (project_area_in_hectares > 250_000) else PIXEL_SKIP_SMALL_PROJECT
+    # Determine which boundary file to use initially
+    # We always read the original project boundary first
+    project_boundary_to_use = project_boundary_filename
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        if buffer is not None:
-            expanded_project = expand_boundaries(project, buffer)
-            expanded_project_filename = os.path.join(tmpdir, "expanded-boundaries.geojson")
+        # Apply buffer dynamically if buffer_distance > 0
+        if buffer_distance > 0:
+            project_gdf = gpd.read_file(project_boundary_filename) # Read original to apply buffer
+            expanded_project = expand_boundaries(project_gdf, buffer_distance)
+            expanded_project_filename = os.path.join(tmpdir, f"expanded_{os.path.basename(project_boundary_filename)}")
             expanded_project.to_file(expanded_project_filename, driver="GeoJSON")
-            project_boundary_to_use = expanded_project_filename
+            project_boundary_to_use = expanded_project_filename # Use the buffered file for sampling
+            logging.debug(f"Applied buffer of {buffer_distance}m, using {project_boundary_to_use} for sampling.")
         else:
-            project_boundary_to_use = project_boundary_filename
+            logging.debug(f"Buffer is 0, using original boundary {project_boundary_to_use} for sampling.")
 
-        # everything is done at JRC resolution, so load a sample file from there first to get the ideal pixel scale
-        example_jrc_filename = glob.glob("*.tif", root_dir=jrc_directory_path)[0]
-        example_jrc_layer = RasterLayer.layer_from_file(os.path.join(jrc_directory_path, example_jrc_filename))
+        # Get scale/projection from JRC
+        try:
+            example_jrc_filename = glob.glob(os.path.join(jrc_directory_path, "*.tif"))[0]
+        except IndexError:
+            raise FileNotFoundError(f"No TIF files found in JRC directory: {jrc_directory_path}")
+        example_jrc_layer = RasterLayer.layer_from_file(example_jrc_filename)
 
         project_collection = build_layer_collection(
-            example_jrc_layer.pixel_scale,
-            example_jrc_layer.projection,
+            example_jrc_layer.pixel_scale, example_jrc_layer.projection,
             list(luc_range(start_year, evaluation_year)),
-            [start_year, start_year - 5, start_year - 10],
-            project_boundary_to_use,
-            jrc_directory_path,
-            cpc_directory_path,
-            ecoregions_directory_path,
-            elevation_directory_path,
-            slope_directory_path,
-            access_directory_path,
-            countries_raster_filename,
+            [start_year, start_year - 5, start_year - 10], # Assuming these FCC years
+            project_boundary_to_use, jrc_directory_path, fcc_directory_path,
+            ecoregions_directory_path, elevation_directory_path, slope_directory_path,
+            access_directory_path, countries_raster_filename,
         )
 
         results = []
-
         project_width = project_collection.boundary.window.xsize
-        for yoffset in range(0, project_collection.boundary.window.ysize, pixel_skip):
-            row_boundary = project_collection.boundary.read_array(0, yoffset, project_width, 1)
-            row_elevation = project_collection.elevation.read_array(0, yoffset, project_width, 1)
-            row_ecoregion = project_collection.ecoregions.read_array(0, yoffset, project_width, 1)
-            row_slope = project_collection.slope.read_array(0, yoffset, project_width, 1)
-            row_access = project_collection.access.read_array(0, yoffset, project_width, 1)
-            row_countries = project_collection.countries.read_array(0, yoffset, project_width, 1)
-            row_luc = [
-                luc.read_array(0, yoffset, project_width, 1) for luc in project_collection.lucs
-            ]
-            row_cpcs = [
-                cpc.read_array(0, yoffset, project_width, 1) for cpc in project_collection.cpcs
-            ]
+        project_height = project_collection.boundary.window.ysize
 
-            for xoffset in range(0, project_width, pixel_skip):
-                if not row_boundary[0][xoffset]:
-                    continue
-                lucs = [x[0][xoffset] for x in row_luc]
-                cpcs = [x[0][xoffset] for x in row_cpcs]
+        for yoff in range(y_offset, project_height, pixel_skip):
+            # Read row data efficiently
+            row_boundary = project_collection.boundary.read_array(0, yoff, project_width, 1)
+            if not row_boundary.any(): # Skip empty rows
+                 continue
+            row_elevation = project_collection.elevation.read_array(0, yoff, project_width, 1)
+            row_ecoregion = project_collection.ecoregions.read_array(0, yoff, project_width, 1)
+            row_slope = project_collection.slope.read_array(0, yoff, project_width, 1)
+            row_access = project_collection.access.read_array(0, yoff, project_width, 1)
+            row_countries = project_collection.countries.read_array(0, yoff, project_width, 1)
+            row_luc_data = [luc.read_array(0, yoff, project_width, 1) for luc in project_collection.lucs]
+            row_fcc_data = [fcc.read_array(0, yoff, project_width, 1) for fcc in project_collection.fccs]
 
-                coord = project_collection.boundary.latlng_for_pixel(xoffset, yoffset)
+            for xoff in range(x_offset, project_width, pixel_skip):
+                if row_boundary[0, xoff]: # Check if pixel is within boundary
+                    lucs = [luc_data[0, xoff] for luc_data in row_luc_data]
+                    fccs = [fcc_data[0, xoff] for fcc_data in row_fcc_data]
+                    coord = project_collection.boundary.latlng_for_pixel(xoff, yoff)
 
-                results.append([
-                    xoffset,
-                    yoffset,
-                    coord[0],
-                    coord[1],
-                    row_elevation[0][xoffset],
-                    row_slope[0][xoffset],
-                    row_ecoregion[0][xoffset],
-                    row_access[0][xoffset],
-                    row_countries[0][xoffset],
-                ] + lucs + cpcs)
+                    results.append([
+                        xoff, yoff, coord[0], coord[1], # lat, lng
+                        row_elevation[0, xoff], row_slope[0, xoff],
+                        row_ecoregion[0, xoff], row_access[0, xoff],
+                        row_countries[0, xoff],
+                    ] + lucs + fccs)
 
+        if not results:
+            logging.warning(f"No points generated for offset ({x_offset}, {y_offset}). Check project boundary and data overlap.")
+            return # Avoid creating empty parquet
+
+        # Define column names
         luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-        cpc_columns = ['cpc0_u', 'cpc0_d', 'cpc5_u', 'cpc5_d', 'cpc10_u', 'cpc10_d']
-        output = pd.DataFrame(
+        # --- Use relative year offsets (0, 5, 10) for fcc column names ---
+        fcc_years_relative = [0, 5, 10]
+        fcc_column_names = [f"fcc{rel_year}_{'u' if luc_class == LandUseClass.UNDISTURBED else 'd'}"
+                            for rel_year, luc_class in product(fcc_years_relative,
+                                                               [LandUseClass.UNDISTURBED, LandUseClass.DEFORESTED])]
+
+        output_df = pd.DataFrame(
             results,
-            columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country'] \
-                + luc_columns + cpc_columns
+            columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country']
+                      + luc_columns + fcc_column_names
         )
-        output.to_parquet(result_dataframe_filename)
+        output_df.to_parquet(result_parquet_filename)
+
+# --- Multiprocessing Worker ---
+
+def process_single_grid_task(
+    i: int, # Grid index (0 to num_grids-1)
+    args: argparse.Namespace,
+    pixel_skip: int,
+    x_offsets: List[int],
+    y_offsets: List[int],
+    output_directory: str,
+    geojsons_directory: str
+) -> Optional[int]:
+    """
+    Worker function for multiprocessing. Generates one Parquet grid
+    and its corresponding GeoJSON file.
+    """
+    grid_index_1_based = i + 1
+    parquet_filename = os.path.join(output_directory, f"k_{grid_index_1_based}.parquet")
+    geojson_filename = os.path.join(geojsons_directory, f"k_{grid_index_1_based}.geojson")
+    x_offset = x_offsets[i]
+    y_offset = y_offsets[i]
+
+    try:
+        # 1. Generate Parquet file
+        logging.info(f"Starting grid {grid_index_1_based} (offset {x_offset},{y_offset})...")
+        calculate_single_k_parquet(
+            args.project_boundary_filename, args.start_year, args.evaluation_year,
+            args.jrc_directory_path, args.fcc_directory_path, args.ecoregions_directory_path,
+            args.elevation_directory_path, args.slope_directory_path, args.access_directory_path,
+            args.countries_raster_filename, args.buffer, parquet_filename, # Pass buffer distance (int) here
+            pixel_skip, x_offset, y_offset # Pass pixel_skip here
+        )
+        logging.info(f"Generated grid {grid_index_1_based} (Parquet): {parquet_filename}")
+
+        # Check if parquet file was actually created (might be skipped if no points)
+        if not os.path.exists(parquet_filename):
+             logging.warning(f"Parquet file {parquet_filename} not created for grid {grid_index_1_based}. Skipping GeoJSON.")
+             return i # Still count as processed, but no GeoJSON
+
+        # 2. Convert Parquet to GeoJSON
+        df = pd.read_parquet(parquet_filename)
+        if df.empty:
+            logging.warning(f"Parquet file {parquet_filename} is empty. Skipping GeoJSON.")
+            return i # Count as processed
+
+        # Ensure 'lng' and 'lat' columns exist
+        if 'lng' not in df.columns or 'lat' not in df.columns:
+             raise ValueError(f"'lng' or 'lat' column not found in {parquet_filename}")
+
+        geometry = [Point(lon, lat) for lon, lat in zip(df['lng'], df['lat'])]
+        gdf = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326") # WGS84
+        gdf.to_file(geojson_filename, driver="GeoJSON")
+        logging.info(f"Converted grid {grid_index_1_based} to GeoJSON: {geojson_filename}")
+
+        return i # Return index on success
+
+    except Exception as e:
+        logging.error(f"Error processing grid {grid_index_1_based} (offset {x_offset},{y_offset}): {e}", exc_info=True)
+        # Optionally remove partially created files
+        if os.path.exists(parquet_filename): os.remove(parquet_filename)
+        if os.path.exists(geojson_filename): os.remove(geojson_filename)
+        return None # Indicate failure
+
+# --- Main Execution Logic ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Calculates sample pixels in project, aka set K")
-    parser.add_argument(
-        "--project",
-        type=str,
-        required=True,
-        dest="project_boundary_filename",
-        help="GeoJSON File of project boundary."
-    )
-    parser.add_argument(
-        "--start_year",
-        type=int,
-        required=True,
-        dest="start_year",
-        help="Year project started."
-    )
-    parser.add_argument(
-        "--evaluation_year",
-        type=int,
-        required=True,
-        dest="evaluation_year",
-        help="Year of project evalation"
-    )
-    parser.add_argument(
-        "--jrc",
-        type=str,
-        required=True,
-        dest="jrc_directory_path",
-        help="Directory containing JRC AnnualChange GeoTIFF tiles for all years."
-    )
-    parser.add_argument(
-        "--cpc",
-        type=str,
-        required=True,
-        dest="cpc_directory_path",
-        help="Directory containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
-    )
-    parser.add_argument(
-        "--ecoregions",
-        type=str,
-        required=True,
-        dest="ecoregions_directory_path",
-        help="Directory containing Ecoregions GeoTIFF tiles."
-    )
-    parser.add_argument(
-        "--elevation",
-        type=str,
-        required=True,
-        dest="elevation_directory_path",
-        help="Directory containing SRTM elevation GeoTIFF tiles."
-    )
-    parser.add_argument(
-        "--slope",
-        type=str,
-        required=True,
-        dest="slope_directory_path",
-        help="Directory containing slope GeoTIFF tiles."
-    )
-    parser.add_argument(
-        "--access",
-        type=str,
-        required=True,
-        dest="access_directory_path",
-        help="Directory containing access to health care GeoTIFF tiles."
-    )
-    parser.add_argument(
-        "--countries-raster",
-        type=str,
-        required=True,
-        dest="countries_raster_filename",
-        help="GeoJSON of country boundaries."
-    )
-    parser.add_argument(
-        "--output",
-        type=str,
-        required=True,
-        dest="output_filename",
-        help="Destination parquet file for results."
-    )
-    parser.add_argument(
-        "--buffer",
-        type=int,
-        required=False,
-        dest="buffer",
-        help="The size, in metres, of the buffer to apply to the edge of the project boundary."
-    )
+    parser = argparse.ArgumentParser(description="Generates multiple K-set sample grids (Parquet and GeoJSON) with random offsets.")
+    # Add all the arguments from the original script
+    parser.add_argument("--project", type=str, required=True, dest="project_boundary_filename", help="GeoJSON File of project boundary.")
+    parser.add_argument("--start_year", type=int, required=True, help="Year project started.")
+    parser.add_argument("--evaluation_year", type=int, required=True, help="Year of project evaluation.")
+    parser.add_argument("--jrc", type=str, required=True, dest="jrc_directory_path", help="Directory containing JRC AnnualChange GeoTIFF tiles.")
+    parser.add_argument("--fcc", type=str, required=True, dest="fcc_directory_path", help="Directory containing FCC GeoTIFF tiles.")
+    parser.add_argument("--ecoregions", type=str, required=True, dest="ecoregions_directory_path", help="Directory containing Ecoregions GeoTIFF tiles.")
+    parser.add_argument("--elevation", type=str, required=True, dest="elevation_directory_path", help="Directory containing SRTM elevation GeoTIFF tiles.")
+    parser.add_argument("--slope", type=str, required=True, dest="slope_directory_path", help="Directory containing slope GeoTIFF tiles.")
+    parser.add_argument("--access", type=str, required=True, dest="access_directory_path", help="Directory containing access GeoTIFF tiles.")
+    parser.add_argument("--countries-raster", type=str, required=True, dest="countries_raster_filename", help="Raster file of country boundaries.")
+    parser.add_argument("--output", type=str, required=True, dest="output_directory", help="Destination directory for k_*.parquet files and geojsons subfolder.")
+    parser.add_argument("--buffer", type=int, default=0, required=False, help="Optional: Buffer distance in metres to apply to the project boundary for sampling (default: 0).")
+    parser.add_argument("--seed", type=int, default=42, help="Random number seed for generating offsets.")
+    parser.add_argument("--num-grids", type=int, default=100, help="Number of random grid offsets to generate.")
+    parser.add_argument("--processes", type=int, default=max(1, multiprocessing.cpu_count() // 4), help="Number of parallel processes to use (default: 1/4 of CPU cores).") # Use integer division and ensure at least 1
+
     args = parser.parse_args()
 
-    calculate_k(
-        args.project_boundary_filename,
-        args.start_year,
-        args.evaluation_year,
-        args.jrc_directory_path,
-        args.cpc_directory_path,
-        args.ecoregions_directory_path,
-        args.elevation_directory_path,
-        args.slope_directory_path,
-        args.access_directory_path,
-        args.countries_raster_filename,
-        args.buffer,
-        args.output_filename
+    # --- Directory Setup ---
+    output_directory = args.output_directory
+    geojsons_directory = os.path.join(output_directory, "geojsons")
+    try:
+        os.makedirs(output_directory, exist_ok=True)
+        os.makedirs(geojsons_directory, exist_ok=True)
+        logging.info(f"Output directory: {output_directory}")
+        logging.info(f"GeoJSONs directory: {geojsons_directory}")
+    except OSError as e:
+        logging.error(f"Failed to create output directories: {e}")
+        return # Exit if directories can't be created
+
+    # --- Determine Pixel Skip ---
+    try:
+        project_gdf = gpd.read_file(args.project_boundary_filename)
+        project_area_m2 = area_for_geometry(project_gdf) # Ensure this function handles GeoDataFrames
+        project_area_ha = project_area_m2 / 10_000
+        pixel_skip = PIXEL_SKIP_LARGE_PROJECT if (project_area_ha > 250_000) else PIXEL_SKIP_SMALL_PROJECT
+        logging.info(f"Project area: {project_area_ha:.2f} ha. Using pixel_skip: {pixel_skip}")
+    except Exception as e:
+        logging.error(f"Failed to read project boundary or calculate area: {e}")
+        return
+
+    # --- Generate Random Offsets ---
+    num_grids = args.num_grids
+    random.seed(args.seed)
+    x_offsets = [random.randint(0, pixel_skip - 1) for _ in range(num_grids)]
+    y_offsets = [random.randint(0, pixel_skip - 1) for _ in range(num_grids)]
+    logging.info(f"Generated {num_grids} random offsets with seed {args.seed}.")
+
+    # --- Prepare for Parallel Processing ---
+    worker_func = partial(
+        process_single_grid_task,
+        args=args,
+        pixel_skip=pixel_skip,
+        x_offsets=x_offsets,
+        y_offsets=y_offsets,
+        output_directory=output_directory,
+        geojsons_directory=geojsons_directory
     )
 
+    # --- Run Parallel Processing ---
+    num_processes = min(args.processes, num_grids) # Don't use more processes than tasks
+    logging.info(f"Starting parallel generation of {num_grids} grids using {num_processes} processes...")
+
+    # with mp_context.Pool(processes=num_processes) as pool:
+    with multiprocessing.Pool(processes=num_processes) as pool: # Default context might be fine
+        results = pool.map(worker_func, range(num_grids))
+
+    # --- Summarize Results ---
+    successful_grids = sum(1 for r in results if r is not None)
+    failed_grids = num_grids - successful_grids
+    logging.info(f"Finished generation.")
+    logging.info(f"Successfully processed: {successful_grids}/{num_grids} grids.")
+    if failed_grids > 0:
+        logging.warning(f"Failed to process: {failed_grids}/{num_grids} grids. Check logs for errors.")
+
 if __name__ == "__main__":
+    # Ensure multiprocessing works correctly when script is frozen (e.g., with PyInstaller)
+    multiprocessing.freeze_support()
     main()

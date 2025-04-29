@@ -46,12 +46,24 @@ def key_builder(start_year: int):
     return _build_key
 
 def load_k(
-    k_filename: str,
+    k_directory: str,
     start_year: int,
 ) -> Mapping[int, DRangedTree]:
 
-    print("Reading k...")
-    source_pixels = pd.read_parquet(k_filename)
+    logging.info(f"Reading K set Parquet files from directory: {k_directory}")
+    parquet_files = glob.glob(os.path.join(k_directory, "k_*.parquet"))
+
+    if not parquet_files:
+        logging.error(f"No Parquet files found in directory: {k_directory}")
+        sys.exit(1)
+
+    logging.info(f"Found {len(parquet_files)} Parquet files. Concatenating...")
+
+    # Read and concatenate all found parquet files
+    df_list = [pd.read_parquet(f) for f in parquet_files]
+    source_pixels = pd.concat(df_list, ignore_index=True)
+
+    logging.info(f"Concatenated K set contains {len(source_pixels)} total points.")
 
     # Split source_pixels into classes
     source_classes = defaultdict(list)
@@ -61,7 +73,7 @@ def load_k(
         key = build_key_for_row(row)
         source_classes[key].append(row)
 
-    print("Building k trees...")
+    logging.info("Building k trees...")
 
     source_trees = {}
     for key, values in source_classes.items():
@@ -70,12 +82,12 @@ def load_k(
                 row.elevation,
                 row.slope,
                 row.access,
-                row["cpc0_u"],
-                row["cpc0_d"],
-                row["cpc5_u"],
-                row["cpc5_d"],
-                row["cpc10_u"],
-                row["cpc10_d"],
+                row["fcc0_u"],
+                row["fcc0_d"],
+                row["fcc5_u"],
+                row["fcc5_d"],
+                row["fcc10_u"],
+                row["fcc10_d"],
                 ) for row in values
             ]),
             np.array([
@@ -92,7 +104,7 @@ def load_k(
             1 / 100, # This is the fraction of R that is in M, used to optimize search speed.
         )
 
-    print("k trees built.")
+    logging.info(f"Built {len(source_trees)} k trees.")
 
     return source_trees
 
@@ -100,7 +112,7 @@ def worker(
     worker_index: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
-    cpc_directory_path: str,
+    fcc_directory_path: str,
     ecoregions_directory_path: str,
     elevation_directory_path: str,
     slope_directory_path: str,
@@ -123,7 +135,7 @@ def worker(
         [start_year, start_year - 5, start_year - 10],
         matching_zone_filename,
         jrc_directory_path,
-        cpc_directory_path,
+        fcc_directory_path,
         ecoregions_directory_path,
         elevation_directory_path,
         slope_directory_path,
@@ -143,8 +155,9 @@ def worker(
     while True:
         coords = coordinate_queue.get()
         if coords is None:
+            logging.debug(f"Worker {worker_index} received None, finishing.")
             break
-        print(f"Worker {worker_index} starting coords {coords}...")
+        logging.debug(f"Worker {worker_index} starting coords {coords}...")
         ypos, xpos = coords
         ymin = ypos * ystride
         xmin = xpos * xstride
@@ -162,10 +175,10 @@ def worker(
         accesses = matching_collection.access.read_array(xmin, ymin, xwidth, ywidth)
         lucs = [x.read_array(xmin, ymin, xwidth, ywidth) for x in matching_collection.lucs]
 
-        # CPC must be in JRC resolution
-        cpcs = [
-            cpc.read_array(xmin, ymin, xwidth, ywidth)
-            for cpc in matching_collection.cpcs
+        # FCC must be in JRC resolution
+        fccs = [
+            fcc.read_array(xmin, ymin, xwidth, ywidth)
+            for fcc in matching_collection.fccs
         ]
 
         countries = matching_collection.countries.read_array(xmin, ymin, xwidth, ywidth)
@@ -185,30 +198,30 @@ def worker(
                         elevations[ypos, xpos],
                         slopes[ypos, xpos],
                         accesses[ypos, xpos],
-                        cpcs[0][ypos, xpos],
-                        cpcs[1][ypos, xpos],
-                        cpcs[2][ypos, xpos],
-                        cpcs[3][ypos, xpos],
-                        cpcs[4][ypos, xpos],
-                        cpcs[5][ypos, xpos],
+                        fccs[0][ypos, xpos],
+                        fccs[1][ypos, xpos],
+                        fccs[2][ypos, xpos],
+                        fccs[3][ypos, xpos],
+                        fccs[4][ypos, xpos],
+                        fccs[5][ypos, xpos],
                     ])) else 0
         # Write points to output
         # pylint: disable-next=protected-access
         matching_pixels._dataset.GetRasterBand(1).WriteArray(points, xmin, ymin)
-        print(f"Worker {worker_index} completed coords {coords}.")
-    print(f"Worker {worker_index} finished.")
+        logging.debug(f"Worker {worker_index} completed coords {coords}.")
+    logging.info(f"Worker {worker_index} finished.")
 
     # Ensure we flush pixels to disk now we're finished
     del matching_pixels._dataset
 
 
 def find_potential_matches(
-    k_filename: str,
+    k_directory: str,
     start_year: int,
     evaluation_year: int,
     matching_zone_filename: str,
     jrc_directory_path: str,
-    cpc_directory_path: str,
+    fcc_directory_path: str,
     ecoregions_directory_path: str,
     elevation_directory_path: str,
     slope_directory_path: str,
@@ -230,13 +243,13 @@ def find_potential_matches(
         for _ in range(worker_count):
             coordinate_queue.put(None)
 
-        ktree = load_k(k_filename, start_year)
+        ktree = load_k(k_directory, start_year)
 
         workers = [Process(target=worker, args=(
             index,
             matching_zone_filename,
             jrc_directory_path,
-            cpc_directory_path,
+            fcc_directory_path,
             ecoregions_directory_path,
             elevation_directory_path,
             slope_directory_path,
@@ -269,8 +282,8 @@ def main():
         "--k",
         type=str,
         required=True,
-        dest="k_filename",
-        help="Parquet file containing pixels from K as generated by calculate_k.py"
+        dest="k_directory",
+        help="Directory containing K set Parquet files (k_*.parquet) as generated by calculate_k_fast.py"
     )
     parser.add_argument(
         "--matching",
@@ -301,10 +314,10 @@ def main():
         help="Directory containing JRC AnnualChange GeoTIFF tiles for all years."
     )
     parser.add_argument(
-        "--cpc",
+        "--fcc",
         type=str,
         required=True,
-        dest="cpc_directory_path",
+        dest="fcc_directory_path",
         help="Filder containing Coarsened Proportional Coverage GeoTIFF tiles for all years."
     )
     parser.add_argument(
@@ -350,22 +363,22 @@ def main():
         help="Raster of country IDs."
     )
     parser.add_argument(
-        "-j",
+        "--j",
         type=int,
         required=False,
-        default=round(cpu_count() / 2),
+        default=round(cpu_count() / 4),
         dest="processes_count",
         help="Number of concurrent threads to use."
     )
     args = parser.parse_args()
 
     find_potential_matches(
-        args.k_filename,
+        args.k_directory,
         args.start_year,
         args.evaluation_year,
         args.matching_zone_filename,
         args.jrc_directory_path,
-        args.cpc_directory_path,
+        args.fcc_directory_path,
         args.ecoregions_directory_path,
         args.elevation_directory_path,
         args.slope_directory_path,
