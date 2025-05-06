@@ -274,7 +274,6 @@ def process_single_grid_task(
 
 def main():
     parser = argparse.ArgumentParser(description="Generates multiple K-set sample grids (Parquet and GeoJSON) with unique random offsets.")
-    # ... (keep existing arguments) ...
     parser.add_argument("--project", type=str, required=True, dest="project_boundary_filename", help="GeoJSON File of project boundary.")
     parser.add_argument("--start_year", type=int, required=True, help="Year project started.")
     parser.add_argument("--evaluation_year", type=int, required=True, help="Year of project evaluation.")
