@@ -1,7 +1,8 @@
 import json
 import argparse
 import logging
-from typing import Literal, NoReturn
+import sys # Import sys for exit
+from typing import Literal, NoReturn, Optional # Added Optional
 
 import pandas as pd # type: ignore
 import numpy as np # type: ignore
@@ -11,343 +12,340 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-
-def assert_never(value: NoReturn) -> NoReturn:
-    assert False, f"This code should never be reached, got: {value}"
-
-
-ProjectQuality = Literal["low", "high"]
-
-
-def net_sequestration(
-    additionality: pd.DataFrame, leakage: pd.DataFrame, year: int
-) -> float:
+# --- additionality_rate function (remains the same) ---
+def additionality_rate(
+    additionality_data: pd.DataFrame):
     """
-    Implements ./rfc/permanence/index.html#name-net-sequestration for a given
-    end time i. The additionality and leakage values should be ordered from oldest
-    to newest.
+    Computes a rate of change based on recent additionality data.
+    Uses last 5 years if available, otherwise averages from year 12 onwards.
+    Assumes index 'year' exists and data starts potentially before year 12.
+    """
+    # Ensure we only use data up to the last available year for rate calculation
+    if len(additionality_data) == 0:
+         return 0.0 # No data, no rate
+
+    # Find the index corresponding to the 12th year (index 11) if it exists
+    start_calc_year_index = 11 # Define index for 12th row
+    if len(additionality_data) <= start_calc_year_index:
+        logging.warning("Not enough data (<= 11 years) to calculate rate reliably. Returning 0.")
+        return 0.0
+
+    # Check if we have at least 5 years *after* the 11th year (i.e., >= 16 years total)
+    if len(additionality_data) >= start_calc_year_index + 5:
+        # Use the average of the last 5 years relative to the end
+        rate = (
+            additionality_data['additionality_mean'].iloc[-1] - additionality_data['additionality_mean'].iloc[-6]
+        ) / 5
+        logging.debug(f"Calculated 5-year rate: {rate}")
+    else:
+        # Use average yearly change from the 12th year to the end
+        start_value = additionality_data['additionality_mean'].iloc[start_calc_year_index]
+        end_value = additionality_data['additionality_mean'].iloc[-1]
+        num_years = len(additionality_data) - 1 - start_calc_year_index # Number of intervals
+        if num_years <= 0:
+             logging.warning("Cannot calculate rate between start and end year (num_years <= 0). Returning 0.")
+             return 0.0
+        # Use index value for logging year if index is year
+        log_year = additionality_data.index[start_calc_year_index] if isinstance(additionality_data.index, pd.RangeIndex) else start_calc_year_index
+        rate = (end_value - start_value) / num_years
+        logging.debug(f"Calculated long-term rate (from year/index {log_year}): {rate}")
+
+    return rate
+
+# --- forecast_additionality function (remains the same) ---
+def forecast_additionality(
+    additionality_data: pd.DataFrame,
+    project_end_year: int, # Year sequestration stops
+    rate: float
+) -> pd.DataFrame:
+    """
+    Forecasts additionality values until the project end year, then simulates release
+    until additionality reaches zero.
 
     Args:
-        additionality: an ordered list of addtionality values per year for a project
-        leakage: an ordered list of leakage values per year for a project
-        year: the year index to calculate the net sequestration for
+        additionality_data: DataFrame with historical data, including 'year' and 'additionality_mean'.
+        project_end_year: The last year the project actively sequesters carbon.
+        rate: The calculated yearly rate of change for additionality.
 
-    Raises if i is less than 1 or greater than the length of the list.
+    Returns:
+        A DataFrame containing the forecasted years and additionality values.
     """
-    a_len = len(additionality)
-    l_len = len(leakage)
+    if additionality_data.empty:
+        logging.error("Input additionality_data is empty. Cannot forecast.")
+        return pd.DataFrame(columns=['year', 'additionality']) # Return empty DataFrame
 
-    if a_len != l_len:
-        raise ValueError("additionality and leakage lists not of equal length")
+    # --- Initialization ---
+    # Ensure 'year' column exists before accessing iloc
+    if 'year' not in additionality_data.columns or 'additionality_mean' not in additionality_data.columns:
+         logging.error("Missing 'year' or 'additionality_mean' column in forecast input.")
+         return pd.DataFrame(columns=['year', 'additionality'])
 
-    minimum_year = int(additionality.index.min())
-    maximum_year = int(additionality.index.max())
+    last_hist_year = additionality_data['year'].iloc[-1]
+    last_hist_additionality = additionality_data['additionality_mean'].iloc[-1]
 
-    if year < minimum_year + 1 or year > maximum_year:
-        raise ValueError(f"index for net sequesteration out of bounds: {year}")
+    forecast_data = [] # List to store forecast rows (as dicts)
 
-    additionality_t = float(additionality.loc[year][0])
-    leakage_t = float(leakage.loc[year][0])
-    additionality_t_prev = float(additionality.loc[year - 1][0])
-    leakage_t_prev = float(leakage.loc[year - 1][0])
+    # Add the last historical point as the starting point for the forecast
+    if last_hist_additionality <= 0:
+         logging.warning(f"Last historical additionality ({last_hist_additionality} in year {last_hist_year}) is not positive. Forecast will only contain this point.")
+         forecast_data.append({'year': last_hist_year, 'additionality': max(0, last_hist_additionality)}) # Store 0 if negative
+         return pd.DataFrame(forecast_data)
 
-    return (additionality_t - leakage_t) - (additionality_t_prev - leakage_t_prev)
+    forecast_data.append({'year': last_hist_year, 'additionality': last_hist_additionality})
 
+    current_year = last_hist_year
+    current_additionality = last_hist_additionality
 
-def release(
-    additionality: pd.DataFrame, leakage: pd.DataFrame, end_year: int, years: int
-) -> float:
-    """
-    Implements ./rfc/permanence/index.html#name-release
+    # --- Sequestration Phase (if rate > 0) ---
+    if rate > 0:
+        while current_year < project_end_year:
+            current_year += 1
+            current_additionality += rate
+            current_additionality = max(0, current_additionality)
+            forecast_data.append({'year': current_year, 'additionality': current_additionality})
+            if current_additionality <= 0:
+                 logging.warning(f"Additionality became non-positive ({current_additionality}) during sequestration phase in year {current_year}. Stopping growth.")
+                 break
 
-    The arguments are similar as to net_sequestration but here we calculate the released
-    carbon between [end-years; end].
-    """
-    a_len = len(additionality)
-    l_len = len(leakage)
+    # --- Release Phase (or continued decline if rate <= 0) ---
+    decline_rate = abs(rate) if rate != 0 else 0
 
-    if a_len != l_len:
-        raise ValueError("additionality and leakage lists not of equal length")
+    while current_additionality > 0:
+        current_year += 1
+        if decline_rate > 0:
+             current_additionality -= decline_rate
+        elif rate < 0: # Original rate was negative
+             current_additionality += rate
+        else: # Original rate was zero
+             logging.warning("Rate is zero, additionality will not decline. Stopping forecast.")
+             break
 
-    start_year = end_year - years
-    minimum_year = int(additionality.index.min())
-    maximum_year = int(additionality.index.max())
+        current_additionality = max(0, current_additionality)
+        forecast_data.append({'year': current_year, 'additionality': current_additionality})
 
-    if start_year < minimum_year or end_year > maximum_year:
-        raise ValueError(
-            f"end year out of bounds, or too close to the start \
-              for given years start: {start_year}, max: {maximum_year}, end: {end_year}"
-        )
+        if current_year > last_hist_year + 5000:
+             logging.warning("Forecast exceeded 5000 years. Stopping release phase.")
+             break
 
-    net_end = net_sequestration(additionality, leakage, end_year)
-    net_prev = net_sequestration(additionality, leakage, start_year)
-
-    return (net_end - net_prev) / years
-
-
-def adjusted_net_sequestration(
-    additionality: pd.DataFrame,
-    leakage: pd.DataFrame,
-    schedule: pd.DataFrame,
-    year: int,
-) -> float:
-    """
-    Implements ./rfc/permanence/index.html#name-adj
-
-    Additionality and leakage are like those used in net_sequestration.
-
-    The release schedule is a matrix of values indicating the anticipated release
-    of carbon for a given years, estimated in another year. The value given by
-    release_schedule[i][j] should be the anticipated release of carbon for year
-    j as estimated in year i. Any values in the matrix where i >= j will not be used.
-    """
-    adjustment = 0.0
-    minimum_year = int(schedule.index.min())
-
-    for est_year in range(minimum_year, year):
-        estimate = schedule[est_year]
-        adjustment += estimate[year]
-
-    return net_sequestration(additionality, leakage, year) - adjustment
+    forecasted_df = pd.DataFrame(forecast_data)
+    return forecasted_df
 
 
-def release_schedule(
-    quality: ProjectQuality,
-    additionality: pd.DataFrame,
-    leakage: pd.DataFrame,
-    from_year: int,
-    to_year: int,
-    project_end: int,
-) -> float:
-    """
-    Implements the anticpated release schedule algorithm ./rfc/permanence/index.html#name-anticipated-release
-
-    Note, this deviates slightly in the RFC section in that we don't return zero when the adjusted net sequestration
-    goes to zero. That is up to the end user to check should they compute past this point.
-    """
-    minimum_year = int(additionality.index.min())
-
-    if quality == "low":  # i.e. HIGH RISK
-        return release(additionality, leakage, from_year, 5)
-    elif quality == "high":  # i.e. LOW RISK
-        # TODO: check strictness
-        if to_year <= project_end:
-            return 0.0
-        else:
-            # Five years plus one for net seq calc
-            if from_year < minimum_year + 6:
-                return 0.0
-            else:
-                return release(additionality, leakage, from_year, 5)
-    assert_never(quality)
-
-
-DEFAULT_DELTA_PER_YEAR = 0.03  # 3% per year
-
-
+# --- damage function (updated) ---
 def damage(
-    scc: pd.DataFrame,
-    year: int,
-    release_year: int,
-    schedule: pd.DataFrame,
-    delta: float = DEFAULT_DELTA_PER_YEAR,
-) -> float:
+    forecasted_data: pd.DataFrame,
+    scc_data: pd.DataFrame) -> float:
     """
-    Implements ./rfc/permanence/index.html#name-damage
+    Calculates the damage modifier based on the forecasted additionality release
+    profile and Social Cost of Carbon (SCC) data.
 
-    Assigns a value to the damage caused by a released amount of carbon in a particular year.
+    The modifier represents the fraction of potential instantaneous damage
+    (if all stock was released in the evaluation year) that is *avoided*
+    due to the gradual, discounted release over time. Damage calculation
+    only starts once the forecasted additionality drops below the initial level.
 
     Args:
-        scc: The social cost of carbon values for a year, this list should match that of the release
-             schedule i.e., the first value in this list should be for the first year of the project.
-        year_idx: The year for which the damage is being calculated.
-        release_year_idx: The year by which all of the carbon will have been released by. Should be
-                      greater than 'year'.
-        schedule: The release schedule for the project, this should be a rectangularly-shaped matrix of
-                  values.
-        delta: The discount factor.
+        forecasted_data: DataFrame with forecasted 'year' and 'additionality'.
+                         Assumes the first row represents the evaluation year state.
+        scc_data: DataFrame with 'year' and 'scc' values.
+
+    Returns:
+        The damage modifier (float between 0 and potentially >1).
+        Returns 1.0 if initial additionality is non-positive (no potential damage).
+        Returns 0.0 if potential_damage is positive but total_damage equals or exceeds it.
     """
-    if release_year <= year:
-        raise ValueError(
-            "The release year must be greater than the year damage is being calculated for"
-        )
+    if forecasted_data.empty:
+        logging.error("Forecasted data is empty. Cannot calculate damage modifier.")
+        return 0.0 # Or raise an error
 
-    years_to_release = release_year - year
+    # --- 1. Get Initial State & Potential Damage ---
+    first_row = forecasted_data.iloc[0]
+    evaluation_year = int(first_row['year'])
+    initial_additionality = first_row['additionality'] # The level we need to return to
 
-    sched_estimate_min_year = schedule.index.min()
-    sched_estimate_max_year = schedule.index.max()
+    if initial_additionality <= 0:
+        logging.warning(f"Initial additionality in year {evaluation_year} is non-positive ({initial_additionality}). No potential damage, modifier is 1.0.")
+        return 1.0
 
-    if sched_estimate_max_year < year:
-        raise ValueError(
-            f"The release schedule does not make estimates for the year {year}"
-        )
+    try:
+        if 'year' not in scc_data.columns or 'scc' not in scc_data.columns:
+             logging.error("Missing 'year' or 'scc' column in SCC data.")
+             return 0.0
+        scc_evaluation_year = scc_data.loc[scc_data['year'] == evaluation_year, 'scc'].iloc[0]
+    except IndexError:
+        logging.error(f"SCC value for evaluation year {evaluation_year} not found. Cannot calculate potential damage.")
+        return 0.0 # Or raise error
 
-    sched_years_max = sched_estimate_min_year + len(schedule[sched_estimate_min_year])
-    scc_year_max = scc.index.max()
-    maximum_forecast = year + years_to_release
+    potential_damage = scc_evaluation_year * initial_additionality
+    logging.debug(f"Evaluation Year: {evaluation_year}, Initial Additionality: {initial_additionality:.2f}")
+    logging.debug(f"SCC in {evaluation_year}: {scc_evaluation_year:.2f}, Potential Damage: {potential_damage:.2f}")
 
-    if sched_years_max < maximum_forecast:
-        raise ValueError(
-            f"""The release schedule should contain
-        anticipated releases up to the year indexed by {maximum_forecast}"""
-        )
+    if potential_damage == 0:
+         logging.warning("Potential damage calculated as zero. Modifier is 1.0.")
+         return 1.0
 
-    if scc_year_max < maximum_forecast:
-        raise ValueError(
-            f"""Not enough values were provided for the Social Cost of Carbon,
-        only {scc_year_max} were given and we need {maximum_forecast}"""
-        )
+    # --- 2. Calculate Actual Release & Identify Damage Start Year ---
+    df = forecasted_data.copy()
+    df['release_amount'] = df['additionality'].diff() * -1
 
-    damage_acc = 0.0
+    # Find all years where release occurs *after* the evaluation year
+    all_release_df = df[(df['year'] > evaluation_year) & (df['release_amount'] > 0)].copy()
 
-    for k in range(0, years_to_release):
-        release_amt = schedule[year][year + k]
-        carbon = scc.loc[year + k][0]
-        damage_acc += abs(release_amt) * carbon / ((1 + delta) ** k)
+    if all_release_df.empty:
+        logging.info("No release detected in forecast after evaluation year. Total damage is 0.")
+        total_damage = 0.0
+        damage_start_year = None # No damage calculation starts
+    else:
+        # Find the first year *during the release phase* where additionality drops <= initial level
+        damage_calc_start_df = all_release_df[all_release_df['additionality'] <= initial_additionality]
 
-    return damage_acc
+        if damage_calc_start_df.empty:
+            logging.warning(f"Forecasted additionality never dropped back to the initial level ({initial_additionality:.2f}) during the release phase. Total damage calculated as 0.")
+            total_damage = 0.0
+            damage_start_year = None # Damage calculation never starts
+        else:
+            # Get the first year this condition is met
+            damage_start_year = damage_calc_start_df['year'].min()
+            logging.info(f"Additionality dropped below initial level ({initial_additionality:.2f}) in year {damage_start_year}. Starting damage calculation from this year.")
 
+            # Filter the release dataframe to include only years from the damage_start_year onwards
+            release_df = all_release_df[all_release_df['year'] >= damage_start_year].copy()
 
-def equivalent_permanence(
-    additionality: pd.DataFrame,
-    leakage: pd.DataFrame,
-    scc: pd.DataFrame,
-    current_year: int,
-    schedule: pd.DataFrame,
-    delta: float = DEFAULT_DELTA_PER_YEAR,
-) -> float:
-    """
-    Implements ./rfc/permanence/index.html#name-ep
+            # --- 3. Calculate Discounted Damage (only from damage_start_year) ---
+            release_df = pd.merge(release_df, scc_data[['year', 'scc']], on='year', how='left')
+            missing_scc_years = release_df[release_df['scc'].isna()]['year'].tolist()
+            if missing_scc_years:
+                 logging.warning(f"Missing SCC values for release years >= {damage_start_year}: {missing_scc_years}. Damage for these years will be 0.")
+                 release_df['scc'] = release_df['scc'].fillna(0.0)
 
-    Calculates the equivalent permanence.
+            release_df['discount_factor'] = (1 + 0.03) ** (release_df['year'] - evaluation_year)
+            release_df['discounted_scc_damage'] = (release_df['release_amount'] * release_df['scc']) / release_df['discount_factor']
+            total_damage = release_df['discounted_scc_damage'].sum()
 
-    Args:
-      additionality: Values for the additionality in the project for each evaluation year. 
-                     One column for year another for additionality.
-      leakage: Values for the leakage in the project for each evaluation year, like additionality.
-      scc: Values for the Social Cost of Carbon for each year.
-      current_year: The current evaluation year.
-      release_year: The year by which all net sequestration has been released.
-      schedule: A release schedule for the project, see the function release_schedule for how you might
-                wish to calculate this.
-      delta: A parameter used to discount the damage into the future, this defaults to 0.03 (3%).
-    """
-    add_len = len(additionality)
-    leak_len = len(leakage)
+    logging.debug(f"Total Discounted Damage (calculated from year {damage_start_year or 'N/A'}): {total_damage:.2f}")
 
-    if add_len != leak_len:
-        raise ValueError(
-            "The number of values for additionality and leakage are not the same"
-        )
+    # --- 4. Calculate Modifier ---
+    # Potential damage remains based on the initial stock in the evaluation year
+    modifier = max(0.0, (potential_damage - total_damage) / potential_damage)
+    logging.info(f"Calculated Damage Modifier: {modifier:.4f}")
+    return modifier
 
-    release_yr = current_year
-
-    # TODO: This needs double checking just to be sure it is the right method
-    adj = adjusted_net_sequestration(additionality, leakage, schedule, current_year)
-    release_amount = 0
-    while adj - release_amount > 0:
-        release_yr += 1
-        release_amount += abs(schedule[current_year][release_yr])
-
-    scc = interpolate_scc(scc, 2005, release_yr)
-    scc_now = scc.at[current_year, "value"]
-
-    v_adj = adj * scc_now
-
-    dmg = damage(scc, current_year, release_yr, schedule, delta)
-    logging.info(
-        "Release year: %i, Damage: %f and Adjusted Net Seq. %f, eP: %f",
-        release_yr,
-        dmg,
-        v_adj,
-        (v_adj - dmg) / v_adj,
-    )
-
-    return (v_adj - dmg) / v_adj
-
-
-def interpolate_scc(scc: pd.DataFrame, minimum_year: int, max_year: int) -> pd.DataFrame:
-    years = scc.index.tolist()
-    values = scc["central"].values
-    # TODO: interp1d a fair enough extrapolation technique?
-    interpolated = interp1d(years, values, fill_value="extrapolate")
-    new_years = np.arange(minimum_year, max_year + 1, 1)
-    interp_data = list(zip(new_years, interpolated(new_years)))
-    return pd.DataFrame(interp_data, columns=["year", "value"]).set_index("year")
-
-
-if __name__ == "__main__":
+# --- Main function with argparse ---
+def main():
     parser = argparse.ArgumentParser(
-        description="Computes equivalent permanence from SCC values, additionality and leakage."
+        description="Calculates permanence modifier based on additionality forecast and SCC, saves summary to CSV." # Updated description
     )
     parser.add_argument(
         "--additionality",
         type=str,
         required=True,
-        dest="additionality_csv",
-        help="A CSV containing additionality for a range of years",
-    )
-    parser.add_argument(
-        "--leakage",
-        type=str,
-        required=True,
-        dest="leakage_csv",
-        help="A CSV containing leakage values for the same range of years as additionality",
+        help="Path to the input additionality CSV file (must contain 'year' and 'additionality_mean').",
     )
     parser.add_argument(
         "--scc",
         type=str,
         required=True,
-        dest="scc_csv",
-        help="A CSV containing social cost of carbon values",
+        help="Path to the input SCC CSV file (must contain 'year' and 'scc').",
     )
     parser.add_argument(
-        "--current_year",
+        "--current_year", # This is the evaluation year for the damage calculation
         type=int,
         required=True,
-        dest="current_year",
-        help="Current year",
+        help="The evaluation year (last year of historical data used for forecast).",
+    )
+    parser.add_argument(
+        "--project_end_year",
+        type=int,
+        default=2042, # Default based on previous code
+        required=False,
+        help="Year project stops actively sequestering carbon (used in forecast).",
     )
     parser.add_argument(
         "--output",
         type=str,
         required=True,
-        dest="output_json",
-        help="The destination output JSON path.",
+        help="The destination output CSV path for permanence results summary.", # Updated help text
     )
-
     args = parser.parse_args()
 
-    additionality_data = pd.read_csv(args.additionality_csv, index_col="year")
-    leakage_data = pd.read_csv(args.leakage_csv, index_col="year")
-    scc_data = pd.read_csv(args.scc_csv, index_col="year")
+    try:
+        # Load data
+        additionality_df = pd.read_csv(args.additionality)
+        scc_df = pd.read_csv(args.scc)
 
-    min_year = additionality_data.index.min()
+        # Basic validation
+        if 'year' not in additionality_df.columns or 'additionality_mean' not in additionality_df.columns:
+             raise ValueError("Additionality CSV must contain 'year' and 'additionality_mean' columns.")
+        if 'year' not in scc_df.columns or 'scc' not in scc_df.columns:
+             raise ValueError("SCC CSV must contain 'year' and 'scc' columns.")
 
-    schedule_data = []
-    for fut in range(min_year, 4000):
-        estimates = [float(fut)]
-        for est in range(min_year, args.current_year + 1):
-            rel_sched = release_schedule("high", additionality_data, leakage_data, est, fut, 2042)
-            estimates.append(rel_sched)
-        schedule_data.append(estimates)
+        # Filter additionality data up to the current (evaluation) year for rate calculation
+        hist_additionality_df = additionality_df[additionality_df['year'] <= args.current_year].copy()
+        if hist_additionality_df.empty:
+             raise ValueError(f"No historical additionality data found up to current_year {args.current_year}.")
 
-    columns = ["year"] + list(range(min_year, args.current_year + 1))
+    except FileNotFoundError as e:
+        logging.error(f"Input CSV not found: {e}")
+        sys.exit(1)
+    except ValueError as e:
+        logging.error(f"Data validation error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logging.error(f"Error reading CSV: {e}")
+        sys.exit(1)
 
-    # The schedule dataframe can be accessed as schedule_df[est_year][for_year] i.e.
-    # the scheduled release in for_year as estimated in est_year.
-    schedule_df_raw = pd.DataFrame(schedule_data, columns=columns)
-    SCHEDULE_DF = schedule_df_raw.set_index("year")
+    # Calculate the rate of change based on historical data
+    rate = additionality_rate(hist_additionality_df)
+    logging.info(f"Rate of change calculated from data up to {args.current_year}: {rate}")
 
-    ep = equivalent_permanence(
-        additionality_data,
-        leakage_data,
-        scc_data,
-        args.current_year,
-        SCHEDULE_DF,
+    # Forecast the additionality using historical data up to current_year
+    forecasted_additionality = forecast_additionality(
+        hist_additionality_df, # Use only historical data to start forecast
+        args.project_end_year,
+        rate
     )
 
-    # TODO: Probably return more than just ep
-    with open(args.output_json, "w", encoding="utf-8") as f:
-        data = {"ep": ep}
-        json.dump(data, f)
+    logging.info(f"Forecast generated based on data up to {args.current_year}.")
+    if not forecasted_additionality.empty:
+        logging.info(f"Forecast ends in year: {forecasted_additionality['year'].iloc[-1]}")
+
+        # Calculate the damage modifier using the forecast and SCC data
+        damage_modifier = damage(forecasted_additionality, scc_df)
+
+        # --- Prepare and Save Output as CSV ---
+        output_data = {
+            "evaluation_year": args.current_year,
+            "rate_of_change": rate,
+            "project_end_year": args.project_end_year,
+            "forecast_end_year": forecasted_additionality['year'].iloc[-1],
+            "damage_modifier": damage_modifier
+        }
+
+        # Convert dictionary to DataFrame (single row)
+        output_df = pd.DataFrame([output_data])
+
+        try:
+            # Save the DataFrame to CSV
+            output_df.to_csv(args.output, index=False) # Use args.output directly
+            logging.info(f"Permanence results summary saved to {args.output}")
+        except Exception as e:
+             logging.error(f"Failed to write output CSV: {e}")
+             sys.exit(1)
+
+    else:
+        logging.error("Forecast DataFrame is empty. Cannot calculate damage modifier or save results.")
+        error_data = {
+            "evaluation_year": args.current_year,
+            "error": "Failed to generate forecast."
+        }
+        error_df = pd.DataFrame([error_data])
+        try:
+            error_df.to_csv(args.output, index=False)
+            logging.info(f"Error summary saved to {args.output}")
+        except Exception as e:
+             logging.error(f"Failed to write error CSV: {e}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

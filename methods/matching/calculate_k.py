@@ -38,7 +38,7 @@ MatchingCollection = namedtuple('MatchingCollection',
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(processName)s %(message)s")
 
-# --- Core Functions (Copied/Adapted from calculate_k.py) ---
+# --- Core Functions ---
 
 def build_layer_collection(
     pixel_scale: PixelScale,
@@ -98,10 +98,11 @@ def build_layer_collection(
     # Constrain layers
     layers = [elevation, slopes, ecoregions, access, countries] + lucs + fccs
     for layer in layers:
-        if layer.pixel_scale != pixel_scale:
-            logging.warning(f"Raster {layer.name} might be at wrong pixel scale (Expected: {pixel_scale}, Got: {layer.pixel_scale}). Reprojecting.")
+        if hasattr(layer, 'pixel_scale') and layer.pixel_scale != pixel_scale: # Check if attribute exists
+            logging.warning(f"Raster {getattr(layer, 'name', 'Unnamed')} might be at wrong pixel scale (Expected: {pixel_scale}, Got: {layer.pixel_scale}). Ensure inputs match or reproject.")
             # Add reprojection logic if necessary, or ensure inputs match
-        layer.set_window_for_intersection(outline_layer.area)
+        if hasattr(layer, 'set_window_for_intersection') and hasattr(outline_layer, 'area'): # Check methods/attributes
+             layer.set_window_for_intersection(outline_layer.area)
 
     return MatchingCollection(
         boundary=outline_layer, lucs=lucs, fccs=fccs, ecoregions=ecoregions,
@@ -208,14 +209,12 @@ def calculate_single_k_parquet(
         )
         output_df.to_parquet(result_parquet_filename)
 
-# --- Multiprocessing Worker ---
-
 def process_single_grid_task(
     i: int, # Grid index (0 to num_grids-1)
     args: argparse.Namespace,
     pixel_skip: int,
-    x_offsets: List[int],
-    y_offsets: List[int],
+    x_offsets: List[int], # Now expects a list of x offsets
+    y_offsets: List[int], # Now expects a list of y offsets
     output_directory: str,
     geojsons_directory: str
 ) -> Optional[int]:
@@ -226,6 +225,7 @@ def process_single_grid_task(
     grid_index_1_based = i + 1
     parquet_filename = os.path.join(output_directory, f"k_{grid_index_1_based}.parquet")
     geojson_filename = os.path.join(geojsons_directory, f"k_{grid_index_1_based}.geojson")
+    # Get the specific offset pair for this task index
     x_offset = x_offsets[i]
     y_offset = y_offsets[i]
 
@@ -273,8 +273,8 @@ def process_single_grid_task(
 # --- Main Execution Logic ---
 
 def main():
-    parser = argparse.ArgumentParser(description="Generates multiple K-set sample grids (Parquet and GeoJSON) with random offsets.")
-    # Add all the arguments from the original script
+    parser = argparse.ArgumentParser(description="Generates multiple K-set sample grids (Parquet and GeoJSON) with unique random offsets.")
+    # ... (keep existing arguments) ...
     parser.add_argument("--project", type=str, required=True, dest="project_boundary_filename", help="GeoJSON File of project boundary.")
     parser.add_argument("--start_year", type=int, required=True, help="Year project started.")
     parser.add_argument("--evaluation_year", type=int, required=True, help="Year of project evaluation.")
@@ -288,7 +288,7 @@ def main():
     parser.add_argument("--output", type=str, required=True, dest="output_directory", help="Destination directory for k_*.parquet files and geojsons subfolder.")
     parser.add_argument("--buffer", type=int, default=0, required=False, help="Optional: Buffer distance in metres to apply to the project boundary for sampling (default: 0).")
     parser.add_argument("--seed", type=int, default=42, help="Random number seed for generating offsets.")
-    parser.add_argument("--num-grids", type=int, default=100, help="Number of random grid offsets to generate.")
+    parser.add_argument("--num-grids", type=int, default=250, help="Number of unique random grid offsets to generate.")
     parser.add_argument("--processes", type=int, default=max(1, multiprocessing.cpu_count() // 4), help="Number of parallel processes to use (default: 1/4 of CPU cores).") # Use integer division and ensure at least 1
 
     args = parser.parse_args()
@@ -316,41 +316,60 @@ def main():
         logging.error(f"Failed to read project boundary or calculate area: {e}")
         return
 
-    # --- Generate Random Offsets ---
-    num_grids = args.num_grids
+    # --- Generate Unique Random Offset Pairs ---
+    num_grids_requested = args.num_grids
     random.seed(args.seed)
-    x_offsets = [random.randint(0, pixel_skip - 1) for _ in range(num_grids)]
-    y_offsets = [random.randint(0, pixel_skip - 1) for _ in range(num_grids)]
-    logging.info(f"Generated {num_grids} random offsets with seed {args.seed}.")
+
+    # Calculate total possible unique grids
+    total_possible_grids = pixel_skip * pixel_skip
+    logging.info(f"Total possible unique grid offsets for pixel_skip={pixel_skip}: {total_possible_grids}")
+
+    if num_grids_requested > total_possible_grids:
+        logging.warning(f"Requested number of grids ({num_grids_requested}) exceeds the total possible unique grids ({total_possible_grids}). Capping at {total_possible_grids}.")
+        num_grids_to_generate = total_possible_grids
+    else:
+        num_grids_to_generate = num_grids_requested
+
+    # Generate all possible pairs
+    all_possible_pairs = list(product(range(pixel_skip), range(pixel_skip)))
+
+    # Sample unique pairs
+    selected_pairs = random.sample(all_possible_pairs, num_grids_to_generate)
+
+    # Unzip into separate lists
+    x_offsets, y_offsets = zip(*selected_pairs)
+    # Convert tuples from zip to lists as expected by worker
+    x_offsets = list(x_offsets)
+    y_offsets = list(y_offsets)
+
+    logging.info(f"Generated {num_grids_to_generate} unique offset pairs with seed {args.seed}.")
 
     # --- Prepare for Parallel Processing ---
     worker_func = partial(
         process_single_grid_task,
         args=args,
         pixel_skip=pixel_skip,
-        x_offsets=x_offsets,
-        y_offsets=y_offsets,
+        x_offsets=x_offsets, # Pass the list of selected x offsets
+        y_offsets=y_offsets, # Pass the list of selected y offsets
         output_directory=output_directory,
         geojsons_directory=geojsons_directory
     )
 
     # --- Run Parallel Processing ---
-    num_processes = min(args.processes, num_grids) # Don't use more processes than tasks
-    logging.info(f"Starting parallel generation of {num_grids} grids using {num_processes} processes...")
+    num_processes = min(args.processes, num_grids_to_generate) # Don't use more processes than tasks
+    logging.info(f"Starting parallel generation of {num_grids_to_generate} grids using {num_processes} processes...")
 
-    # with mp_context.Pool(processes=num_processes) as pool:
-    with multiprocessing.Pool(processes=num_processes) as pool: # Default context might be fine
-        results = pool.map(worker_func, range(num_grids))
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        results = pool.map(worker_func, range(num_grids_to_generate)) # Iterate up to the number generated
 
     # --- Summarize Results ---
     successful_grids = sum(1 for r in results if r is not None)
-    failed_grids = num_grids - successful_grids
+    failed_grids = num_grids_to_generate - successful_grids
     logging.info(f"Finished generation.")
-    logging.info(f"Successfully processed: {successful_grids}/{num_grids} grids.")
+    logging.info(f"Successfully processed: {successful_grids}/{num_grids_to_generate} grids.")
     if failed_grids > 0:
-        logging.warning(f"Failed to process: {failed_grids}/{num_grids} grids. Check logs for errors.")
+        logging.warning(f"Failed to process: {failed_grids}/{num_grids_to_generate} grids. Check logs for errors.")
 
 if __name__ == "__main__":
-    # Ensure multiprocessing works correctly when script is frozen (e.g., with PyInstaller)
     multiprocessing.freeze_support()
     main()

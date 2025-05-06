@@ -23,6 +23,7 @@ else
   echo "  GEDI_DATA_DIR=…"
   echo "  SRTM_ZIP_DIR=…"
   echo "  SRTM_TIF_DIR=…"
+  echo "  SCC_CSV=…" # Added SCC_CSV
   exit 1
 fi
 
@@ -46,8 +47,11 @@ declare -A STEP_DESC=(
   [16]="Build M table"
   [17]="Find pairs"
   [18]="Calculate additionality"
+  [19]="Calculate permanence"
+  [20]="Apply modifiers and report summary" # Added step 20
 )
 
+# ... (rest of mode selection, variable input, should_run function remain the same) ...
 echo "Which steps would you like to run?"
 echo "  1) All steps"
 echo "  2) Specify steps"
@@ -107,7 +111,7 @@ function should_run {
   return 1
 }
 
-####### 3) Steps #######
+
 ####### 3) Steps #######
 if should_run 1; then
   mkdir -p "${OUTPUT_DIR}/${proj}"
@@ -286,7 +290,24 @@ if should_run 18; then
     --evaluation_year "$eval_year" \
     --density "${OUTPUT_DIR}/${proj}/carbon-density.csv" \
     --matches "${OUTPUT_DIR}/${proj}/pairs" \
-    --output "${OUTPUT_DIR}/${proj}/additionality.csv" \
-    --partials "${OUTPUT_DIR}/${proj}/partials"
+    --output "${OUTPUT_DIR}/${proj}/additionality.csv"
   echo "--Additionality calculated.--"
+fi
+
+if should_run 19; then
+  tmfpython3 -m methods.outputs.calculate_permanence \
+    --additionality "${OUTPUT_DIR}/${proj}/additionality.csv" \
+    --scc "${SCC_CSV}" \
+    --current_year "$eval_year" \
+    --output "${OUTPUT_DIR}/${proj}/permanence.json"
+  echo "--Permanence calculated.--"
+fi
+
+if should_run 20; then
+  tmfpython3 -m methods.outputs.apply_modifiers \
+    --additionality "${OUTPUT_DIR}/${proj}/additionality.csv" \
+    --permanence "${OUTPUT_DIR}/${proj}/permanence.json" \
+    --leakage 0.40 \
+    --output "${OUTPUT_DIR}/${proj}/final_summary.txt"
+  echo "--Summary report generated: $FINAL_OUTPUT_TXT--"
 fi

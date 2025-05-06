@@ -60,14 +60,6 @@ if __name__ == "__main__":
         dest="output_csv",
         help="The destination output CSV path.",
     )
-    parser.add_argument(
-        "--partials",
-        type=str,
-        required=False,
-        default=None,
-        dest="partials_dir",
-        help="Optional directory to save diagnostic plots and files.",
-    )
 
     args = parser.parse_args()
 
@@ -106,7 +98,6 @@ if __name__ == "__main__":
         end_year=args.evaluation_year,
         density=density,
         matches_directory=args.matches,
-        partials_dir=args.partials_dir
     )
 
     logging.info(f"Saving additionality results to {args.output_csv}")

@@ -1,11 +1,13 @@
 import argparse
 import glob
 import os
-import tempfile
 import shutil
 from multiprocessing import Pool, cpu_count
 from functools import partial
 import logging
+import re  # Import regex module
+import numpy as np
+import tempfile
 
 import polars as pl
 from yirgacheffe.layers import RasterLayer  # type: ignore
@@ -15,6 +17,7 @@ from methods.common.luc import luc_range
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(processName)s %(message)s")
 
+# --- process_partial_raster function ---
 def process_partial_raster(
     start_year: int,
     evaluation_year: int,
@@ -27,81 +30,142 @@ def process_partial_raster(
     access_directory_path: str,
     countries_raster_filename: str,
     temp_output_dir: str,
+    strip_index: int,
     partial_raster_path: str
-) -> str:
-    """Processes one partial M raster and saves its table data to a temp parquet file."""
-    logging.info(f"Processing partial raster: {partial_raster_path}")
-    partial_raster_filename = os.path.basename(partial_raster_path)
-    temp_parquet_filename = os.path.join(temp_output_dir, partial_raster_filename.replace('.tif', '.parquet'))
+) -> str | None:
+    """Processes one partial M raster row by row and saves its table data to a temp parquet file."""
+    basename = os.path.basename(partial_raster_path)
+    temp_parquet_filename = os.path.join(temp_output_dir, f"temp_m_table_{strip_index:04d}.parquet")
+    logging.debug(f"Processing {basename} (strip {strip_index}) -> {temp_parquet_filename}")
 
     try:
         partial_raster = RasterLayer.layer_from_file(partial_raster_path)
+        with partial_raster:
+            # Define years needed for FCC relative naming *before* building collection
+            fcc_years_absolute = [start_year, start_year - 5, start_year - 10]
+            fcc_years_relative = [0, 5, 10] # For naming columns
 
-        matching_collection = build_layer_collection(
-            partial_raster.pixel_scale,
-            partial_raster.projection,
-            list(luc_range(start_year, evaluation_year)),
-            [start_year, start_year - 5, start_year - 10],
-            matching_zone_filename,
-            jrc_directory_path,
-            fcc_directory_path,
-            ecoregions_directory_path,
-            elevation_directory_path,
-            slope_directory_path,
-            access_directory_path,
-            countries_raster_filename,
-        )
+            # Build the collection - needed to access the layers
+            matching_collection = build_layer_collection(
+                partial_raster.pixel_scale,
+                partial_raster.projection,
+                list(luc_range(start_year, evaluation_year)),
+                fcc_years_absolute, # Pass absolute years to build_layer_collection
+                matching_zone_filename,
+                jrc_directory_path,
+                fcc_directory_path,
+                ecoregions_directory_path,
+                elevation_directory_path,
+                slope_directory_path,
+                access_directory_path,
+                countries_raster_filename,
+            )
 
-        results = []
-        luc_columns = [f'luc_{year}' for year in luc_range(start_year, evaluation_year)]
-        fcc_columns = ['fcc0_u', 'fcc0_d', 'fcc5_u', 'fcc5_d', 'fcc10_u', 'fcc10_d']
-        columns = ['lat', 'lng', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + fcc_columns
+            results = [] # List to store data for matching pixels
+            luc_years = list(luc_range(start_year, evaluation_year))
+            fcc_suffixes = ['u', 'd']
 
-        window = partial_raster.window
-        logging.debug(f"Processing window {window} for {partial_raster_filename}")
+            window = partial_raster.window
+            width = window.xsize
+            logging.debug(f"Processing window {window} for {basename} row by row")
 
-        for yoffset_local in range(window.ysize):
-            yoffset_global = window.yoff + yoffset_local
-            row_matches = partial_raster.read_array(0, yoffset_local, window.xsize, 1)
-            if not row_matches.any():
-                continue
+            # Iterate through rows
+            for yoffset in range(window.ysize):
+                # Read the current row from the M raster
+                row_matches = partial_raster.read_array(0, yoffset, width, 1)
 
-            row_elevation = matching_collection.elevation.read_array(window.xoff, yoffset_global, window.xsize, 1)
-            row_ecoregion = matching_collection.ecoregions.read_array(window.xoff, yoffset_global, window.xsize, 1)
-            row_slope = matching_collection.slope.read_array(window.xoff, yoffset_global, window.xsize, 1)
-            row_access = matching_collection.access.read_array(window.xoff, yoffset_global, window.xsize, 1)
-            row_countries = matching_collection.countries.read_array(window.xoff, yoffset_global, window.xsize, 1)
-            row_lucs = [x.read_array(window.xoff, yoffset_global, window.xsize, 1) for x in matching_collection.lucs]
-            row_fccs = [x.read_array(window.xoff, yoffset_global, window.xsize, 1) for x in matching_collection.fccs]
+                # Check if any matches exist in this row before reading other layers
+                if not row_matches.any():
+                    continue
 
-            for xoffset_local in range(window.xsize):
-                if row_matches[0, xoffset_local] > 0:
-                    xoffset_global = window.xoff + xoffset_local
-                    coord = matching_collection.boundary.latlng_for_pixel(xoffset_global, yoffset_global)
+                # Read the corresponding row from all other layers
+                row_ecoregion = matching_collection.ecoregions.read_array(0, yoffset, width, 1)
+                row_elevation = matching_collection.elevation.read_array(0, yoffset, width, 1)
+                row_slope = matching_collection.slope.read_array(0, yoffset, width, 1)
+                row_access = matching_collection.access.read_array(0, yoffset, width, 1)
+                row_country = matching_collection.countries.read_array(0, yoffset, width, 1)
 
-                    results.append([
-                        coord[0], coord[1],
-                        row_ecoregion[0, xoffset_local],
-                        row_elevation[0, xoffset_local],
-                        row_slope[0, xoffset_local],
-                        row_access[0, xoffset_local],
-                        row_countries[0, xoffset_local],
-                    ] + [luc[0, xoffset_local] for luc in row_lucs] + [fcc[0, xoffset_local] for fcc in row_fccs])
+                rows_luc = {}
+                for year, layer in zip(luc_years, matching_collection.lucs):
+                    rows_luc[year] = layer.read_array(0, yoffset, width, 1)
 
-        if results:
-            output_df = pl.DataFrame(results, schema=columns)
+                rows_fcc = {}
+                fcc_idx = 0
+                # Iterate using absolute years to match the layers read by build_layer_collection
+                for year_abs in fcc_years_absolute:
+                    for suffix in fcc_suffixes:
+                        if fcc_idx < len(matching_collection.fccs):
+                            # Store the row data using a tuple key (absolute_year, suffix)
+                            rows_fcc[(year_abs, suffix)] = matching_collection.fccs[fcc_idx].read_array(0, yoffset, width, 1)
+                        else:
+                            # Create a row of NaNs if layer is missing
+                            rows_fcc[(year_abs, suffix)] = np.full((1, width), np.nan, dtype=np.float32)
+                        fcc_idx += 1
+
+                # Iterate through columns in the row
+                for xoffset in range(width):
+                    if row_matches[0, xoffset] > 0: # Check if this pixel is a match
+                        # Get coordinates for the matching pixel
+                        lat, lng = partial_raster.latlng_for_pixel(xoffset, yoffset)
+
+                        # Extract data using NumPy indexing
+                        pixel_data = {
+                            'lat': lat,
+                            'lng': lng,
+                            'strip_id': strip_index,
+                            'ecoregion': row_ecoregion[0, xoffset],
+                            'elevation': row_elevation[0, xoffset],
+                            'slope': row_slope[0, xoffset],
+                            'access': row_access[0, xoffset],
+                            'country': row_country[0, xoffset],
+                        }
+
+                        # Add LUC data
+                        for year in luc_years:
+                            pixel_data[f'luc_{year}'] = rows_luc[year][0, xoffset]
+
+                        # Add FCC data using relative year naming (fcc0_u, fcc5_d, etc.)
+                        for year_rel, year_abs in zip(fcc_years_relative, fcc_years_absolute):
+                            for suffix in fcc_suffixes:
+                                # Use the relative year for the key name
+                                key_name = f'fcc{year_rel}_{suffix}'
+                                # Access the row data using the absolute year and suffix
+                                pixel_data[key_name] = rows_fcc[(year_abs, suffix)][0, xoffset]
+
+                        results.append(pixel_data)
+
+            # After processing all rows, check if any results were found
+            if not results:
+                logging.debug(f"No matching pixels found in {basename} after full scan. Skipping.")
+                return None
+
+            # Create Polars DataFrame from the list of dictionaries
+            output_df = pl.DataFrame(results)
+
+            # Define column order using relative FCC names
+            luc_columns = [f'luc_{year}' for year in luc_years]
+            # Use relative years for FCC column names
+            fcc_columns = [f'fcc{year_rel}_{suffix}' for year_rel in fcc_years_relative for suffix in fcc_suffixes]
+            final_columns = ['lat', 'lng', 'strip_id', 'ecoregion', 'elevation', 'slope', 'access', 'country'] + luc_columns + fcc_columns
+            output_df = output_df.select(final_columns) # Reorder columns
+
             output_df.write_parquet(temp_parquet_filename)
-            logging.info(f"Wrote {len(results)} points to {temp_parquet_filename}")
+            logging.debug(f"Wrote {len(output_df)} points from {basename} to {temp_parquet_filename}")
             return temp_parquet_filename
-        else:
-            logging.info(f"No matching points found in {partial_raster_path}. No temp file created.")
-            return None
 
     except Exception as e:
-        logging.error(f"Error processing {partial_raster_path}: {e}", exc_info=True)
+        logging.error(f"Error processing {basename}: {e}", exc_info=True)
         return None
 
+# --- Helper function to extract strip index (unchanged) ---
+def extract_strip_index(filename: str) -> int:
+    match = re.search(r'strip_(\d+)\.tif$', os.path.basename(filename))
+    if match:
+        return int(match.group(1))
+    logging.warning(f"Could not extract strip index from filename: {filename}. Assigning high index.")
+    return float('inf')
 
+# --- main function (largely unchanged, ensure imports are correct) ---
 def main() -> None:
     parser = argparse.ArgumentParser(description="Finds all potential matches to K in matching zone, aka set M.")
     parser.add_argument(
@@ -198,12 +262,26 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    partial_raster_files = glob.glob(os.path.join(args.m_rasters_directory, "*.tif"))
+    glob_pattern = os.path.join(args.m_rasters_directory, "strip_*.tif")
+    partial_raster_files = glob.glob(glob_pattern)
     if not partial_raster_files:
-        logging.error(f"No *.tif files found in {args.m_rasters_directory}")
+        logging.error(f"No strip_*.tif files found in {args.m_rasters_directory}")
         return
 
-    logging.info(f"Found {len(partial_raster_files)} partial M rasters to process.")
+    partial_raster_files.sort(key=extract_strip_index)
+    logging.info(f"Found and sorted {len(partial_raster_files)} partial M rasters to process.")
+
+    tasks = []
+    for file_path in partial_raster_files:
+        index = extract_strip_index(file_path)
+        if index != float('inf'):
+            tasks.append((index, file_path))
+        else:
+            logging.warning(f"Skipping file due to naming pattern mismatch: {file_path}")
+
+    if not tasks:
+        logging.error("No valid strip files found to process after filtering.")
+        return
 
     with tempfile.TemporaryDirectory() as tempdir:
         logging.info(f"Using temporary directory for intermediate parquets: {tempdir}")
@@ -223,19 +301,25 @@ def main() -> None:
             tempdir
         )
 
-        num_processes = min(args.processes_count, len(partial_raster_files))
+        num_processes = min(args.processes_count, len(tasks))
         logging.info(f"Starting parallel processing with {num_processes} workers...")
+        temp_parquet_files = []
         with Pool(processes=num_processes) as pool:
-            temp_parquet_files = pool.map(worker_func, partial_raster_files)
+            results = pool.starmap(worker_func, tasks)
+            temp_parquet_files = [f for f in results if f is not None and os.path.exists(f)]
 
-        valid_temp_files = [f for f in temp_parquet_files if f is not None and os.path.exists(f)]
+        logging.info(f"Finished processing individual strips. {len(temp_parquet_files)} temporary files generated.")
 
-        if valid_temp_files:
-            logging.info(f"Concatenating {len(valid_temp_files)} intermediate parquet files...")
-            combined_df = pl.scan_parquet(valid_temp_files).collect()
+        if temp_parquet_files:
+            logging.info(f"Concatenating {len(temp_parquet_files)} intermediate parquet files...")
+            combined_df = pl.scan_parquet(temp_parquet_files).collect(streaming=True)
 
-            logging.info(f"Writing final combined table with {len(combined_df)} rows to {args.output_filename}")
+            logging.info("Sorting combined data by strip_id, lat, lng...")
+            combined_df = combined_df.sort(['strip_id', 'lat', 'lng'])
+
+            logging.info(f"Writing final sorted table with {len(combined_df)} rows to {args.output_filename}")
             combined_df.write_parquet(args.output_filename)
+            logging.info(f"Output successfully written to {args.output_filename}")
         else:
             logging.warning("No valid intermediate parquet files were generated. Output file will not be created.")
 

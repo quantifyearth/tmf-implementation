@@ -336,17 +336,29 @@ def calculate_rse(estimates: list[float]) -> float:
     rse = std_err / abs(mean_val)
     return rse
 
+# --- Helper function to extract number for sorting ---
+def extract_k_grid_number(filepath: str) -> int:
+    """Extracts the integer part from filenames like 'k_123.parquet'."""
+    basename = os.path.basename(filepath)
+    match = re.search(r'k_(\d+)\.parquet$', basename)
+    if match:
+        return int(match.group(1))
+    else:
+        # Fallback for unexpected filenames, sort them last
+        logging.warning(f"Could not extract grid number from {basename}. Placing it at the end.")
+        return float('inf')
+
 def find_pairs(
     k_directory: str,
     m_parquet_filename: str,
     start_year: int,
-    evaluation_year: int,  # Added
-    carbon_density: np.ndarray,  # Added
-    project_area_ha: float,  # Added
+    evaluation_year: int,
+    carbon_density: np.ndarray,
+    project_area_ha: float,
     seed: int,
     output_folder: str,
-    batch_size: int,  # Added
-    rse_threshold: float,  # Added
+    batch_size: int,
+    rse_threshold: float,
     processes_count: int
 ) -> None:
     logging.info("Starting find pairs")
@@ -356,12 +368,17 @@ def find_pairs(
         logging.error(f"M set file not found: {m_parquet_filename}")
         return
 
-    k_grid_files = sorted(glob.glob(os.path.join(k_directory, "k_*.parquet")))
-    if not k_grid_files:
+    # Find K grid files
+    k_grid_files_unsorted = glob.glob(os.path.join(k_directory, "k_*.parquet"))
+    if not k_grid_files_unsorted:
         logging.error(f"No k_*.parquet files found in directory: {k_directory}")
         return
+
+    # Sort K grid files numerically using the helper function
+    k_grid_files = sorted(k_grid_files_unsorted, key=extract_k_grid_number)
+
     num_k_grids = len(k_grid_files)
-    logging.info(f"Found {num_k_grids} K grid files to process.")
+    logging.info(f"Found and numerically sorted {num_k_grids} K grid files to process.")
 
     rng = np.random.default_rng(seed)
     iteration_seeds = rng.integers(0, 1000000, num_k_grids)
@@ -387,7 +404,7 @@ def find_pairs(
             if not batch_args:
                 break
 
-            logging.info(f"Processing batch {i//batch_size + 1}/{ (num_k_grids + batch_size - 1)//batch_size } (K grids {i+1} to {i+len(batch_args)})...")
+            logging.info(f"Processing batch {i//batch_size + 1}/{ (num_k_grids + batch_size - 1)//batch_size } (K grids {extract_k_grid_number(batch_args[0][0])} to {extract_k_grid_number(batch_args[-1][0])})...") # Log numerical range
             batch_results = pool.map(iteration_func, batch_args)
 
             for k_grid_id, additionality_value in batch_results:
