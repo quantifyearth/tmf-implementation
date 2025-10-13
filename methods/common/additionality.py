@@ -43,24 +43,29 @@ def generate_additionality(
     project_start: str,
     end_year: int,
     density: np.ndarray,
-    matches_directory: str
-) -> pd.DataFrame: # Return a DataFrame
+    matches_directory: str,
+    output_grid_data: bool = False,
+    output_directory: str = None
+) -> tuple[pd.DataFrame, dict]:
     """
     Calculate additionality mean, standard error (SE), and relative standard
     error (RSE) for a project based on counterfactual pair matchings.
 
     Args:
         project_area_msq: Area of the project in square meters.
-        project_start: The start year of the project (as string or int). Not directly used.
+        project_start: The start year of the project (as string or int).
         end_year: The final year for analysis.
         density: Numpy array of carbon densities per land use class.
-        matches_directory: Directory containing the pairs parquet files (output of find_pairs).
-        # Removed partials_dir from Args
+        matches_directory: Directory containing the pairs parquet files.
+        output_grid_data: Whether to output individual grid CSVs.
+        output_directory: Base directory for grid-level output files.
 
     Returns:
-        A pandas DataFrame with yearly additionality metrics (mean, SE, RSE).
+        A tuple containing:
+        - A pandas DataFrame with yearly additionality metrics (mean, SE, RSE)
+        - A dictionary of grid-level DataFrames (if output_grid_data=True)
     """
-    project_area_ha = project_area_msq / 10000.0 # Convert m^2 to hectares
+    project_area_ha = project_area_msq / 10000.0
     logging.info(f"Project area: {project_area_msq:.2f} m^2 ({project_area_ha:.2f} ha)")
 
     # Find all non-matchless pairs files
@@ -71,6 +76,15 @@ def generate_additionality(
     if num_iterations == 0:
         raise ValueError(f"No non-matchless parquet files found in {matches_directory}")
     logging.info(f"Found {num_iterations} match files (iterations) to process.")
+
+    # Create output directories if needed
+    if output_grid_data and output_directory:
+        os.makedirs(os.path.join(output_directory, "additionality"), exist_ok=True)
+        os.makedirs(os.path.join(output_directory, "carbon_stock"), exist_ok=True)
+        logging.info(f"Created output directories in {output_directory}")
+
+    # Dictionary to store grid-level results
+    grid_results = {}
 
     # Dictionaries to store LUC proportions per iteration for each year
     treatment_luc_proportions: Dict[int, np.ndarray] = {}
@@ -156,7 +170,72 @@ def generate_additionality(
     # --- Loop 2: Calculate final metrics for each year ---
     results_list = []
     all_years = sorted([y for y in treatment_luc_proportions.keys() if y >= earliest_year_overall])
+    
+    # Create and store grid-level results if requested
+    if output_grid_data:
+        for pair_idx, pairs_file in enumerate(matches):
+            grid_id = os.path.basename(pairs_file).replace(".parquet", "")
+            grid_data = {"year": all_years}
+            
+            # Calculate additionality and carbon stock for each year for this grid
+            grid_additionality = []
+            grid_treatment_carbon = []
+            grid_control_carbon = []
+            
+            for year in all_years:
+                # Skip years that don't have data for this grid
+                if (year not in treatment_luc_proportions or 
+                    year not in control_luc_proportions or
+                    pair_idx >= len(treatment_luc_proportions[year]) or
+                    pair_idx >= len(control_luc_proportions[year])):
+                    grid_additionality.append(np.nan)
+                    grid_treatment_carbon.append(np.nan)
+                    grid_control_carbon.append(np.nan)
+                    continue
+                
+                treatment_props = treatment_luc_proportions[year][pair_idx]
+                control_props = control_luc_proportions[year][pair_idx]
+                
+                # Skip if any NaN values in proportions
+                if np.isnan(treatment_props).any() or np.isnan(control_props).any():
+                    grid_additionality.append(np.nan)
+                    grid_treatment_carbon.append(np.nan)
+                    grid_control_carbon.append(np.nan)
+                    continue
+                
+                treatment_carbon = np.sum(treatment_props * project_area_ha * density) * MOLECULAR_MASS_CO2_TO_C_RATIO
+                control_carbon = np.sum(control_props * project_area_ha * density) * MOLECULAR_MASS_CO2_TO_C_RATIO
+                additionality = treatment_carbon - control_carbon
+                
+                grid_additionality.append(additionality)
+                grid_treatment_carbon.append(treatment_carbon)
+                grid_control_carbon.append(control_carbon)
+            
+            # Store the results
+            grid_data["additionality"] = grid_additionality
+            grid_data["treatment_carbon"] = grid_treatment_carbon
+            grid_data["control_carbon"] = grid_control_carbon
+            
+            # Create DataFrames
+            grid_df = pd.DataFrame(grid_data)
+            grid_results[grid_id] = grid_df
+            
+            # Save CSVs if directory provided
+            if output_directory:
+                # Save additionality CSV
+                add_filepath = os.path.join(output_directory, "additionality", f"{grid_id}.csv")
+                grid_df.to_csv(add_filepath, index=False)
+                
+                # Create and save separate carbon stock CSV
+                carbon_df = pd.DataFrame({
+                    "year": all_years,
+                    "treatment_carbon": grid_treatment_carbon,
+                    "control_carbon": grid_control_carbon
+                })
+                carbon_filepath = os.path.join(output_directory, "carbon_stock", f"{grid_id}.csv")
+                carbon_df.to_csv(carbon_filepath, index=False)
 
+    # Calculate aggregated statistics for each year
     for year in all_years:
         treatment_props_year = treatment_luc_proportions.get(year, np.full((num_iterations, len(LandUseClass)), np.nan))
         control_props_year = control_luc_proportions.get(year, np.full((num_iterations, len(LandUseClass)), np.nan))
@@ -198,5 +277,6 @@ def generate_additionality(
 
     # Convert list of results to DataFrame
     results_df = pd.DataFrame(results_list)
-
-    return results_df
+    
+    # Return both the aggregated results and the grid-level results
+    return results_df, grid_results if output_grid_data else {}

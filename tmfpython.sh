@@ -1,33 +1,22 @@
 #!/bin/bash
-# filepath: /home/jh2589/tmf_pipeline/tmf-implementation/tmfpython.sh
+# filepath: /home/jh2589/tmf_pipeline/tmf-implementation/python.sh
 set -e
 
-####### 1) Load user config (one line per VAR=VALUE) #######
 CFG="tmfpython.conf"
+
 if [ -f "$CFG" ]; then
   source "$CFG"
 else
-  echo "ERROR: config file $CFG not found. Create it with:"
-  echo "  INPUT_DIR=…"
-  echo "  OUTPUT_DIR=…"
-  echo "  JRC_DIR=…"
-  echo "  FCC_DIR=…"
-  echo "  ECOR_DIR=…"
-  echo "  ECOR_GEOJSON=…"
-  echo "  ELEV_DIR=…"
-  echo "  SLOPE_DIR=…"
-  echo "  ACCESS_DIR=…"
-  echo "  COUNTRIES_RASTER=…"
-  echo "  OTHER_PROJECTS_DIR=…"
-  echo "  GEDI_INFO_DIR=…"
-  echo "  GEDI_DATA_DIR=…"
-  echo "  SRTM_ZIP_DIR=…"
-  echo "  SRTM_TIF_DIR=…"
-  echo "  SCC_CSV=…" # Added SCC_CSV
+  echo "ERROR: config file $CFG not found."
   exit 1
 fi
 
-####### 2) Define step descriptions #######
+SCC_CSV="${SCC_CSV:-/path/to/scc.csv}"
+
+# Define previous settings file in same directory as script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PREV_SETTINGS="${SCRIPT_DIR}/python_settings"
+
 declare -A STEP_DESC=(
   [1]="Create output folder"
   [2]="Generate buffer (boundary)"
@@ -46,61 +35,103 @@ declare -A STEP_DESC=(
   [15]="Find potential matches"
   [16]="Build M table"
   [17]="Find pairs"
-  [18]="Calculate additionality"
-  [19]="Calculate permanence"
-  [20]="Apply modifiers and report summary" # Added step 20
+  [18]="Calculate carbon additionality"
+  [19]="Calculate biodiversity additionality"
+  [20]="Calculate durability"
 )
 
-# ... (rest of mode selection, variable input, should_run function remain the same) ...
-echo "Which steps would you like to run?"
-echo "  1) All steps"
-echo "  2) Specify steps"
-read -p "Select [1/2]: " MODE
 
-declare -a STEPS_TO_RUN=()
+# Global variables for step selection
+STEPS_TO_RUN=()
 RUN_ALL=false
+STEPS_RAW=""
 
-if [ "$MODE" = "2" ]; then
-  echo "Available steps:"
-  # collect keys in numeric order
-  keys=( $(printf "%s\n" "${!STEP_DESC[@]}" | sort -n) )
-  total=${#keys[@]}
-  per_page=20
+# Function to save settings for repeat
+function save_settings() {
+  local mode="$1"
+  local steps="$2"
+  local proj="$3"
+  local t0="$4"
+  local eval_year="$5"
+  local csv_file="$6"
+  
+  cat > "$PREV_SETTINGS" << EOF
+MODE=$mode
+STEPS_RAW=$steps
+PROJ=$proj
+T0=$t0
+EVAL_YEAR=$eval_year
+CSV_FILE=$csv_file
+EOF
+  echo "Settings saved for next run."
+}
 
-  for idx in "${!keys[@]}"; do
-    i=${keys[idx]}
-    printf "  %2d) %s\n" "$i" "${STEP_DESC[$i]}"
-
-    # after every $per_page items (but not after the last), pause
-    if [ $(((idx+1)%per_page)) -eq 0 ] && [ $((idx+1)) -lt "$total" ]; then
-      read -p "-- more -- Press Enter to continue --"
+# Function to load previous settings
+function load_previous_settings() {
+  if [ -f "$PREV_SETTINGS" ]; then
+    source "$PREV_SETTINGS"
+    echo "Previous settings loaded:"
+    if [ "$MODE" = "single" ]; then
+      echo "  Mode: Single project"
+      echo "  Project: $PROJ"
+      echo "  Start year: $T0"
+      echo "  Evaluation year: $EVAL_YEAR"
+    elif [ "$MODE" = "csv" ]; then
+      echo "  Mode: CSV of projects"
+      echo "  CSV file: $CSV_FILE"
     fi
-  done
+    echo "  Steps: $STEPS_RAW"
+    return 0
+  else
+    echo "No previous settings found."
+    return 1
+  fi
+}
 
-  read -p "Enter steps (e.g. 3-6,8,10): " RAW
-  # parse RAW into STEPS_TO_RUN
-  IFS=',' read -ra TOKENS <<< "$RAW"
-  for t in "${TOKENS[@]}"; do
-    if [[ $t =~ ^([0-9]+)-([0-9]+)$ ]]; then
-      start=${BASH_REMATCH[1]}
-      end=${BASH_REMATCH[2]}
-      for ((n=start; n<=end; n++)); do
-        STEPS_TO_RUN+=("$n")
-      done
-    elif [[ $t =~ ^[0-9]+$ ]]; then
-      STEPS_TO_RUN+=("$t")
-    else
-      echo "Warning: invalid token '$t' skipped"
-    fi
-  done
+function select_steps {
+  STEPS_TO_RUN=()
   RUN_ALL=false
-else
-  RUN_ALL=true
-fi
+  echo "Which steps would you like to run?"
+  echo "  1) All steps"
+  echo "  2) Specify steps"
+  read -p "Select [1/2]: " MODE_NUM
 
-read -p "Project name (no .geojson): " proj
-read -p "Start year (t0): " t0
-read -p "Evaluation year: " eval_year
+  # Reset global variable
+  STEPS_RAW=""
+  
+  if [ "$MODE_NUM" = "2" ]; then
+    echo "Available steps:"
+    keys=( $(printf "%s\n" "${!STEP_DESC[@]}" | sort -n) )
+    total=${#keys[@]}
+    per_page=20
+    for idx in "${!keys[@]}"; do
+      i=${keys[idx]}
+      printf "  %2d) %s\n" "$i" "${STEP_DESC[$i]}"
+      if [ $(((idx+1)%per_page)) -eq 0 ] && [ $((idx+1)) -lt "$total" ]; then
+        read -p "-- more -- Press Enter to continue --"
+      fi
+    done
+    read -p "Enter steps (e.g. 3-6,8,10): " STEPS_RAW
+    IFS=',' read -ra TOKENS <<< "$STEPS_RAW"
+    for t in "${TOKENS[@]}"; do
+      if [[ $t =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        start=${BASH_REMATCH[1]}
+        end=${BASH_REMATCH[2]}
+        for ((n=start; n<=end; n++)); do
+          STEPS_TO_RUN+=("$n")
+        done
+      elif [[ $t =~ ^[0-9]+$ ]]; then
+        STEPS_TO_RUN+=("$t")
+      else
+        echo "Warning: invalid token '$t' skipped"
+      fi
+    done
+    RUN_ALL=false
+  else
+    RUN_ALL=true
+    STEPS_RAW="all"
+  fi
+}
 
 function should_run {
   local S=$1
@@ -111,8 +142,51 @@ function should_run {
   return 1
 }
 
+function run_single_project {
+  read -p "Enter project name (ID): " proj
+  read -p "Enter start year: " t0
+  read -p "Enter evaluation year: " eval_year
+  GEOJSON="${INPUT_DIR}/${proj}.geojson"
+  if [ ! -f "$GEOJSON" ]; then
+    echo "ERROR: geojson not found for $proj ($GEOJSON)"
+    return
+  fi
+  
+  # Save settings immediately after gathering them
+  save_settings "single" "$STEPS_RAW" "$proj" "$t0" "$eval_year" ""
+  
+  echo "Running pipeline for $proj (start: $t0, eval: $eval_year)"
+  run_pipeline "$proj" "$t0" "$eval_year"
+}
 
-####### 3) Steps #######
+function run_csv_projects {
+  read -p "Enter CSV file to use [project_metadata.csv]: " CSV_FILE
+  CSV_FILE=${CSV_FILE:-project_metadata.csv}
+  if [ ! -f "$CSV_FILE" ]; then
+    echo "ERROR: CSV file $CSV_FILE not found."
+    return
+  fi
+  
+  # Save settings immediately
+  save_settings "csv" "$STEPS_RAW" "" "" "" "$CSV_FILE"
+  
+  tail -n +2 "$CSV_FILE" | while IFS=',' read -r proj t0 eval_year; do
+    GEOJSON="${INPUT_DIR}/${proj}.geojson"
+    if [ ! -f "$GEOJSON" ]; then
+      echo "Skipping $proj: geojson not found ($GEOJSON)"
+      continue
+    fi
+    echo "Running pipeline for $proj (start: $t0, eval: $eval_year)"
+    run_pipeline "$proj" "$t0" "$eval_year"
+  done
+}
+
+function run_pipeline {
+  local proj="$1"
+  local t0="$2"
+  local eval_year="$3"
+  local GEOJSON="${INPUT_DIR}/${proj}.geojson"
+
 if should_run 1; then
   mkdir -p "${OUTPUT_DIR}/${proj}"
   echo "--Folder created.--"
@@ -268,46 +342,139 @@ if should_run 16; then
 fi
 
 if should_run 17; then
-  tmfpython3 -m methods.matching.find_pairs \
-    --k "${OUTPUT_DIR}/${proj}/k_grids" \
-    --m "${OUTPUT_DIR}/${proj}/matches.parquet" \
-    --start_year "$t0" \
-    --evaluation_year "$eval_year" \
-    --density "${OUTPUT_DIR}/${proj}/carbon-density.csv" \
-    --project "${INPUT_DIR}/${proj}.geojson" \
-    --output "${OUTPUT_DIR}/${proj}/pairs" \
-    --seed 42 \
-    --batch_size 10 \
-    --rse_threshold 0.025 \
-    --j $(nproc)
-  echo "--Pairs matched.--"
+tmfpython3 -m methods.matching.find_pairs \
+  --k_directory "${OUTPUT_DIR}/${proj}/k_grids" \
+  --m_parquet_filename "${OUTPUT_DIR}/${proj}/matches.parquet" \
+  --start_year "$t0" \
+  --evaluation_year "$eval_year" \
+  --carbon_density "${OUTPUT_DIR}/${proj}/carbon-density.csv" \
+  --project_area "${INPUT_DIR}/${proj}.geojson" \
+  --output_folder "${OUTPUT_DIR}/${proj}/pairs" \
+  --seed 42 \
+  --batch_size 16 \
+  --rse_threshold 0.1 \
+  --max_potential_matches 10000 \
+  --processes_count 16
 fi
 
 if should_run 18; then
   tmfpython3 -m methods.outputs.calculate_additionality \
-    --project "${INPUT_DIR}/${proj}.geojson" \
-    --project_start "$t0" \
-    --evaluation_year "$eval_year" \
+    --project $GEOJSON \
+    --project_start $t0 \
+    --evaluation_year $eval_year \
     --density "${OUTPUT_DIR}/${proj}/carbon-density.csv" \
     --matches "${OUTPUT_DIR}/${proj}/pairs" \
-    --output "${OUTPUT_DIR}/${proj}/additionality.csv"
-  echo "--Additionality calculated.--"
+    --output "${OUTPUT_DIR}/${proj}/additionality.csv" \
+    --grid_output_dir "${OUTPUT_DIR}/${proj}/grid_results" < /dev/null
+  echo "--Carbon additionality calculated.--"
 fi
 
 if should_run 19; then
-  tmfpython3 -m methods.outputs.calculate_permanence \
-    --additionality "${OUTPUT_DIR}/${proj}/additionality.csv" \
-    --scc "${SCC_CSV}" \
-    --current_year "$eval_year" \
-    --output "${OUTPUT_DIR}/${proj}/permanence.json"
-  echo "--Permanence calculated.--"
+  tmfpython3 -m methods.outputs.life_additionality_yearly \
+    --life   "${BIODIVERSITY_RASTER}" \
+    --project "${INPUT_DIR}/${proj}.geojson" \
+    --output_clip  "${OUTPUT_DIR}/${proj}/biodiversity_clip.geojson" \
+    --parquet_folder "${OUTPUT_DIR}/${proj}/pairs" \
+    --output_folder "${OUTPUT_DIR}/${proj}/life_results" \
+    --output_csv    "${OUTPUT_DIR}/${proj}/biodiversity_summary.csv" \
+    --min_points    "${MIN_POINTS}"
+  echo "--Biodiversity additionality calculated.--"
 fi
 
+PROJECT_END_DATE=$((t0 + 40))
+
 if should_run 20; then
-  tmfpython3 -m methods.outputs.apply_modifiers \
-    --additionality "${OUTPUT_DIR}/${proj}/additionality.csv" \
-    --permanence "${OUTPUT_DIR}/${proj}/permanence.json" \
-    --leakage 0.40 \
-    --output "${OUTPUT_DIR}/${proj}/final_summary.txt"
-  echo "--Summary report generated: $FINAL_OUTPUT_TXT--"
+  tmfpython3 -m methods.outputs.durability \
+    --additionality-csv "${OUTPUT_DIR}/${proj}/additionality.csv" \
+    --grid-folder "${OUTPUT_DIR}/${proj}/grid_results/additionality" \
+    --scc-csv "${SCC_CSV}" \
+    --project-end-date "${PROJECT_END_DATE}" \
+    --output-dir "${OUTPUT_DIR}/${proj}" \
+    --additionality-percentile 0.2 \
+    --control-percentile 0.2 \
+    --verbose
+  echo "--Durability calculated.--"
 fi
+}
+
+# Main menu loop
+while true; do
+  echo ""
+  echo "Select mode:"
+  echo "  1) Run single project"
+  echo "  2) Run CSV of projects"
+  if [ -f "$PREV_SETTINGS" ]; then
+    echo "  3) Repeat prior instructions"
+  fi
+  echo "  4) Exit"
+  read -p "Enter choice [1-4]: " CHOICE
+
+  case "$CHOICE" in
+    1)
+      select_steps
+      run_single_project
+      ;;
+    2)
+      select_steps
+      run_csv_projects
+      ;;
+    3)
+      if [ -f "$PREV_SETTINGS" ]; then
+        if load_previous_settings; then
+          # Parse stored settings to rebuild STEPS_TO_RUN array
+          if [ "$STEPS_RAW" != "" ] && [ "$STEPS_RAW" != "all" ]; then
+            STEPS_TO_RUN=()
+            IFS=',' read -ra TOKENS <<< "$STEPS_RAW"
+            for t in "${TOKENS[@]}"; do
+              if [[ $t =~ ^([0-9]+)-([0-9]+)$ ]]; then
+                start=${BASH_REMATCH[1]}
+                end=${BASH_REMATCH[2]}
+                for ((n=start; n<=end; n++)); do
+                  STEPS_TO_RUN+=("$n")
+                done
+              elif [[ $t =~ ^[0-9]+$ ]]; then
+                STEPS_TO_RUN+=("$t")
+              fi
+            done
+            RUN_ALL=false
+          else
+            RUN_ALL=true
+          fi
+
+          if [ "$MODE" = "single" ]; then
+            GEOJSON="${INPUT_DIR}/${PROJ}.geojson"
+            if [ ! -f "$GEOJSON" ]; then
+              echo "ERROR: geojson not found for $PROJ ($GEOJSON)"
+              continue
+            fi
+            echo "Running pipeline for $PROJ (start: $T0, eval: $EVAL_YEAR)"
+            run_pipeline "$PROJ" "$T0" "$EVAL_YEAR"
+          elif [ "$MODE" = "csv" ]; then
+            if [ ! -f "$CSV_FILE" ]; then
+              echo "ERROR: CSV file $CSV_FILE not found."
+              continue
+            fi
+            tail -n +2 "$CSV_FILE" | while IFS=',' read -r proj t0 eval_year; do
+              GEOJSON="${INPUT_DIR}/${proj}.geojson"
+              if [ ! -f "$GEOJSON" ]; then
+                echo "Skipping $proj: geojson not found ($GEOJSON)"
+                continue
+              fi
+              echo "Running pipeline for $proj (start: $t0, eval: $eval_year)"
+              run_pipeline "$proj" "$t0" "$eval_year"
+            done
+          fi
+        fi
+      else
+        echo "No prior instructions to repeat."
+      fi
+      ;;
+    4)
+      echo "Exiting."
+      exit 0
+      ;;
+    *)
+      echo "Invalid choice."
+      ;;
+  esac
+done

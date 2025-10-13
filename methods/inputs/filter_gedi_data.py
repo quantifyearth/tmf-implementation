@@ -63,8 +63,8 @@ def filter_gedi_data(
             df.drop(df.index[df.beam_type != "full"], inplace=True)
             df.drop(df.index[df.degrade_flag != 0], inplace=True)
             df.drop(df.index[df.l4_quality_flag != 1], inplace=True)
-            df.drop(df.index[df.absolute_time < datetime(2020, 1, 1, tzinfo=timezone.utc)], inplace=True)
-            df.drop(df.index[df.absolute_time >= datetime(2021, 1, 1, tzinfo=timezone.utc)], inplace=True)
+            df.drop(df.index[df.absolute_time < datetime(2024, 1, 1, tzinfo=timezone.utc)], inplace=True)
+            df.drop(df.index[df.absolute_time >= datetime(2025, 1, 1, tzinfo=timezone.utc)], inplace=True)
 
             # filter beams on whether the data point falls within the buffer geometry
             df.drop(df.index[~df.within(boundary.geometry.values[0])], inplace=True)

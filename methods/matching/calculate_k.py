@@ -1,10 +1,12 @@
 import argparse
 import glob
 import os
+import re
 import random
 import tempfile
 import logging
 import multiprocessing
+import re
 from functools import partial
 from collections import namedtuple
 from itertools import product
@@ -19,17 +21,6 @@ from yirgacheffe.window import PixelScale
 from methods.common import LandUseClass # Assuming this exists in your project structure
 from methods.common.geometry import area_for_geometry, expand_boundaries # Assuming this exists
 from methods.common.luc import luc_range # Assuming this exists
-
-# --- Constants ---
-HECTARE_WIDTH_IN_METERS = 100
-PIXEL_WIDTH_IN_METERS = 30
-# Adjust densities as needed
-SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.05
-LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE = 0.01
-
-# Pixel skip calculation based on density
-PIXEL_SKIP_SMALL_PROJECT = round((HECTARE_WIDTH_IN_METERS / (2 * SMALL_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
-PIXEL_SKIP_LARGE_PROJECT = round((HECTARE_WIDTH_IN_METERS / (2 * LARGE_PROJECT_PIXEL_DENSITY_PER_HECTARE)) / PIXEL_WIDTH_IN_METERS)
 
 # --- Data Structures ---
 MatchingCollection = namedtuple('MatchingCollection',
@@ -204,9 +195,9 @@ def calculate_single_k_parquet(
 
         output_df = pd.DataFrame(
             results,
-            columns=['x', 'y', 'lat', 'lng', 'elevation', 'slope', 'ecoregion', 'access', 'country']
-                      + luc_columns + fcc_column_names
-        )
+            columns=['x', 'y', 'lat', 'lng',
+                     'elevation', 'slope', 'ecoregion',
+                     'access', 'country'] + luc_columns + fcc_column_names)
         output_df.to_parquet(result_parquet_filename)
 
 def process_single_grid_task(
@@ -270,7 +261,59 @@ def process_single_grid_task(
         if os.path.exists(geojson_filename): os.remove(geojson_filename)
         return None # Indicate failure
 
-# --- Main Execution Logic ---
+# --- Post Execution Logic ---
+def extract_index(path: str, pattern: str) -> int:
+    """
+    Extract the integer index from a filename via regex.
+    Returns None if no match.
+    """
+    m = re.search(pattern, os.path.basename(path))
+    return int(m.group(1)) if m else None
+
+def shuffle_k_files(output_directory, geojsons_directory, seed):
+    """
+    Rename k_1..k_256 files in both Parquet and GeoJSON subfolder
+    by a random permutation of [1..256], preserving a 1–256 range.
+    """
+    rng = random.Random(seed)
+    # gather parquet files
+    pq_paths = sorted(
+        glob.glob(os.path.join(output_directory, "k_*.parquet")),
+        key=lambda p: extract_index(p, r"k_(\d+)\.parquet")
+    )
+    indices = [extract_index(p, r"k_(\d+)\.parquet") for p in pq_paths]
+    permuted = indices.copy()
+    rng.shuffle(permuted)
+    mapping = dict(zip(indices, permuted))
+
+    # 1) temp‐prefix all Parquets
+    for i in indices:
+        old = os.path.join(output_directory, f"k_{i}.parquet")
+        tmp = os.path.join(output_directory, f"__tmp__k_{i}.parquet")
+        os.replace(old, tmp)
+
+    # 2) rename tmp → permuted
+    for i, j in mapping.items():
+        tmp = os.path.join(output_directory, f"__tmp__k_{i}.parquet")
+        new = os.path.join(output_directory, f"k_{j}.parquet")
+        os.replace(tmp, new)
+
+    # repeat for GeoJSONs
+    geo_paths = sorted(
+        glob.glob(os.path.join(geojsons_directory, "k_*.geojson")),
+        key=lambda p: extract_index(p, r"k_(\d+)\.geojson")
+    )
+    for i in indices:
+        old = os.path.join(geojsons_directory, f"k_{i}.geojson")
+        tmp = os.path.join(geojsons_directory, f"__tmp__k_{i}.geojson")
+        os.replace(old, tmp)
+
+    for i, j in mapping.items():
+        tmp = os.path.join(geojsons_directory, f"__tmp__k_{i}.geojson")
+        new = os.path.join(geojsons_directory, f"k_{j}.geojson")
+        os.replace(tmp, new)
+
+    logging.info(f"Shuffled K files with mapping: {mapping}")
 
 def main():
     parser = argparse.ArgumentParser(description="Generates multiple K-set sample grids (Parquet and GeoJSON) with unique random offsets.")
@@ -287,7 +330,7 @@ def main():
     parser.add_argument("--output", type=str, required=True, dest="output_directory", help="Destination directory for k_*.parquet files and geojsons subfolder.")
     parser.add_argument("--buffer", type=int, default=0, required=False, help="Optional: Buffer distance in metres to apply to the project boundary for sampling (default: 0).")
     parser.add_argument("--seed", type=int, default=42, help="Random number seed for generating offsets.")
-    parser.add_argument("--num-grids", type=int, default=250, help="Number of unique random grid offsets to generate.")
+    parser.add_argument("--num-grids", type=int, default=256, help="Number of unique random grid offsets to generate.")
     parser.add_argument("--processes", type=int, default=max(1, multiprocessing.cpu_count() // 4), help="Number of parallel processes to use (default: 1/4 of CPU cores).") # Use integer division and ensure at least 1
 
     args = parser.parse_args()
@@ -309,39 +352,23 @@ def main():
         project_gdf = gpd.read_file(args.project_boundary_filename)
         project_area_m2 = area_for_geometry(project_gdf) # Ensure this function handles GeoDataFrames
         project_area_ha = project_area_m2 / 10_000
-        pixel_skip = PIXEL_SKIP_LARGE_PROJECT if (project_area_ha > 250_000) else PIXEL_SKIP_SMALL_PROJECT
+        pixel_skip = 16
         logging.info(f"Project area: {project_area_ha:.2f} ha. Using pixel_skip: {pixel_skip}")
     except Exception as e:
         logging.error(f"Failed to read project boundary or calculate area: {e}")
         return
 
-    # --- Generate Unique Random Offset Pairs ---
-    num_grids_requested = args.num_grids
-    random.seed(args.seed)
+    # --- Generate All Possible Offset Pairs ---
+    pixel_skip = 16
+    total_possible_grids = pixel_skip * pixel_skip  # 256
+    logging.info(f"Generating all {total_possible_grids} possible grid offsets for pixel_skip={pixel_skip}.")
 
-    # Calculate total possible unique grids
-    total_possible_grids = pixel_skip * pixel_skip
-    logging.info(f"Total possible unique grid offsets for pixel_skip={pixel_skip}: {total_possible_grids}")
-
-    if num_grids_requested > total_possible_grids:
-        logging.warning(f"Requested number of grids ({num_grids_requested}) exceeds the total possible unique grids ({total_possible_grids}). Capping at {total_possible_grids}.")
-        num_grids_to_generate = total_possible_grids
-    else:
-        num_grids_to_generate = num_grids_requested
-
-    # Generate all possible pairs
     all_possible_pairs = list(product(range(pixel_skip), range(pixel_skip)))
-
-    # Sample unique pairs
-    selected_pairs = random.sample(all_possible_pairs, num_grids_to_generate)
-
-    # Unzip into separate lists
-    x_offsets, y_offsets = zip(*selected_pairs)
-    # Convert tuples from zip to lists as expected by worker
+    x_offsets, y_offsets = zip(*all_possible_pairs)
     x_offsets = list(x_offsets)
     y_offsets = list(y_offsets)
-
-    logging.info(f"Generated {num_grids_to_generate} unique offset pairs with seed {args.seed}.")
+    num_grids_to_generate = total_possible_grids
+    logging.info(f"Generated {num_grids_to_generate} offset pairs (no random sampling).")
 
     # --- Prepare for Parallel Processing ---
     worker_func = partial(
@@ -368,6 +395,9 @@ def main():
     logging.info(f"Successfully processed: {successful_grids}/{num_grids_to_generate} grids.")
     if failed_grids > 0:
         logging.warning(f"Failed to process: {failed_grids}/{num_grids_to_generate} grids. Check logs for errors.")
+
+    # Shuffle the generated K files
+    shuffle_k_files(output_directory, geojsons_directory, args.seed)
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()

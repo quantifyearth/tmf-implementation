@@ -60,6 +60,13 @@ if __name__ == "__main__":
         dest="output_csv",
         help="The destination output CSV path.",
     )
+    # new argument for grid-level output directory
+    parser.add_argument(
+        "--grid_output_dir",
+        type=str,
+        dest="grid_output_dir",
+        help="Directory to store grid-level CSV files. If provided, individual CSV files for each grid will be created.",
+    )
 
     args = parser.parse_args()
 
@@ -91,18 +98,30 @@ if __name__ == "__main__":
     project_area_msq = area_for_geometry(project_gpd)
     logging.info(f"Calculated project area: {project_area_msq:.2f} m^2")
 
+    # whether to output grid-level data
+    output_grid_data = args.grid_output_dir is not None
+    
     logging.info("Generating additionality results...")
-    results_df = generate_additionality(
+    results_df, grid_results = generate_additionality(
         project_area_msq=project_area_msq,
         project_start=args.project_start,
         end_year=args.evaluation_year,
         density=density,
         matches_directory=args.matches,
+        output_grid_data=output_grid_data,
+        output_directory=args.grid_output_dir
     )
 
     logging.info(f"Saving additionality results to {args.output_csv}")
     try:
         results_df.to_csv(args.output_csv, index=False, float_format='%.6f')
+        
+        if output_grid_data:
+            num_grids = len(grid_results)
+            logging.info(f"Saved {num_grids} grid-level result files to {args.grid_output_dir}")
+            logging.info(f"  - additionality/ directory: Individual grid additionality values")
+            logging.info(f"  - carbon_stock/ directory: Treatment and control carbon values")
+            
         logging.info("--Additionality calculated.--")
     except Exception as e:
         logging.error(f"Failed to save results CSV: {e}")

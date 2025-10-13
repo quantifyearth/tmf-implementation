@@ -89,11 +89,11 @@ def build_match_key(df, start_year):
     )
 
 def setup_memory_logging(output_folder):
-    """Set up memory logging to file in output directory."""
+    """Setup memory logging to file in output directory."""
     global MEMORY_LOG_FILE
     MEMORY_LOG_FILE = os.path.join(output_folder, "memory_usage_log.txt")
     
-    # Initialise log file with header
+    # Initialize log file with header
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open(MEMORY_LOG_FILE, 'w') as f:
         f.write(f"Memory Usage Log - Started at {timestamp}\n")
@@ -200,8 +200,7 @@ def find_match_iteration(
     project_area_ha: float,
     output_folder: str,
     k_grid_filepath_and_seed: tuple,
-    shuffle_seed: int,
-    max_potential_matches: int
+    shuffle_seed: int
 ) -> tuple:
     """
     Process a single K grid file to find matching S pixels from the M set.
@@ -229,12 +228,8 @@ def find_match_iteration(
     # Load pre-sampled M set
     logging.info(f"Loading pre-sampled M set from {m_sample_filename}")
     m_set = pd.read_parquet(m_sample_filename)
-    log_dataframe_memory(m_set, "M set (pre-sampled)")
-    
-    # Shuffle M set with the provided shuffle seed
-    logging.info(f"Shuffling M set for iteration {k_grid_id} with shuffle seed {shuffle_seed}...")
-    shuffle_rng = np.random.default_rng(shuffle_seed)
-    m_set = m_set.sample(frac=1, random_state=shuffle_rng).reset_index(drop=True)
+
+    # No shuffling or sampling of M set – use it as is
     
     # Thresholds for normalising continuous variables
     thresholds_for_columns = np.array([
@@ -271,6 +266,9 @@ def find_match_iteration(
     # Free intermediate dataframes
     del m_dist_thresholded_df, k_subset_dist_thresholded_df
     gc.collect()
+
+    # Max number of potential matches to find per K pixel
+    max_potential_matches = 100
 
     logging.info("Running make_s_set_mask...")
     # Create random starting positions to avoid bias in candidate selection
@@ -782,7 +780,7 @@ def create_m_samples(
 
 def iteration_func_wrapper(args):
     """Wrapper function for multiprocessing - must be at module level to be picklable."""
-    m_sample_file, k_grid_file, iter_seed, shuf_seed, start_year, evaluation_year, carbon_density, project_area_ha, output_folder, max_potential_matches = args
+    m_sample_file, k_grid_file, iter_seed, shuf_seed, start_year, evaluation_year, carbon_density, project_area_ha, output_folder = args
     return find_match_iteration(
         m_sample_file,
         start_year,
@@ -791,13 +789,12 @@ def iteration_func_wrapper(args):
         project_area_ha,
         output_folder,
         (k_grid_file, iter_seed),
-        shuf_seed,
-        max_potential_matches
+        shuf_seed
     )
 
 def find_pairs(
     k_directory: str,
-    m_parquet_filename: str,
+    m_parquet_filename: str,    # now points directly at your full matches.parquet
     start_year: int,
     evaluation_year: int,
     carbon_density: np.ndarray,
@@ -806,11 +803,10 @@ def find_pairs(
     output_folder: str,
     batch_size: int,
     rse_threshold: float,
-    processes_count: int,
-    max_potential_matches: int = 1000
+    processes_count: int
 ) -> None:
     """Main matching function that processes K grids in batches until convergence."""
-    logging.info("Starting find pairs")
+    logging.info("Starting find pairs (no sampling / no shuffle)")
     
     # Create output directory
     os.makedirs(output_folder, exist_ok=True)
@@ -840,34 +836,22 @@ def find_pairs(
     iteration_seeds = rng.integers(0, 2000000, num_k_grids)
     shuffle_seeds = rng.integers(0, 2000000, num_k_grids)
     
-    # create M samples first using parallel processing
-    sample_processes = min(8, cpu_count() // 2)
-    logging.info("Creating M set samples...")
-    create_m_samples(
-        m_parquet_filename=m_parquet_filename,
-        output_folder=output_folder,
-        num_samples=num_k_grids,
-        sample_size=2_000_000,
-        seeds=iteration_seeds,
-        sample_processes=sample_processes
-    )
-    
-    # Create mapping of grid files to their corresponding M samples
-    m_samples_dir = os.path.join(output_folder, "m_samples")
+    # Prepare pool arguments: every iteration uses the same M file
     map_arguments = []
-    for i, (k_grid_file, iter_seed, shuf_seed) in enumerate(zip(k_grid_files, iteration_seeds, shuffle_seeds)):
-        m_sample_file = os.path.join(m_samples_dir, f"m_sample_{i+1:03d}.parquet")
+    for i, (k_grid_file, iter_seed, shuf_seed) in enumerate(
+            zip(k_grid_files, iteration_seeds, shuffle_seeds)
+    ):
+        m_sample_file = m_parquet_filename
         map_arguments.append((
             m_sample_file,
             k_grid_file,
             iter_seed,
-            shuf_seed,
+            shuf_seed,         # still passed but we'll ignore shuffle below
             start_year,
             evaluation_year,
             carbon_density,
             project_area_ha,
-            output_folder,
-            max_potential_matches
+            output_folder
         ))
     
     all_additionality_estimates = []
@@ -946,7 +930,7 @@ def find_pairs(
     
     log_memory_usage("end of main function", detailed=True)
     
-    # final summary to memory log
+    # Write final summary to memory log
     if MEMORY_LOG_FILE:
         with open(MEMORY_LOG_FILE, 'a') as f:
             f.write(f"\n{'='*80}\n")
@@ -967,41 +951,34 @@ def main():
     parser.add_argument("--project_area", required=True)
     parser.add_argument("--output_folder", required=True)
     parser.add_argument("--rse_threshold", type=float, default=0.05,
-                        help="Stop early if cumulative RSE ≤ this value")
+                       help="Stop early if cumulative RSE ≤ this value")
     parser.add_argument("--batch_size", type=int, default=16,
-                        help="Number of K grids to process per batch")
+                       help="Number of K grids to process per batch")
     parser.add_argument("--processes_count", type=int, default=16,
-                        help="Number of processes to use for parallel processing")
+                       help="Number of processes to use for parallel processing")
     parser.add_argument("--seed", type=int, default=42,
-                        help="Random seed for reproducibility")
-    parser.add_argument("--max_potential_matches", type=int, default=1000,
-                        help="Maximum number of potential M matches to collect per K pixel (cap)")
+                       help="Random seed for reproducibility")
     args = parser.parse_args()
-
-    # logging
+    
+    # Setup logging
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(message)s"
     )
-
-    # carbon density
+    
+    # Load carbon density
     logging.info("Loading carbon density")
     carbon_density_dict = load_carbon_density(args.carbon_density)
     carbon_density = np.zeros(6)  # Assuming 6 land use classes
     for luc, density in carbon_density_dict.items():
-        try:
-            luc_int = int(luc)
-        except Exception:
-            # If CSV keys are integers already, this will fail; handle both.
-            luc_int = luc
-        if 1 <= int(luc_int) <= 6:
-            carbon_density[int(luc_int) - 1] = float(density)
-
+        if 1 <= luc <= 6:
+            carbon_density[luc-1] = density
+    
     # Compute project area
     logging.info("Computing project area")
     proj_area_ha = compute_project_area_ha(args.project_area)
     logging.info(f"Project area: {proj_area_ha:.2f} ha")
-
+    
     # Run the main matching process
     find_pairs(
         k_directory=args.k_directory,
@@ -1014,10 +991,8 @@ def main():
         output_folder=args.output_folder,
         batch_size=args.batch_size,
         rse_threshold=args.rse_threshold,
-        processes_count=args.processes_count,
-        max_potential_matches=args.max_potential_matches
+        processes_count=args.processes_count
     )
-
 
 if __name__ == "__main__":
     try:

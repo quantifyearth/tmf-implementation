@@ -201,8 +201,8 @@ def main() -> None:
         boundary_file=args.buffer,
         gedi_data_dir=args.gedi_dir,
         output_csv=args.output,
-        start_year=2020,
-        end_year=2021,
+        start_year=2024,
+        end_year=2025,
     )
 
 

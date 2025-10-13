@@ -256,7 +256,7 @@ def main() -> None:
         "--j",
         type=int,
         required=False,
-        default=round(cpu_count() / 4),
+        default=round(cpu_count() / 8),
         dest="processes_count",
         help="Number of concurrent threads to use."
     )
